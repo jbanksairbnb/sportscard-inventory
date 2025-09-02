@@ -15,6 +15,11 @@ type IndexEntry = {
   rowCount: number;
   ownedCount?: number;
   ownedPct?: number;
+
+  // NEW optional fields for financial stats
+  totalCost?: number;
+  totalValue?: number;
+  gainLoss?: number;
 };
 
 function loadIndex(): IndexEntry[] {
@@ -41,16 +46,48 @@ function computeOwnedStats(rows: any[]) {
   return { ownedCount: owned, ownedPct: pct, total };
 }
 
+// Safe numeric parser for "$1,234.56", "1,234.56", 1234.56, etc.
+function toNumber(v: unknown): number {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  if (typeof v === 'string') {
+    const cleaned = v.replace(/[$,]/g, '').trim();
+    const n = Number(cleaned);
+    return isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function computeFinancials(rows: any[]) {
+  const totalCost = rows?.reduce((acc: number, r: any) => acc + toNumber(r?.['Cost']), 0) || 0;
+  const totalValue = rows?.reduce((acc: number, r: any) => acc + toNumber(r?.['Value']), 0) || 0;
+  const gainLoss = totalValue - totalCost;
+  return { totalCost, totalValue, gainLoss };
+}
+
 export default function HomePage() {
   const [sets, setSets] = useState<IndexEntry[]>([]);
 
   useEffect(() => {
     const idx = loadIndex();
     const withStats = idx.map((e) => {
-      if (typeof e.ownedCount === 'number' && typeof e.ownedPct === 'number') return e;
+      // If stats already cached in the index, keep them. Otherwise compute.
+      if (
+        typeof e.ownedCount === 'number' &&
+        typeof e.ownedPct === 'number' &&
+        typeof e.totalCost === 'number' &&
+        typeof e.totalValue === 'number' &&
+        typeof e.gainLoss === 'number'
+      ) {
+        return e;
+      }
+
       const saved = loadSet(e.slug);
-      const { ownedCount, ownedPct } = computeOwnedStats(saved?.rows || []);
-      return { ...e, ownedCount, ownedPct };
+      const rows = saved?.rows || [];
+
+      const { ownedCount, ownedPct } = computeOwnedStats(rows);
+      const { totalCost, totalValue, gainLoss } = computeFinancials(rows);
+
+      return { ...e, ownedCount, ownedPct, totalCost, totalValue, gainLoss };
     });
     setSets(withStats);
   }, []);
@@ -61,6 +98,10 @@ export default function HomePage() {
   );
 
   const COLORS = ['#10b981', '#e5e7eb']; // teal + gray
+
+  // Currency formatter
+  const fmtCurrency = (n: number) =>
+    `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -110,6 +151,10 @@ export default function HomePage() {
                 { name: 'Needed', value: Math.round(needPct * 10) / 10 },
               ];
 
+              const totalCost = typeof s.totalCost === 'number' ? s.totalCost : 0;
+              const totalValue = typeof s.totalValue === 'number' ? s.totalValue : 0;
+              const gainLoss = typeof s.gainLoss === 'number' ? s.gainLoss : totalValue - totalCost;
+
               return (
                 <Link
                   key={s.slug}
@@ -124,6 +169,7 @@ export default function HomePage() {
                       </div>
                       <div className="text-sm text-gray-600 truncate">{s.desc}</div>
 
+                      {/* Existing stats */}
                       <div className="mt-2 text-sm">
                         <div>
                           <span className="text-gray-600">Cards owned:</span>{' '}
@@ -134,6 +180,25 @@ export default function HomePage() {
                           <span className="font-medium">{(Math.round(pct * 10) / 10).toFixed(1)}%</span>
                         </div>
                       </div>
+
+                      {/* NEW: Financial stats */}
+                      <div className="mt-2 grid grid-cols-3 gap-2 text-xs sm:text-sm">
+                        <div className="rounded-lg bg-gray-50 p-2">
+                          <div className="text-gray-500">Total Cost</div>
+                          <div className="font-semibold">{fmtCurrency(totalCost)}</div>
+                        </div>
+                        <div className="rounded-lg bg-gray-50 p-2">
+                          <div className="text-gray-500">Total Value</div>
+                          <div className="font-semibold">{fmtCurrency(totalValue)}</div>
+                        </div>
+                        <div className={`rounded-lg p-2 ${gainLoss >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                          <div className="text-gray-500">Gain/Loss</div>
+                          <div className={`font-semibold ${gainLoss >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {fmtCurrency(gainLoss)}
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="mt-2 text-xs text-gray-500">
                         Last updated {new Date(s.updatedAt).toLocaleString()}
                       </div>
