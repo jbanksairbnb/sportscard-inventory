@@ -14,8 +14,8 @@ const EXPECTED_HEADERS = [
   "Sale Price", "Date Purchased", "Purchased From", "Upload Image(s)",
 ];
 
-const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => 1953 + i);
-const BRANDS = ["Topps", "Bowman", "Play Ball"] as const;
+const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
+const BRANDS = ["Topps", "Bowman", "Play Ball"];
 const YES_NO = ["Yes", "No"] as const;
 const COMPANIES = ["", "PSA", "SGC"] as const;
 const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
@@ -104,9 +104,57 @@ function simpleHash(s: string): string {
   return (h >>> 0).toString(16);
 }
 function encodeSharePayload(data: {
-  title: string; year: number | ""; brand: string; desc: string; rows: any[]; pinHash: string | null;
+  title: string; year: string; brand: string; desc: string; rows: any[]; pinHash: string | null;
 }): string {
   return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+}
+
+/* =====================  Image Cell  ===================== */
+function ImageCell({
+  url,
+  label,
+  onUpload,
+}: {
+  url: string;
+  label: string;
+  onUpload: (file: File) => Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    await onUpload(file);
+    setUploading(false);
+    e.target.value = "";
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+      {url ? (
+        <img
+          src={url}
+          alt={label}
+          title="Click to replace"
+          onClick={() => inputRef.current?.click()}
+          className="h-16 w-16 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-75"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="h-16 w-16 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xs hover:border-blue-400 hover:text-blue-400 disabled:opacity-50"
+        >
+          {uploading ? "…" : "+ " + label}
+        </button>
+      )}
+      {uploading && <span className="text-xs text-gray-400">Uploading…</span>}
+    </div>
+  );
 }
 
 /* =====================  Component  ===================== */
@@ -118,7 +166,7 @@ export default function SetEditorPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [slug, setSlug] = useState<string>(paramSlug);
   const [datasetTitle, setDatasetTitle] = useState<string>("");
-  const [year, setYear] = useState<number | "">("");
+  const [year, setYear] = useState<string>("");
   const [brand, setBrand] = useState<string>("");
   const [desc, setDesc] = useState<string>("");
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
@@ -152,7 +200,7 @@ export default function SetEditorPage() {
         if (data) {
           setSlug(paramSlug);
           setDatasetTitle(data.title || "");
-          setYear(data.year ?? "");
+          setYear(data.year ? String(data.year) : "");
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
           setRows(data.rows ?? []);
@@ -162,9 +210,9 @@ export default function SetEditorPage() {
     init();
   }, [paramSlug, router]);
 
-  const canCreateTitle = year !== "" && !!brand && desc.trim().length > 0;
+  const canCreateTitle = year.trim().length > 0 && brand.trim().length > 0 && desc.trim().length > 0;
   const titlePreview = useMemo(
-    () => (canCreateTitle ? `${year} ${brand} — ${desc.trim()}` : ""),
+    () => (canCreateTitle ? `${year.trim()} ${brand.trim()} — ${desc.trim()}` : ""),
     [year, brand, desc, canCreateTitle]
   );
 
@@ -195,6 +243,26 @@ export default function SetEditorPage() {
       }, { onConflict: "user_id,slug" });
       setSaveStatus(`Saved at ${new Date().toLocaleTimeString()}`);
     }, 600);
+  }
+
+  /* ------------------- Image upload ------------------- */
+  async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
+    if (!userId || !slug || slug === "new") return;
+    const supabase = createClient();
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
+    const { error } = await supabase.storage
+      .from("card-images")
+      .upload(path, file, { upsert: true });
+    if (error) { alert("Image upload failed: " + error.message); return; }
+    const { data } = supabase.storage.from("card-images").getPublicUrl(path);
+    const field = slot === 1 ? "Image 1" : "Image 2";
+    setRows((prev) => {
+      const copy = [...prev];
+      copy[origIndex] = { ...copy[origIndex], [field]: data.publicUrl };
+      return copy;
+    });
+    scheduleAutoSave();
   }
 
   /* ------------------- File upload ------------------- */
@@ -250,7 +318,7 @@ export default function SetEditorPage() {
     e?.preventDefault();
     if (!canCreateTitle || !userId) return;
 
-    const newTitle = `${year} ${brand} — ${desc.trim()}`;
+    const newTitle = `${year.trim()} ${brand.trim()} — ${desc.trim()}`;
     let newSlug = slug;
 
     if (slug === "new") {
@@ -272,7 +340,7 @@ export default function SetEditorPage() {
       slug: newSlug,
       title: newTitle,
       year: Number(year) || null,
-      brand,
+      brand: brand.trim(),
       description: desc,
       rows,
       row_count: rows.length,
@@ -433,19 +501,31 @@ export default function SetEditorPage() {
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="flex flex-col">
               <label className="text-sm font-medium">Year</label>
-              <select value={year as any} onChange={(e) => setYear(e.target.value ? Number(e.target.value) : "")}
-                className="rounded-xl border border-gray-300 p-2">
-                <option value="">Select year</option>
-                {YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
-              </select>
+              <input
+                type="text"
+                list="year-options"
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+                placeholder="e.g., 1954"
+                className="rounded-xl border border-gray-300 p-2"
+              />
+              <datalist id="year-options">
+                {YEARS.map((y) => <option key={y} value={y} />)}
+              </datalist>
             </div>
             <div className="flex flex-col">
               <label className="text-sm font-medium">Brand</label>
-              <select value={v(brand)} onChange={(e) => setBrand(e.target.value)}
-                className="rounded-xl border border-gray-300 p-2">
-                <option value="">Select brand</option>
-                {BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
+              <input
+                type="text"
+                list="brand-options"
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="e.g., Topps"
+                className="rounded-xl border border-gray-300 p-2"
+              />
+              <datalist id="brand-options">
+                {BRANDS.map((b) => <option key={b} value={b} />)}
+              </datalist>
             </div>
             <div className="flex flex-col">
               <label className="text-sm font-medium">Description (≤ 60 chars)</label>
@@ -500,7 +580,8 @@ export default function SetEditorPage() {
                     <SortableHeader label="Sale Price" />
                     <SortableHeader label="Date Purchased" />
                     <SortableHeader label="Purchased From" />
-                    <th className="whitespace-nowrap px-3 py-2 font-medium sticky top-0 z-10 bg-gray-100">Upload Image(s)</th>
+                    <th className="whitespace-nowrap px-3 py-2 font-medium sticky top-0 z-10 bg-gray-100">Image 1</th>
+                    <th className="whitespace-nowrap px-3 py-2 font-medium sticky top-0 z-10 bg-gray-100">Image 2</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -541,15 +622,19 @@ export default function SetEditorPage() {
                       <td className="px-3 py-2 align-top"><input value={v(row["Sale Price"])} onChange={(e) => onChangeCell(origIndex, "Sale Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Sale Price")} placeholder="$0.00" className="w-28 rounded border border-gray-300 p-1" /></td>
                       <td className="px-3 py-2 align-top"><input value={v(row["Date Purchased"])} onChange={(e) => onChangeCell(origIndex, "Date Purchased", e.target.value)} onBlur={() => onBlurDate(origIndex)} placeholder="MM/DD/YYYY" className="w-32 rounded border border-gray-300 p-1" /></td>
                       <td className="px-3 py-2 align-top"><input value={v(row["Purchased From"])} onChange={(e) => onChangeCell(origIndex, "Purchased From", e.target.value)} maxLength={50} placeholder="Seller name or site" className="w-40 rounded border border-gray-300 p-1" /></td>
-                      <td className="px-3 py-2 align-top">
-                        <input type="file" accept="image/*" multiple
-                          onChange={(e) => {
-                            const files = e.target.files;
-                            if (!files?.length) return;
-                            const urls = Array.from(files).map((f) => URL.createObjectURL(f));
-                            onChangeCell(origIndex, "Upload Image(s)", urls.join("; "));
-                          }}
-                          className="w-44 rounded border border-gray-300 p-1" />
+                      <td className="px-3 py-2 align-middle">
+                        <ImageCell
+                          url={v(row["Image 1"])}
+                          label="Img 1"
+                          onUpload={(file) => handleImageUpload(origIndex, 1, file)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 align-middle">
+                        <ImageCell
+                          url={v(row["Image 2"])}
+                          label="Img 2"
+                          onUpload={(file) => handleImageUpload(origIndex, 2, file)}
+                        />
                       </td>
                     </tr>
                   ))}
