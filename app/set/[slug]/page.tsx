@@ -166,6 +166,20 @@ function textForSort(raw: any): string {
   return String(raw ?? "").toLowerCase();
 }
 
+/* =====================  Share helpers  ===================== */
+function simpleHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+  return (h >>> 0).toString(16);
+}
+
+function encodeSharePayload(data: {
+  title: string; year: number | ""; brand: string; desc: string; rows: any[];
+  pinHash: string | null;
+}): string {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+}
+
 /* =====================  Component  ===================== */
 export default function SetEditorPage() {
   const router = useRouter();
@@ -186,6 +200,11 @@ export default function SetEditorPage() {
   const [showNeededOnly, setShowNeededOnly] = useState<boolean>(false);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  // Share modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [sharePin, setSharePin] = useState('');
+  const [shareCopied, setShareCopied] = useState(false);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -392,6 +411,16 @@ export default function SetEditorPage() {
     downloadCSV(name, rows);
   }
 
+  /* ------------------- Share ------------------- */
+  function handleCopyShareCode() {
+    const pinHash = sharePin.trim() ? simpleHash(sharePin.trim()) : null;
+    const code = encodeSharePayload({ title: datasetTitle, year, brand, desc, rows, pinHash });
+    navigator.clipboard.writeText(code).then(() => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2500);
+    });
+  }
+
   /* ------------------- Sorting ------------------- */
   const displayRows: Array<{ row: Record<string, any>, origIndex: number }> = useMemo(() => {
     let filtered = rows.map((r, idx) => ({ row: r, origIndex: idx }));
@@ -489,6 +518,14 @@ export default function SetEditorPage() {
           </div>
           <div className="flex items-center gap-3 text-sm text-gray-600">
             <span>{saveStatus}</span>
+            <button
+              type="button"
+              onClick={() => { setSharePin(''); setShareCopied(false); setShowShareModal(true); }}
+              disabled={!datasetTitle || !rows.length}
+              className="rounded-2xl bg-emerald-600 px-4 py-2 text-white shadow hover:bg-emerald-700 disabled:opacity-40"
+            >
+              Share
+            </button>
             <button
               type="button"
               onClick={handleExport}
@@ -705,6 +742,46 @@ export default function SetEditorPage() {
           </div>
         )}
       </div>
+
+      {/* Share modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-semibold">Share &ldquo;{datasetTitle}&rdquo;</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Generate a share code that others can import. Optionally set a PIN so only people with the PIN can import it.
+            </p>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">
+                PIN (optional)
+              </label>
+              <input
+                type="password"
+                value={sharePin}
+                onChange={(e) => setSharePin(e.target.value)}
+                placeholder="Leave blank for no PIN"
+                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm"
+              />
+            </div>
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={handleCopyShareCode}
+                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white shadow hover:bg-emerald-700"
+              >
+                {shareCopied ? 'Copied!' : 'Copy Share Code'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowShareModal(false)}
+                className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

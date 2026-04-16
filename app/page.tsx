@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -39,6 +39,32 @@ function loadSet(slug: string) {
     return null;
   }
 }
+function saveSet(slug: string, data: any) {
+  localStorage.setItem(`sc_set_${slug}`, JSON.stringify(data));
+}
+function saveIndex(index: any[]) {
+  localStorage.setItem('sc_sets_index', JSON.stringify(index));
+}
+function slugify(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 80);
+}
+function ensureUniqueSlug(base: string, existing: Set<string>) {
+  let slug = base, i = 2;
+  while (existing.has(slug)) slug = `${base}-${i++}`;
+  return slug;
+}
+function simpleHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+  return (h >>> 0).toString(16);
+}
+function decodeSharePayload(code: string): any | null {
+  try {
+    return JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
+  } catch {
+    return null;
+  }
+}
 function computeOwnedStats(rows: any[]) {
   const total = rows?.length || 0;
   const owned = rows?.filter((r) => String(r?.['Owned'] || '') === 'Yes').length || 0;
@@ -67,6 +93,14 @@ function computeFinancials(rows: any[]) {
 export default function HomePage() {
   const [sets, setSets] = useState<IndexEntry[]>([]);
 
+  // Import shared set state
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importCode, setImportCode] = useState('');
+  const [importPin, setImportPin] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importSuccess, setImportSuccess] = useState('');
+  const importCodeRef = useRef<HTMLTextAreaElement>(null);
+
   useEffect(() => {
     const idx = loadIndex();
     const withStats = idx.map((e) => {
@@ -91,6 +125,45 @@ export default function HomePage() {
     });
     setSets(withStats);
   }, []);
+
+  function handleImportSharedSet() {
+    setImportError('');
+    setImportSuccess('');
+    const payload = decodeSharePayload(importCode);
+    if (!payload || typeof payload !== 'object') {
+      setImportError('Invalid share code. Please check and try again.');
+      return;
+    }
+    if (payload.pinHash) {
+      if (!importPin.trim()) {
+        setImportError('This set is PIN-protected. Please enter the PIN.');
+        return;
+      }
+      if (simpleHash(importPin.trim()) !== payload.pinHash) {
+        setImportError('Incorrect PIN.');
+        return;
+      }
+    }
+    const idx = loadIndex();
+    const existingSlugs = new Set(idx.map((x: any) => x.slug as string));
+    const base = slugify(payload.title || 'imported-set');
+    const slug = ensureUniqueSlug(base, existingSlugs);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const now = Date.now();
+    saveSet(slug, { title: payload.title, year: payload.year, brand: payload.brand, desc: payload.desc, rows });
+    const owned = rows.filter((r: any) => String(r?.['Owned'] || '') === 'Yes').length;
+    const ownedPct = rows.length ? (owned / rows.length) * 100 : 0;
+    const newEntry = {
+      slug, title: payload.title, year: Number(payload.year) || 0, brand: payload.brand,
+      desc: payload.desc, updatedAt: now, rowCount: rows.length, ownedCount: owned, ownedPct,
+    };
+    const newIdx = [...idx, newEntry];
+    saveIndex(newIdx);
+    setSets(newIdx);
+    setImportSuccess(`Imported "${payload.title}" successfully!`);
+    setImportCode('');
+    setImportPin('');
+  }
 
   const sorted = useMemo(
     () => [...sets].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
@@ -125,8 +198,15 @@ export default function HomePage() {
           />
         </header>
 
-        {/* New Upload button */}
-        <div className="flex justify-end">
+        {/* Action buttons */}
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => { setImportCode(''); setImportPin(''); setImportError(''); setImportSuccess(''); setShowImportModal(true); }}
+            className="rounded-2xl border border-emerald-600 bg-white px-4 py-2 text-emerald-700 shadow hover:bg-emerald-50"
+          >
+            Import Shared Set
+          </button>
           <Link
             href="/set/new"
             className="rounded-2xl bg-blue-600 px-4 py-2 text-white shadow hover:bg-blue-700"
@@ -231,6 +311,62 @@ export default function HomePage() {
           </section>
         )}
       </div>
+
+      {/* Import shared set modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-semibold">Import Shared Set</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Paste the share code you received. If it is PIN-protected, enter the PIN too.
+            </p>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700">Share Code</label>
+              <textarea
+                ref={importCodeRef}
+                value={importCode}
+                onChange={(e) => setImportCode(e.target.value)}
+                rows={4}
+                placeholder="Paste share code here…"
+                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm font-mono"
+              />
+            </div>
+            <div className="mt-3">
+              <label className="block text-sm font-medium text-gray-700">PIN (if required)</label>
+              <input
+                type="password"
+                value={importPin}
+                onChange={(e) => setImportPin(e.target.value)}
+                placeholder="Leave blank if no PIN"
+                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm"
+              />
+            </div>
+            {importError && (
+              <p className="mt-2 text-sm text-red-600">{importError}</p>
+            )}
+            {importSuccess && (
+              <p className="mt-2 text-sm text-emerald-600">{importSuccess}</p>
+            )}
+            <div className="mt-4 flex gap-3">
+              <button
+                type="button"
+                onClick={handleImportSharedSet}
+                disabled={!importCode.trim()}
+                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white shadow hover:bg-emerald-700 disabled:opacity-40"
+              >
+                Import
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowImportModal(false)}
+                className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
