@@ -89,7 +89,7 @@ export default function LoginPage() {
               ? 'Welcome back to Sports Collective'
               : mode === 'register'
               ? 'Start managing your card sets'
-              : 'Enter your email and we'll send a reset link'}
+              : "Enter your email and we'll send a reset link"}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
