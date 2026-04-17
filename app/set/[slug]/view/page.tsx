@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -84,6 +84,53 @@ function CardTile({ row, year, brand }: { row: Record<string, any>; year: string
   );
 }
 
+function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
+  const [lightboxUrl, setLightboxUrl] = useState('');
+
+  const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
+  const img1 = row['Image 1'] || '';
+  const img2 = row['Image 2'] || '';
+
+  return (
+    <>
+      <tr className="border-b last:border-0 hover:bg-gray-50">
+        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{[year, brand].filter(Boolean).join(' • ')}</td>
+        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-800">{cardNum}</td>
+        <td className="px-3 py-2 text-sm text-gray-700">{row['Description'] || ''}</td>
+        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Grading Company'] || ''}</td>
+        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Grade'] ? `Grade ${row['Grade']}` : ''}</td>
+        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Sale Price'] || ''}</td>
+        <td className="px-3 py-2">
+          <div className="flex gap-1">
+            {img1 && (
+              <img
+                src={img1}
+                alt="Front"
+                onClick={() => setLightboxUrl(img1)}
+                className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
+                title="Click to enlarge"
+              />
+            )}
+            {img2 && (
+              <img
+                src={img2}
+                alt="Back"
+                onClick={() => setLightboxUrl(img2)}
+                className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
+                title="Click to enlarge"
+              />
+            )}
+          </div>
+        </td>
+      </tr>
+
+      {lightboxUrl && (
+        <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />
+      )}
+    </>
+  );
+}
+
 export default function InventoryViewPage() {
   const router = useRouter();
   const params = useParams();
@@ -95,6 +142,7 @@ export default function InventoryViewPage() {
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
   const [loading, setLoading] = useState(true);
   const [showOwnedOnly, setShowOwnedOnly] = useState(false);
+  const [listView, setListView] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -143,6 +191,13 @@ export default function InventoryViewPage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
+              onClick={() => setListView((v) => !v)}
+              className={`rounded-xl px-3 py-1.5 text-sm shadow border ${listView ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}
+            >
+              {listView ? 'Grid View' : 'List View'}
+            </button>
+            <button
+              type="button"
               onClick={() => setShowOwnedOnly((v) => !v)}
               className={`rounded-xl px-3 py-1.5 text-sm shadow border ${showOwnedOnly ? 'bg-amber-500 text-white border-amber-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}
             >
@@ -156,6 +211,27 @@ export default function InventoryViewPage() {
           <div className="rounded-2xl border border-dashed border-gray-300 p-8 text-center text-gray-500">
             No cards to display.
           </div>
+        ) : listView ? (
+          <section className="overflow-x-auto rounded-2xl bg-white shadow">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-100">
+                <tr className="text-left">
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Year • Brand</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Card #</th>
+                  <th className="px-3 py-2 font-medium">Description</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Grading Co.</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Grade</th>
+                  <th className="px-3 py-2 font-medium whitespace-nowrap">Sale Price</th>
+                  <th className="px-3 py-2 font-medium">Images</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayed.map((row, i) => (
+                  <CardTableRow key={i} row={row} year={year} brand={brand} />
+                ))}
+              </tbody>
+            </table>
+          </section>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {displayed.map((row, i) => (
