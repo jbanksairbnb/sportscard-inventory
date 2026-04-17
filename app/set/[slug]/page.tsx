@@ -217,6 +217,7 @@ export default function SetEditorPage() {
   const paramSlug = String(params?.slug || "new");
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
   const [slug, setSlug] = useState<string>(paramSlug);
   const [datasetTitle, setDatasetTitle] = useState<string>("");
   const [year, setYear] = useState<string>("");
@@ -245,6 +246,7 @@ export default function SetEditorPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/login"); return; }
       setUserId(user.id);
+      setUserEmail(user.email || '');
 
       if (paramSlug !== "new") {
         const { data } = await supabase
@@ -295,6 +297,7 @@ export default function SetEditorPage() {
         total_cost: totalCost,
         total_value: totalValue,
         gain_loss: gainLoss,
+        owner_email: userEmail,
         updated_at: Date.now(),
       }, { onConflict: "user_id,slug" });
       setSaveStatus(`Saved at ${new Date().toLocaleTimeString()}`);
@@ -316,9 +319,9 @@ export default function SetEditorPage() {
     setRows((prev) => {
       const copy = [...prev];
       copy[origIndex] = { ...copy[origIndex], [field]: data.publicUrl };
+      scheduleAutoSave(copy);
       return copy;
     });
-    scheduleAutoSave();
   }
 
   /* ------------------- File upload ------------------- */
@@ -463,9 +466,9 @@ export default function SetEditorPage() {
     setRows((prev) => {
       const copy = [...prev];
       copy[origIndex] = { ...copy[origIndex], [field]: '' };
+      scheduleAutoSave(copy);
       return copy;
     });
-    scheduleAutoSave();
   }
 
   /* ------------------- Export ------------------- */
@@ -762,49 +765,31 @@ export default function SetEditorPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="text-lg font-semibold">Share &ldquo;{datasetTitle}&rdquo;</h2>
-
-            {/* Public link */}
-            <div className="mt-4 rounded-xl bg-gray-50 border border-gray-200 p-4">
-              <h3 className="text-sm font-semibold text-gray-700">Public Link</h3>
-              <p className="mt-1 text-xs text-gray-500">Anyone with this link can view your inventory without logging in.</p>
+            <p className="mt-1 text-sm text-gray-500">
+              {shareToken
+                ? 'This set is publicly listed. Anyone with the link can view it.'
+                : 'Make this set public so anyone can view it, and it will appear on the Community Sets page.'}
+            </p>
+            <div className="mt-4 space-y-3">
               {shareToken ? (
-                <div className="mt-2 flex gap-2">
+                <>
                   <button type="button" onClick={handleCopyPublicLink}
-                    className="flex-1 rounded-xl bg-blue-600 px-3 py-1.5 text-sm text-white shadow hover:bg-blue-700">
-                    {shareLinkCopied ? 'Copied!' : 'Copy Link'}
+                    className="w-full rounded-2xl bg-blue-600 px-4 py-2 text-sm text-white shadow hover:bg-blue-700">
+                    {shareLinkCopied ? 'Copied!' : 'Copy Public Link'}
                   </button>
                   <button type="button" onClick={handleRevokeShareLink}
-                    className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow hover:bg-gray-50">
-                    Revoke
+                    className="w-full rounded-2xl border border-red-300 bg-white px-4 py-2 text-sm text-red-600 shadow hover:bg-red-50">
+                    Remove from Public
                   </button>
-                </div>
+                </>
               ) : (
                 <button type="button" onClick={handleGenerateShareLink}
-                  className="mt-2 w-full rounded-xl bg-blue-600 px-3 py-1.5 text-sm text-white shadow hover:bg-blue-700">
-                  Generate Public Link
+                  className="w-full rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white shadow hover:bg-emerald-700">
+                  Make Public
                 </button>
               )}
-            </div>
-
-            <div className="mt-4 border-t pt-4">
-              <h3 className="text-sm font-semibold text-gray-700">Share Code (import-based)</h3>
-              <p className="mt-1 text-xs text-gray-600">
-                Generate a code others can paste to import a copy into their own account. Optionally PIN-protect it.
-              </p>
-            </div>
-            <div className="mt-3">
-              <label className="block text-sm font-medium text-gray-700">PIN (optional)</label>
-              <input type="password" value={sharePin} onChange={(e) => setSharePin(e.target.value)}
-                placeholder="Leave blank for no PIN"
-                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm" />
-            </div>
-            <div className="mt-4 flex gap-3">
-              <button type="button" onClick={handleCopyShareCode}
-                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white shadow hover:bg-emerald-700">
-                {shareCopied ? 'Copied!' : 'Copy Share Code'}
-              </button>
               <button type="button" onClick={() => setShowShareModal(false)}
-                className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow hover:bg-gray-50">
+                className="w-full rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow hover:bg-gray-50">
                 Close
               </button>
             </div>

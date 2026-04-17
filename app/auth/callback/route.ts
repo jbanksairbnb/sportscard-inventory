@@ -7,6 +7,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
 
+  const next = searchParams.get('next') || '/'
+
   if (code) {
     const cookieStore = await cookies()
     const supabase = createServerClient(
@@ -26,5 +28,5 @@ export async function GET(request: NextRequest) {
     await supabase.auth.exchangeCodeForSession(code)
   }
 
-  return NextResponse.redirect(new URL('/', request.url))
+  return NextResponse.redirect(new URL(next, request.url))
 }

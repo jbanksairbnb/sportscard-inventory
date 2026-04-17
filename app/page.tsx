@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -22,36 +22,12 @@ type SetRow = {
   updated_at: number;
 };
 
-/* =====================  Share helpers  ===================== */
-function simpleHash(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-  return (h >>> 0).toString(16);
-}
-function decodeSharePayload(code: string): any | null {
-  try {
-    return JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
-  } catch {
-    return null;
-  }
-}
-function slugify(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 80);
-}
-
 export default function HomePage() {
   const [sets, setSets] = useState<SetRow[]>([]);
   const [userEmail, setUserEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // Import shared set state
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importCode, setImportCode] = useState('');
-  const [importPin, setImportPin] = useState('');
-  const [importError, setImportError] = useState('');
-  const [importSuccess, setImportSuccess] = useState('');
-  const importCodeRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -83,77 +59,6 @@ export default function HomePage() {
     const { error } = await supabase.from('sets').delete().eq('slug', slug);
     if (error) { alert('Failed to delete: ' + error.message); return; }
     setSets((prev) => prev.filter((s) => s.slug !== slug));
-  }
-
-  async function handleImportSharedSet() {
-    setImportError('');
-    setImportSuccess('');
-    const payload = decodeSharePayload(importCode);
-    if (!payload || typeof payload !== 'object') {
-      setImportError('Invalid share code. Please check and try again.');
-      return;
-    }
-    if (payload.pinHash) {
-      if (!importPin.trim()) {
-        setImportError('This set is PIN-protected. Please enter the PIN.');
-        return;
-      }
-      if (simpleHash(importPin.trim()) !== payload.pinHash) {
-        setImportError('Incorrect PIN.');
-        return;
-      }
-    }
-
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // Find a unique slug
-    const base = slugify(payload.title || 'imported-set');
-    const { data: existing } = await supabase
-      .from('sets')
-      .select('slug')
-      .ilike('slug', `${base}%`);
-    const existingSlugs = new Set((existing || []).map((r: any) => r.slug as string));
-    let slug = base, i = 2;
-    while (existingSlugs.has(slug)) slug = `${base}-${i++}`;
-
-    const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    const owned = rows.filter((r: any) => String(r?.['Owned'] || '') === 'Yes').length;
-    const ownedPct = rows.length ? (owned / rows.length) * 100 : 0;
-
-    const { error } = await supabase.from('sets').insert({
-      user_id: user.id,
-      slug,
-      title: payload.title,
-      year: Number(payload.year) || null,
-      brand: payload.brand || '',
-      description: payload.desc || '',
-      rows,
-      row_count: rows.length,
-      owned_count: owned,
-      owned_pct: ownedPct,
-      total_cost: 0,
-      total_value: 0,
-      gain_loss: 0,
-      updated_at: Date.now(),
-    });
-
-    if (error) {
-      setImportError('Failed to import: ' + error.message);
-      return;
-    }
-
-    setImportSuccess(`Imported "${payload.title}" successfully!`);
-    setImportCode('');
-    setImportPin('');
-
-    // Refresh list
-    const { data } = await supabase
-      .from('sets')
-      .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at')
-      .order('updated_at', { ascending: false });
-    if (data) setSets(data as SetRow[]);
   }
 
   const COLORS = ['#10b981', '#e5e7eb'];
@@ -207,19 +112,12 @@ export default function HomePage() {
 
         {/* Action buttons */}
         <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setImportCode('');
-              setImportPin('');
-              setImportError('');
-              setImportSuccess('');
-              setShowImportModal(true);
-            }}
+          <Link
+            href="/shared"
             className="rounded-2xl border border-emerald-600 bg-white px-4 py-2 text-emerald-700 shadow hover:bg-emerald-50"
           >
-            Import Shared Set
-          </button>
+            Community Sets
+          </Link>
           <Link
             href="/set/new"
             className="rounded-2xl bg-blue-600 px-4 py-2 text-white shadow hover:bg-blue-700"
@@ -321,57 +219,6 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Import shared set modal */}
-      {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-semibold">Import Shared Set</h2>
-            <p className="mt-1 text-sm text-gray-600">
-              Paste the share code you received. Enter the PIN if the set is protected.
-            </p>
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700">Share Code</label>
-              <textarea
-                ref={importCodeRef}
-                value={importCode}
-                onChange={(e) => setImportCode(e.target.value)}
-                rows={4}
-                placeholder="Paste share code here…"
-                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm font-mono"
-              />
-            </div>
-            <div className="mt-3">
-              <label className="block text-sm font-medium text-gray-700">PIN (if required)</label>
-              <input
-                type="password"
-                value={importPin}
-                onChange={(e) => setImportPin(e.target.value)}
-                placeholder="Leave blank if no PIN"
-                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm"
-              />
-            </div>
-            {importError && <p className="mt-2 text-sm text-red-600">{importError}</p>}
-            {importSuccess && <p className="mt-2 text-sm text-emerald-600">{importSuccess}</p>}
-            <div className="mt-4 flex gap-3">
-              <button
-                type="button"
-                onClick={handleImportSharedSet}
-                disabled={!importCode.trim()}
-                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white shadow hover:bg-emerald-700 disabled:opacity-40"
-              >
-                Import
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowImportModal(false)}
-                className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow hover:bg-gray-50"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
