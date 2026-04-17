@@ -378,6 +378,7 @@ export default function SetEditorPage() {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      transformHeader: (h) => h.trim(),
       complete: (result) => {
         const fields = result.meta.fields || [];
         const requiredPSA = ['Card #', 'Item', 'Grade'];
