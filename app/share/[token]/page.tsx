@@ -5,54 +5,58 @@ import { useParams } from 'next/navigation';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 
-function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+function ImageLightbox({ urls, startIndex, onClose }: { urls: string[]; startIndex: number; onClose: () => void }) {
+  const [idx, setIdx] = useState(startIndex);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85" onClick={onClose}>
-      <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
-        <img src={url} alt="Card" className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain" />
-        <button type="button" onClick={onClose} className="absolute top-2 right-2 rounded-full bg-gray-900/80 px-3 py-1 text-white text-sm hover:bg-gray-900">
-          ✕ Close
-        </button>
+      <div className="relative max-w-4xl max-h-[90vh] p-4 flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => setIdx((i) => i - 1)} disabled={idx === 0}
+          className="rounded-full bg-gray-900/80 px-4 py-3 text-white text-xl hover:bg-gray-900 disabled:opacity-20">‹</button>
+        <div className="flex flex-col items-center gap-2">
+          <img src={urls[idx]} alt="Card" className="max-w-full max-h-[75vh] rounded-lg shadow-2xl object-contain" />
+          {urls.length > 1 && <span className="text-white text-sm opacity-70">{idx + 1} / {urls.length}</span>}
+        </div>
+        <button type="button" onClick={() => setIdx((i) => i + 1)} disabled={idx === urls.length - 1}
+          className="rounded-full bg-gray-900/80 px-4 py-3 text-white text-xl hover:bg-gray-900 disabled:opacity-20">›</button>
+        <button type="button" onClick={onClose} className="absolute top-2 right-2 rounded-full bg-gray-900/80 px-3 py-1 text-white text-sm hover:bg-gray-900">✕</button>
       </div>
     </div>
   );
 }
 
 function CardTile({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
-  const [lightboxUrl, setLightboxUrl] = useState('');
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
-  const img1 = row['Image 1'] || '';
-  const img2 = row['Image 2'] || '';
+  const imgs = [row['Image 1'] || '', row['Image 2'] || ''].filter(Boolean);
   const details = [row['Grading Company'], row['Grade'] ? `Grade ${row['Grade']}` : '', row['Sale Price']].filter(Boolean).join('  •  ');
 
   return (
     <>
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow flex flex-col gap-2">
-        <div className="text-xs text-gray-400 font-medium tracking-wide uppercase">
-          {[year, brand].filter(Boolean).join(' • ')}
-        </div>
+        <div className="text-xs text-gray-400 font-medium tracking-wide uppercase">{[year, brand].filter(Boolean).join(' • ')}</div>
         <div>
           <span className="text-lg font-bold text-gray-800">{cardNum}</span>
           {cardNum && row['Description'] && ' '}
           <span className="text-lg font-semibold text-gray-700">{row['Description'] || ''}</span>
         </div>
         {details && <div className="text-sm text-gray-500">{details}</div>}
-        {(img1 || img2) && (
+        {imgs.length > 0 && (
           <div className="flex gap-2 mt-1">
-            {img1 && <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)} className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
-            {img2 && <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)} className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
+            {imgs.map((src, i) => (
+              <img key={i} src={src} alt={i === 0 ? 'Front' : 'Back'} onClick={() => setLightboxIndex(i)}
+                className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />
+            ))}
           </div>
         )}
       </div>
-      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
+      {lightboxIndex !== null && <ImageLightbox urls={imgs} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />}
     </>
   );
 }
 
 function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
-  const [lightboxUrl, setLightboxUrl] = useState('');
-  const img1 = row['Image 1'] || '';
-  const img2 = row['Image 2'] || '';
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const imgs = [row['Image 1'] || '', row['Image 2'] || ''].filter(Boolean);
 
   return (
     <>
@@ -65,12 +69,14 @@ function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: st
         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Sale Price'] || ''}</td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
-            {img1 && <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)} className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
-            {img2 && <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)} className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
+            {imgs.map((src, i) => (
+              <img key={i} src={src} alt={i === 0 ? 'Front' : 'Back'} onClick={() => setLightboxIndex(i)}
+                className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />
+            ))}
           </div>
         </td>
       </tr>
-      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
+      {lightboxIndex !== null && <ImageLightbox urls={imgs} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />}
     </>
   );
 }

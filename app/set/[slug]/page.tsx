@@ -372,6 +372,49 @@ export default function SetEditorPage() {
     });
   }
 
+  /* ------------------- PSA file upload ------------------- */
+  function handlePSAFileChosen(file: File) {
+    setErrors([]);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (result) => {
+        const fields = result.meta.fields || [];
+        const requiredPSA = ['Card #', 'Item', 'Grade'];
+        const missing = requiredPSA.filter((f) => !fields.includes(f));
+        if (missing.length > 0) {
+          setErrors([`This doesn't look like a PSA export file. Missing columns: ${missing.join(', ')}.`]);
+          return;
+        }
+        const cleaned = (result.data as any[])
+          .filter((r: any) => String(r['Card #'] ?? '').trim() !== '')
+          .map((r: any) => {
+            const norm: Record<string, any> = {};
+            EXPECTED_HEADERS.forEach((h) => { norm[h] = ''; });
+            norm['Card #'] = String(r['Card #'] ?? '').trim();
+            norm['Description'] = String(r['Item'] ?? '').trim();
+            norm['Grade'] = normalizeNumericGrade(r['Grade']);
+            norm['Grading Company'] = 'PSA';
+            norm['Graded'] = 'Yes';
+            norm['Owned'] = 'Yes';
+            const cost = String(r['My Cost'] ?? '').trim();
+            if (cost && Number(cost) > 0) norm['Cost'] = toCurrency(stripCurrency(cost));
+            const dp = String(r['Purchase Date'] ?? '').trim();
+            if (dp) {
+              const digits = dp.replace(/[^0-9]/g, '');
+              if (digits.length === 8) norm['Date Purchased'] = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+              else norm['Date Purchased'] = dp;
+            }
+            norm['Purchased From'] = String(r['Source'] ?? '').trim();
+            return norm;
+          });
+        setRows(cleaned);
+        scheduleAutoSave(cleaned);
+      },
+      error: (err) => setErrors([`Parse error: ${err.message}`]),
+    });
+  }
+
   /* ------------------- Create title ------------------- */
   async function handleCreateTitle(e?: React.MouseEvent) {
     e?.preventDefault();
@@ -582,14 +625,21 @@ export default function SetEditorPage() {
 
         {/* Upload */}
         <section className="rounded-2xl bg-white p-4 shadow">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-            <div>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex-1">
               <h2 className="text-lg font-medium">1) Upload CSV</h2>
-              <p className="text-sm text-gray-600">Expected headers: {EXPECTED_HEADERS.join(", ")}</p>
+              <p className="text-sm text-gray-600 mb-2">Standard format with headers: {EXPECTED_HEADERS.join(", ")}</p>
+              <input type="file" accept=".csv,text/csv"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileChosen(f); }}
+                className="block w-full rounded-xl border border-gray-300 bg-white p-2" />
             </div>
-            <input type="file" accept=".csv,text/csv"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileChosen(f); }}
-              className="block w-full rounded-xl border border-gray-300 bg-white p-2 lg:w-auto" />
+            <div className="flex-1 border-t pt-4 lg:border-t-0 lg:pt-0 lg:border-l lg:pl-4">
+              <h2 className="text-lg font-medium">— or — Load PSA Export</h2>
+              <p className="text-sm text-gray-600 mb-2">Upload a CSV exported from your PSA account. Grading Company auto-sets to PSA.</p>
+              <input type="file" accept=".csv,text/csv"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePSAFileChosen(f); }}
+                className="block w-full rounded-xl border border-blue-300 bg-blue-50 p-2" />
+            </div>
           </div>
           {errors.length > 0 && (
             <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">

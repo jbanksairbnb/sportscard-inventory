@@ -39,6 +39,7 @@ export default function HomePage() {
       const { data } = await supabase
         .from('sets')
         .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at')
+        .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
 
       if (data) setSets(data as SetRow[]);
