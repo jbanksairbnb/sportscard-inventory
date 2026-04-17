@@ -28,8 +28,9 @@ export async function middleware(request: NextRequest) {
   const isLoginPage = request.nextUrl.pathname.startsWith('/login')
   const isAuthCallback = request.nextUrl.pathname.startsWith('/auth/callback')
   const isPublicShare = request.nextUrl.pathname.startsWith('/share')
+  const isResetPassword = request.nextUrl.pathname.startsWith('/auth/reset-password')
 
-  if (!user && !isLoginPage && !isAuthCallback && !isPublicShare) {
+  if (!user && !isLoginPage && !isAuthCallback && !isPublicShare && !isResetPassword) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
