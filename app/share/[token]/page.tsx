@@ -1,24 +1,16 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 
 function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85" onClick={onClose}>
       <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
         <img src={url} alt="Card" className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain" />
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-2 right-2 rounded-full bg-gray-900/80 px-3 py-1 text-white text-sm hover:bg-gray-900"
-        >
+        <button type="button" onClick={onClose} className="absolute top-2 right-2 rounded-full bg-gray-900/80 px-3 py-1 text-white text-sm hover:bg-gray-900">
           ✕ Close
         </button>
       </div>
@@ -28,16 +20,10 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
 
 function CardTile({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
   const [lightboxUrl, setLightboxUrl] = useState('');
-
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
-  const description = row['Description'] || '';
-  const gradingCo = row['Grading Company'] || '';
-  const grade = row['Grade'] || '';
-  const salePrice = row['Sale Price'] || '';
   const img1 = row['Image 1'] || '';
   const img2 = row['Image 2'] || '';
-
-  const details = [gradingCo, grade ? `Grade ${grade}` : '', salePrice].filter(Boolean).join('  •  ');
+  const details = [row['Grading Company'], row['Grade'] ? `Grade ${row['Grade']}` : '', row['Sale Price']].filter(Boolean).join('  •  ');
 
   return (
     <>
@@ -47,47 +33,24 @@ function CardTile({ row, year, brand }: { row: Record<string, any>; year: string
         </div>
         <div>
           <span className="text-lg font-bold text-gray-800">{cardNum}</span>
-          {cardNum && description && ' '}
-          <span className="text-lg font-semibold text-gray-700">{description}</span>
+          {cardNum && row['Description'] && ' '}
+          <span className="text-lg font-semibold text-gray-700">{row['Description'] || ''}</span>
         </div>
-        {details && (
-          <div className="text-sm text-gray-500">{details}</div>
-        )}
+        {details && <div className="text-sm text-gray-500">{details}</div>}
         {(img1 || img2) && (
           <div className="flex gap-2 mt-1">
-            {img1 && (
-              <img
-                src={img1}
-                alt="Front"
-                onClick={() => setLightboxUrl(img1)}
-                className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
-                title="Click to enlarge"
-              />
-            )}
-            {img2 && (
-              <img
-                src={img2}
-                alt="Back"
-                onClick={() => setLightboxUrl(img2)}
-                className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
-                title="Click to enlarge"
-              />
-            )}
+            {img1 && <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)} className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
+            {img2 && <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)} className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
           </div>
         )}
       </div>
-
-      {lightboxUrl && (
-        <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />
-      )}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
     </>
   );
 }
 
 function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
   const [lightboxUrl, setLightboxUrl] = useState('');
-
-  const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const img1 = row['Image 1'] || '';
   const img2 = row['Image 2'] || '';
 
@@ -95,76 +58,55 @@ function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: st
     <>
       <tr className="border-b last:border-0 hover:bg-gray-50">
         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{[year, brand].filter(Boolean).join(' • ')}</td>
-        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-800">{cardNum}</td>
+        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-800">{row['Card #'] ? `#${row['Card #']}` : ''}</td>
         <td className="px-3 py-2 text-sm text-gray-700">{row['Description'] || ''}</td>
         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Grading Company'] || ''}</td>
         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Grade'] ? `Grade ${row['Grade']}` : ''}</td>
         <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Sale Price'] || ''}</td>
         <td className="px-3 py-2">
           <div className="flex gap-1">
-            {img1 && (
-              <img
-                src={img1}
-                alt="Front"
-                onClick={() => setLightboxUrl(img1)}
-                className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
-                title="Click to enlarge"
-              />
-            )}
-            {img2 && (
-              <img
-                src={img2}
-                alt="Back"
-                onClick={() => setLightboxUrl(img2)}
-                className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
-                title="Click to enlarge"
-              />
-            )}
+            {img1 && <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)} className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
+            {img2 && <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)} className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80" title="Click to enlarge" />}
           </div>
         </td>
       </tr>
-
-      {lightboxUrl && (
-        <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />
-      )}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
     </>
   );
 }
 
-export default function InventoryViewPage() {
-  const router = useRouter();
+export default function PublicSharePage() {
   const params = useParams();
-  const slug = String(params?.slug || '');
+  const token = String(params?.token || '');
 
   const [title, setTitle] = useState('');
   const [year, setYear] = useState('');
   const [brand, setBrand] = useState('');
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
   const [showOwnedOnly, setShowOwnedOnly] = useState(false);
   const [listView, setListView] = useState(false);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
+    if (!token) { setNotFound(true); setLoading(false); return; }
     const supabase = createClient();
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { router.push('/login'); return; }
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sets')
         .select('title, year, brand, rows')
-        .eq('slug', slug)
+        .eq('share_token', token)
         .single();
-      if (data) {
-        setTitle(data.title || '');
-        setYear(data.year ? String(data.year) : '');
-        setBrand(data.brand || '');
-        setRows(data.rows || []);
-      }
+      if (error || !data) { setNotFound(true); setLoading(false); return; }
+      setTitle(data.title || '');
+      setYear(data.year ? String(data.year) : '');
+      setBrand(data.brand || '');
+      setRows(data.rows || []);
       setLoading(false);
     }
     load();
-  }, [slug, router]);
+  }, [token]);
 
   const displayed = rows
     .filter((r) => !showOwnedOnly || String(r['Owned'] || '') === 'Yes')
@@ -185,15 +127,23 @@ export default function InventoryViewPage() {
     );
   }
 
+  if (notFound) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-xl font-semibold text-gray-700">Set not found</p>
+          <p className="text-sm text-gray-500 mt-2">This share link may have been revoked or is invalid.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex items-center justify-between">
+        <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Image src="/sports-collective-logo.png" alt="Sports Collective" width={120} height={30} className="h-8 w-auto" priority />
-            <Link href={`/set/${encodeURIComponent(slug)}`} className="rounded-xl bg-white px-3 py-1 text-sm shadow">
-              ← Edit
-            </Link>
             <h1 className="text-2xl font-semibold">{title}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-3">

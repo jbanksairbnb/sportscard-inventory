@@ -77,6 +77,14 @@ export default function HomePage() {
     router.push('/login');
   }
 
+  async function handleDeleteSet(slug: string, title: string) {
+    if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
+    const supabase = createClient();
+    const { error } = await supabase.from('sets').delete().eq('slug', slug);
+    if (error) { alert('Failed to delete: ' + error.message); return; }
+    setSets((prev) => prev.filter((s) => s.slug !== slug));
+  }
+
   async function handleImportSharedSet() {
     setImportError('');
     setImportSuccess('');
@@ -239,10 +247,10 @@ export default function HomePage() {
               const gainLoss = s.gain_loss || 0;
 
               return (
+                <div key={s.slug} className="relative group">
                 <Link
-                  key={s.slug}
                   href={`/set/${encodeURIComponent(s.slug)}`}
-                  className="rounded-2xl border border-gray-200 bg-white p-4 shadow hover:shadow-md"
+                  className="rounded-2xl border border-gray-200 bg-white p-4 shadow hover:shadow-md block"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1">
@@ -298,6 +306,15 @@ export default function HomePage() {
                     </div>
                   </div>
                 </Link>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteSet(s.slug, s.title)}
+                  title="Delete set"
+                  className="absolute top-2 right-2 z-10 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-400 shadow opacity-0 group-hover:opacity-100 transition-opacity hover:border-red-300 hover:text-red-600"
+                >
+                  🗑
+                </button>
+                </div>
               );
             })}
           </section>

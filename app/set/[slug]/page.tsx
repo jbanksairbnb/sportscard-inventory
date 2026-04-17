@@ -233,6 +233,8 @@ export default function SetEditorPage() {
   const [showShareModal, setShowShareModal] = useState(false);
   const [sharePin, setSharePin] = useState('');
   const [shareCopied, setShareCopied] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -257,6 +259,7 @@ export default function SetEditorPage() {
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
           setRows(data.rows ?? []);
+          setShareToken(data.share_token || null);
         }
       }
     }
@@ -472,6 +475,31 @@ export default function SetEditorPage() {
   }
 
   /* ------------------- Share ------------------- */
+  async function handleGenerateShareLink() {
+    if (!userId || !slug || slug === 'new') return;
+    const token = crypto.randomUUID();
+    const supabase = createClient();
+    const { error } = await supabase.from('sets').update({ share_token: token }).eq('slug', slug).eq('user_id', userId);
+    if (error) { alert('Failed to generate share link: ' + error.message); return; }
+    setShareToken(token);
+  }
+
+  async function handleRevokeShareLink() {
+    if (!userId || !slug || slug === 'new') return;
+    const supabase = createClient();
+    await supabase.from('sets').update({ share_token: null }).eq('slug', slug).eq('user_id', userId);
+    setShareToken(null);
+  }
+
+  function handleCopyPublicLink() {
+    if (!shareToken) return;
+    const url = `${window.location.origin}/share/${shareToken}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setShareLinkCopied(true);
+      setTimeout(() => setShareLinkCopied(false), 2500);
+    });
+  }
+
   function handleCopyShareCode() {
     const pinHash = sharePin.trim() ? simpleHash(sharePin.trim()) : null;
     const code = encodeSharePayload({ title: datasetTitle, year, brand, desc, rows, pinHash });
@@ -734,10 +762,37 @@ export default function SetEditorPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="text-lg font-semibold">Share &ldquo;{datasetTitle}&rdquo;</h2>
-            <p className="mt-1 text-sm text-gray-600">
-              Generate a share code others can import. Optionally set a PIN to protect it.
-            </p>
-            <div className="mt-4">
+
+            {/* Public link */}
+            <div className="mt-4 rounded-xl bg-gray-50 border border-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-gray-700">Public Link</h3>
+              <p className="mt-1 text-xs text-gray-500">Anyone with this link can view your inventory without logging in.</p>
+              {shareToken ? (
+                <div className="mt-2 flex gap-2">
+                  <button type="button" onClick={handleCopyPublicLink}
+                    className="flex-1 rounded-xl bg-blue-600 px-3 py-1.5 text-sm text-white shadow hover:bg-blue-700">
+                    {shareLinkCopied ? 'Copied!' : 'Copy Link'}
+                  </button>
+                  <button type="button" onClick={handleRevokeShareLink}
+                    className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow hover:bg-gray-50">
+                    Revoke
+                  </button>
+                </div>
+              ) : (
+                <button type="button" onClick={handleGenerateShareLink}
+                  className="mt-2 w-full rounded-xl bg-blue-600 px-3 py-1.5 text-sm text-white shadow hover:bg-blue-700">
+                  Generate Public Link
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4 border-t pt-4">
+              <h3 className="text-sm font-semibold text-gray-700">Share Code (import-based)</h3>
+              <p className="mt-1 text-xs text-gray-600">
+                Generate a code others can paste to import a copy into their own account. Optionally PIN-protect it.
+              </p>
+            </div>
+            <div className="mt-3">
               <label className="block text-sm font-medium text-gray-700">PIN (optional)</label>
               <input type="password" value={sharePin} onChange={(e) => setSharePin(e.target.value)}
                 placeholder="Leave blank for no PIN"
