@@ -392,21 +392,25 @@ export default function SetEditorPage() {
           .map((r: any) => {
             const norm: Record<string, any> = {};
             EXPECTED_HEADERS.forEach((h) => { norm[h] = ''; });
+            const certNum = String(r['Cert #'] ?? '').trim();
+            const isOwned = certNum !== '';
             norm['Card #'] = String(r['Card #'] ?? '').trim();
             norm['Description'] = String(r['Item'] ?? '').trim();
-            norm['Grade'] = normalizeNumericGrade(r['Grade']);
-            norm['Grading Company'] = 'PSA';
-            norm['Graded'] = 'Yes';
-            norm['Owned'] = 'Yes';
-            const cost = String(r['My Cost'] ?? '').trim();
-            if (cost && Number(cost) > 0) norm['Cost'] = toCurrency(stripCurrency(cost));
-            const dp = String(r['Purchase Date'] ?? '').trim();
-            if (dp) {
-              const digits = dp.replace(/[^0-9]/g, '');
-              if (digits.length === 8) norm['Date Purchased'] = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-              else norm['Date Purchased'] = dp;
+            norm['Owned'] = isOwned ? 'Yes' : 'No';
+            if (isOwned) {
+              norm['Grade'] = normalizeNumericGrade(r['Grade']);
+              norm['Grading Company'] = 'PSA';
+              norm['Graded'] = 'Yes';
+              const cost = String(r['My Cost'] ?? '').trim();
+              if (cost && Number(cost) > 0) norm['Cost'] = toCurrency(stripCurrency(cost));
+              const dp = String(r['Purchase Date'] ?? '').trim();
+              if (dp) {
+                const digits = dp.replace(/[^0-9]/g, '');
+                if (digits.length === 8) norm['Date Purchased'] = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+                else norm['Date Purchased'] = dp;
+              }
+              norm['Purchased From'] = String(r['Source'] ?? '').trim();
             }
-            norm['Purchased From'] = String(r['Source'] ?? '').trim();
             return norm;
           });
         setRows(cleaned);
@@ -605,7 +609,7 @@ export default function SetEditorPage() {
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Image src="/sports-collective-logo.png" alt="Sports Collective" width={240} height={64} className="h-8 w-auto" priority />
+            <Link href="/"><Image src="/sports-collective-logo.png" alt="Sports Collective" width={240} height={64} className="h-8 w-auto" priority /></Link>
             <Link href="/" className="rounded-xl bg-white px-3 py-1 text-sm shadow">← Saved Sets</Link>
             <h1 className="text-2xl font-semibold">{datasetTitle || "New Set"}</h1>
           </div>
