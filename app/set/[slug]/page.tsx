@@ -109,18 +109,62 @@ function encodeSharePayload(data: {
   return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
 }
 
+/* =====================  Image Modal  ===================== */
+function ImageViewModal({
+  url,
+  onClose,
+  onDelete,
+}: {
+  url: string;
+  onClose: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85"
+      onClick={onClose}
+    >
+      <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
+        <img src={url} alt="Card" className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain" />
+        <div className="absolute top-2 right-2 flex gap-2">
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              title="Delete image"
+              className="rounded-full bg-red-600 px-3 py-1.5 text-white text-sm shadow hover:bg-red-700"
+            >
+              🗑 Delete
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full bg-gray-900/80 px-3 py-1.5 text-white text-sm shadow hover:bg-gray-900"
+          >
+            ✕ Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* =====================  Image Cell  ===================== */
 function ImageCell({
   url,
   label,
   onUpload,
+  onDelete,
 }: {
   url: string;
   label: string;
   onUpload: (file: File) => Promise<void>;
+  onDelete: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -135,13 +179,22 @@ function ImageCell({
     <div className="flex flex-col items-center gap-1">
       <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
       {url ? (
-        <img
-          src={url}
-          alt={label}
-          title="Click to replace"
-          onClick={() => inputRef.current?.click()}
-          className="h-16 w-16 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-75"
-        />
+        <>
+          <img
+            src={url}
+            alt={label}
+            title="Click to view full size"
+            onClick={() => setShowModal(true)}
+            className="h-16 w-16 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-75"
+          />
+          {showModal && (
+            <ImageViewModal
+              url={url}
+              onClose={() => setShowModal(false)}
+              onDelete={() => { onDelete(); setShowModal(false); }}
+            />
+          )}
+        </>
       ) : (
         <button
           type="button"
@@ -393,6 +446,25 @@ export default function SetEditorPage() {
     scheduleAutoSave();
   }
 
+  /* ------------------- Image delete ------------------- */
+  async function handleImageDelete(origIndex: number, slot: 1 | 2) {
+    if (!userId || !slug || slug === 'new') return;
+    const field = slot === 1 ? 'Image 1' : 'Image 2';
+    const url = rows[origIndex]?.[field];
+    if (url) {
+      const supabase = createClient();
+      const ext = url.split('.').pop()?.split('?')[0] || 'jpg';
+      const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
+      await supabase.storage.from('card-images').remove([path]);
+    }
+    setRows((prev) => {
+      const copy = [...prev];
+      copy[origIndex] = { ...copy[origIndex], [field]: '' };
+      return copy;
+    });
+    scheduleAutoSave();
+  }
+
   /* ------------------- Export ------------------- */
   function handleExport() {
     if (!rows.length) { alert("No data to export."); return; }
@@ -555,6 +627,12 @@ export default function SetEditorPage() {
                   className={`rounded-xl px-3 py-1 shadow border ${showNeededOnly ? 'bg-amber-500 text-white border-amber-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}>
                   {showNeededOnly ? 'Showing: Cards Needed' : 'Show Cards Needed'}
                 </button>
+                <Link
+                  href={`/set/${encodeURIComponent(slug)}/view`}
+                  className="rounded-xl px-3 py-1 shadow border bg-white text-gray-800 border-gray-300 hover:bg-gray-50"
+                >
+                  View Inventory
+                </Link>
               </div>
             </div>
           </div>
@@ -627,6 +705,7 @@ export default function SetEditorPage() {
                           url={v(row["Image 1"])}
                           label="Img 1"
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
+                          onDelete={() => handleImageDelete(origIndex, 1)}
                         />
                       </td>
                       <td className="px-3 py-2 align-middle">
@@ -634,6 +713,7 @@ export default function SetEditorPage() {
                           url={v(row["Image 2"])}
                           label="Img 2"
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
+                          onDelete={() => handleImageDelete(origIndex, 2)}
                         />
                       </td>
                     </tr>
