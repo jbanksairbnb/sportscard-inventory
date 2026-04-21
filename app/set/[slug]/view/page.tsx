@@ -3,41 +3,24 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
+import SCLogo from '@/components/SCLogo';
 
-function ImageLightbox({ urls, startIndex, onClose }: { urls: string[]; startIndex: number; onClose: () => void }) {
-  const [idx, setIdx] = useState(startIndex);
-  const canPrev = idx > 0;
-  const canNext = idx < urls.length - 1;
-
+function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85" onClick={onClose}>
-      <div className="relative max-w-4xl max-h-[90vh] p-4 flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          onClick={() => setIdx((i) => i - 1)}
-          disabled={!canPrev}
-          className="rounded-full bg-gray-900/80 px-4 py-3 text-white text-xl hover:bg-gray-900 disabled:opacity-20"
-        >
-          ‹
-        </button>
-        <div className="flex flex-col items-center gap-2">
-          <img src={urls[idx]} alt="Card" className="max-w-full max-h-[75vh] rounded-lg shadow-2xl object-contain" />
-          {urls.length > 1 && (
-            <span className="text-white text-sm opacity-70">{idx + 1} / {urls.length}</span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setIdx((i) => i + 1)}
-          disabled={!canNext}
-          className="rounded-full bg-gray-900/80 px-4 py-3 text-white text-xl hover:bg-gray-900 disabled:opacity-20"
-        >
-          ›
-        </button>
-        <button type="button" onClick={onClose} className="absolute top-2 right-2 rounded-full bg-gray-900/80 px-3 py-1 text-white text-sm hover:bg-gray-900">
-          ✕
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(42, 20, 52, 0.88)',
+      }}
+      onClick={onClose}
+    >
+      <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
+        <img src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <button type="button" onClick={onClose} className="btn btn-sm"
+          style={{ position: 'absolute', top: 4, right: 4 }}>
+          ✕ Close
         </button>
       </div>
     </div>
@@ -45,81 +28,100 @@ function ImageLightbox({ urls, startIndex, onClose }: { urls: string[]; startInd
 }
 
 function CardTile({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-
+  const [lightboxUrl, setLightboxUrl] = useState('');
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const description = row['Description'] || '';
   const gradingCo = row['Grading Company'] || '';
   const grade = row['Grade'] || '';
   const salePrice = row['Sale Price'] || '';
-  const imgs = [row['Image 1'] || '', row['Image 2'] || ''].filter(Boolean);
-  const details = [gradingCo, grade ? `Grade ${grade}` : '', salePrice].filter(Boolean).join('  •  ');
+  const img1 = row['Image 1'] || '';
+  const img2 = row['Image 2'] || '';
+  const owned = String(row['Owned'] || '') === 'Yes';
+  const details = [gradingCo, grade ? `Grade ${grade}` : '', salePrice].filter(Boolean).join('  ·  ');
 
   return (
     <>
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow flex flex-col gap-2">
-        <div className="text-xs text-gray-400 font-medium tracking-wide uppercase">
-          {[year, brand].filter(Boolean).join(' • ')}
+      <div className="panel" style={{ padding: '14px 16px', position: 'relative' }}>
+        {owned && (
+          <div style={{
+            position: 'absolute', top: 10, right: 10,
+            background: 'var(--teal)', color: 'var(--cream)',
+            fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+            padding: '2px 7px', borderRadius: 100,
+          }}>OWNED</div>
+        )}
+        <div className="eyebrow" style={{ fontSize: 8.5, color: 'var(--orange)', marginBottom: 4 }}>
+          {[year, brand].filter(Boolean).join(' · ')}
         </div>
-        <div>
-          <span className="text-lg font-bold text-gray-800">{cardNum}</span>
+        <div style={{ marginBottom: 4 }}>
+          <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink-mute)' }}>{cardNum}</span>
           {cardNum && description && ' '}
-          <span className="text-lg font-semibold text-gray-700">{description}</span>
+          <span className="display" style={{ fontSize: 14, color: 'var(--plum)' }}>{description}</span>
         </div>
-        {details && <div className="text-sm text-gray-500">{details}</div>}
-        {imgs.length > 0 && (
-          <div className="flex gap-2 mt-1">
-            {imgs.map((src, i) => (
-              <img
-                key={i}
-                src={src}
-                alt={i === 0 ? 'Front' : 'Back'}
-                onClick={() => setLightboxIndex(i)}
-                className="h-20 w-20 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
-                title="Click to enlarge"
-              />
-            ))}
+        {details && (
+          <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-soft)', marginBottom: 6 }}>{details}</div>
+        )}
+        {(img1 || img2) && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            {img1 && (
+              <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
+                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
+            )}
+            {img2 && (
+              <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
+                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
+            )}
           </div>
         )}
       </div>
-      {lightboxIndex !== null && (
-        <ImageLightbox urls={imgs} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />
-      )}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
     </>
   );
 }
 
 function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const imgs = [row['Image 1'] || '', row['Image 2'] || ''].filter(Boolean);
+  const [lightboxUrl, setLightboxUrl] = useState('');
+  const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
+  const img1 = row['Image 1'] || '';
+  const img2 = row['Image 2'] || '';
 
   return (
     <>
-      <tr className="border-b last:border-0 hover:bg-gray-50">
-        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{[year, brand].filter(Boolean).join(' • ')}</td>
-        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-800">{row['Card #'] ? `#${row['Card #']}` : ''}</td>
-        <td className="px-3 py-2 text-sm text-gray-700">{row['Description'] || ''}</td>
-        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Grading Company'] || ''}</td>
-        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Grade'] ? `Grade ${row['Grade']}` : ''}</td>
-        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">{row['Sale Price'] || ''}</td>
-        <td className="px-3 py-2">
-          <div className="flex gap-1">
-            {imgs.map((src, i) => (
-              <img
-                key={i}
-                src={src}
-                alt={i === 0 ? 'Front' : 'Back'}
-                onClick={() => setLightboxIndex(i)}
-                className="h-12 w-12 rounded border border-gray-200 object-cover cursor-pointer hover:opacity-80"
-                title="Click to enlarge"
-              />
-            ))}
+      <tr style={{ borderTop: '1.5px solid var(--cream-warm)' }}
+        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--cream-warm)'}
+        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}>
+        <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 8.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>
+          {[year, brand].filter(Boolean).join(' · ')}
+        </td>
+        <td className="mono" style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>
+          {cardNum}
+        </td>
+        <td className="display" style={{ padding: '10px 14px', fontSize: 13, color: 'var(--plum)' }}>
+          {row['Description'] || ''}
+        </td>
+        <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 9, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+          {row['Grading Company'] || ''}
+        </td>
+        <td className="mono" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>
+          {row['Grade'] ? `Grade ${row['Grade']}` : ''}
+        </td>
+        <td className="mono" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+          {row['Sale Price'] || ''}
+        </td>
+        <td style={{ padding: '10px 14px' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {img1 && (
+              <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
+                style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+            )}
+            {img2 && (
+              <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
+                style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+            )}
           </div>
         </td>
       </tr>
-      {lightboxIndex !== null && (
-        <ImageLightbox urls={imgs} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />
-      )}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
     </>
   );
 }
@@ -136,7 +138,6 @@ export default function InventoryViewPage() {
   const [loading, setLoading] = useState(true);
   const [showOwnedOnly, setShowOwnedOnly] = useState(false);
   const [listView, setListView] = useState(false);
-  const [search, setSearch] = useState('');
 
   useEffect(() => {
     const supabase = createClient();
@@ -159,97 +160,124 @@ export default function InventoryViewPage() {
     load();
   }, [slug, router]);
 
-  const displayed = rows
-    .filter((r) => !showOwnedOnly || String(r['Owned'] || '') === 'Yes')
-    .filter((r) => {
-      if (!search.trim()) return true;
-      const q = search.toLowerCase();
-      return (
-        String(r['Card #'] || '').toLowerCase().includes(q) ||
-        String(r['Description'] || '').toLowerCase().includes(q)
-      );
-    });
+  const displayed = showOwnedOnly
+    ? rows.filter((r) => String(r['Owned'] || '') === 'Yes')
+    : rows;
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">Loading…</p>
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <SCLogo size={80} />
+          <p className="eyebrow" style={{ marginTop: 20, color: 'var(--ink-mute)' }}>Loading inventory…</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/">
-              <Image src="/sports-collective-logo.png" alt="Sports Collective" width={120} height={30} className="h-8 w-auto" priority />
-            </Link>
-            <Link href={`/set/${encodeURIComponent(slug)}`} className="rounded-xl bg-white px-3 py-1 text-sm shadow">
-              ← Edit
-            </Link>
-            <h1 className="text-2xl font-semibold">{title}</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search cards…"
-              className="rounded-xl border border-gray-300 px-3 py-1.5 text-sm w-44"
-            />
-            <button
-              type="button"
-              onClick={() => setListView((v) => !v)}
-              className={`rounded-xl px-3 py-1.5 text-sm shadow border ${listView ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}
-            >
-              {listView ? 'Grid View' : 'List View'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowOwnedOnly((v) => !v)}
-              className={`rounded-xl px-3 py-1.5 text-sm shadow border ${showOwnedOnly ? 'bg-amber-500 text-white border-amber-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}
-            >
-              {showOwnedOnly ? 'Showing: Owned' : 'Show Owned Only'}
-            </button>
-            <span className="text-sm text-gray-500">{displayed.length} cards</span>
-          </div>
-        </header>
+    <div style={{ minHeight: '100vh' }}>
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        background: 'rgba(248, 236, 208, 0.94)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        borderBottom: '3px solid var(--plum)',
+      }}>
+        <div style={{
+          maxWidth: 1400, margin: '0 auto', padding: '10px 28px',
+          display: 'flex', alignItems: 'center', gap: 20,
+        }}>
+          <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flexShrink: 0 }}>
+            <SCLogo size={40} />
+            <div style={{ lineHeight: 0.95 }}>
+              <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
+              <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
+            </div>
+          </Link>
 
+          <Link href={`/set/${encodeURIComponent(slug)}`} className="btn btn-outline btn-sm" style={{ flexShrink: 0 }}>
+            ← Edit
+          </Link>
+
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {title}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <button type="button" onClick={() => setListView((v) => !v)}
+              className={`btn btn-sm ${listView ? 'btn-primary' : 'btn-ghost'}`}>
+              {listView ? 'Grid' : 'List'}
+            </button>
+            <button type="button" onClick={() => setShowOwnedOnly((v) => !v)}
+              className={`btn btn-sm ${showOwnedOnly ? 'btn-primary' : 'btn-ghost'}`}>
+              {showOwnedOnly ? 'Owned Only' : 'All Cards'}
+            </button>
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700 }}>
+              {displayed.length} cards
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 28px 80px' }}>
         {displayed.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-300 p-8 text-center text-gray-500">
-            No cards to display.
+          <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
+            <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No cards to display</div>
+            <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: 0 }}>
+              {showOwnedOnly ? 'No owned cards yet.' : 'This set has no cards.'}
+            </p>
           </div>
         ) : listView ? (
-          <section className="overflow-x-auto rounded-2xl bg-white shadow">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-100">
-                <tr className="text-left">
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Year • Brand</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Card #</th>
-                  <th className="px-3 py-2 font-medium">Description</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Grading Co.</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Grade</th>
-                  <th className="px-3 py-2 font-medium whitespace-nowrap">Sale Price</th>
-                  <th className="px-3 py-2 font-medium">Images</th>
+          <div className="panel-bordered" style={{ overflow: 'hidden', padding: 0 }}>
+            <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--plum)' }}>
+                  {['Year · Brand', 'Card #', 'Description', 'Grading Co.', 'Grade', 'Sale Price', 'Images'].map((h) => (
+                    <th key={h} style={{
+                      padding: '10px 14px', textAlign: 'left',
+                      fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
+                      letterSpacing: '0.18em', textTransform: 'uppercase',
+                      color: 'var(--mustard)', whiteSpace: 'nowrap',
+                    }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody>
+              <tbody style={{ background: 'var(--cream)' }}>
                 {displayed.map((row, i) => (
                   <CardTableRow key={i} row={row} year={year} brand={brand} />
                 ))}
               </tbody>
             </table>
-          </section>
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
             {displayed.map((row, i) => (
               <CardTile key={i} row={row} year={year} brand={brand} />
             ))}
           </div>
         )}
       </div>
+
+      <footer style={{
+        borderTop: '3px solid var(--plum)', padding: '24px 28px',
+        maxWidth: 1400, margin: '0 auto',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        color: 'var(--plum)', fontSize: 11.5, letterSpacing: '0.12em',
+        textTransform: 'uppercase', fontWeight: 700,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <SCLogo size={32} />
+          <div style={{ lineHeight: 0.9 }}>
+            <div className="wordmark" style={{ fontSize: 16, color: 'var(--orange)' }}>Sports</div>
+            <div className="display" style={{ fontSize: 10, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 20 }}>
+          <span>Est. 2023</span>
+          <span>Keep on collectin&apos;</span>
+        </div>
+      </footer>
     </div>
   );
 }
