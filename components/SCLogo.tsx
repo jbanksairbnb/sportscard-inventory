@@ -16,6 +16,14 @@ function Star({
   );
 }
 
+const ROPE_DOTS = Array.from({ length: 44 }, (_, i) => {
+  const a = (i / 44) * Math.PI * 2 - Math.PI / 2;
+  return { cx: 100 + Math.cos(a) * 92, cy: 100 + Math.sin(a) * 92 };
+});
+
+const SUNBURST_ANGLES = Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2);
+
+
 export default function SCLogo({ size = 80 }: { size?: number }) {
   const uid = useId();
   const arcTopId = `arc-top-${uid}`;
@@ -37,22 +45,18 @@ export default function SCLogo({ size = 80 }: { size?: number }) {
       <circle cx="100" cy="100" r="96" fill="#3d1f4a" />
       <circle cx="100" cy="100" r="88" fill="none" stroke="#f5e9d0" strokeWidth="2" />
 
-      {Array.from({ length: 44 }).map((_, i) => {
-        const a = (i / 44) * Math.PI * 2 - Math.PI / 2;
-        return (
-          <circle key={i} cx={100 + Math.cos(a) * 92} cy={100 + Math.sin(a) * 92} r="1.8" fill="#e5b53d" />
-        );
-      })}
+{ROPE_DOTS.map((dot, i) => (
+  <circle key={i} cx={dot.cx} cy={dot.cy} r="1.8" fill="#e5b53d" />
+))}
 
       <text fontFamily="Alfa Slab One, Cooper Black, Georgia, serif" fontSize="22" fill="#e8742c" letterSpacing="2">
         <textPath href={`#${arcTopId}`} startOffset="50%" textAnchor="middle">SPORTS</textPath>
       </text>
 
       <g transform="translate(100 100)">
-        {Array.from({ length: 12 }).map((_, i) => {
-          const a = (i / 12) * Math.PI * 2;
-          return <polygon key={i} points="-4,-22 4,-22 0,-54" fill="#e5b53d" transform={`rotate(${(a * 180) / Math.PI})`} />;
-        })}
+{SUNBURST_ANGLES.map((a, i) => (
+  <polygon key={i} points="-4,-22 4,-22 0,-54" fill="#e5b53d" transform={`rotate(${(a * 180) / Math.PI})`} />
+))}
       </g>
 
       <g transform="translate(100 100) rotate(-20)">
