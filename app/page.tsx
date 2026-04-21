@@ -144,7 +144,7 @@ function SetCard({
           </div>
           <div style={{
             display: 'flex', justifyContent: 'space-between',
-            fontFamily: 'var(--font-mono)', fontSize: 10.5,
+            fontFamily: 'var(--font-mono)', fontSize: 12,
             color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
           }}>
             <span>{owned} / {s.row_count || 0} cards</span>
@@ -161,11 +161,11 @@ function SetCard({
                 background: 'var(--paper)', border: '1.5px solid var(--plum)',
                 borderRadius: 10, padding: '7px 10px',
               }}>
-                <div className="eyebrow" style={{ fontSize: 8.5, color: 'var(--ink-mute)', marginBottom: 2 }}>
+                <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)', marginBottom: 2 }}>
                   {label}
                 </div>
                 <div className="mono" style={{
-                  fontSize: 11.5, fontWeight: 700,
+                  fontSize: 12, fontWeight: 700,
                   color: gain === undefined ? 'var(--ink)' : gain >= 0 ? 'var(--teal)' : 'var(--rust)',
                 }}>
                   {value}
@@ -175,7 +175,7 @@ function SetCard({
           </div>
 
           {s.updated_at && (
-            <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 8 }}>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 8 }}>
               Updated {new Date(s.updated_at).toLocaleString()}
             </div>
           )}
@@ -281,7 +281,7 @@ export default function HomePage() {
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 32 }}>
           <div className="section-head" style={{ flex: 1, marginBottom: 0 }}>
-            <span className="eyebrow" style={{ fontSize: 12 }}>★ My Shelf ★</span>
+            <span className="eyebrow" style={{ fontSize: 14 }}>★ My Shelf ★</span>
           </div>
           <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
             <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
