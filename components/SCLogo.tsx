@@ -16,12 +16,17 @@ function Star({
   );
 }
 
+// Rounded to 3dp so Node.js and browser V8 produce identical attribute strings
 const ROPE_DOTS = Array.from({ length: 44 }, (_, i) => {
   const a = (i / 44) * Math.PI * 2 - Math.PI / 2;
-  return { cx: 100 + Math.cos(a) * 92, cy: 100 + Math.sin(a) * 92 };
+  return {
+    cx: (100 + Math.cos(a) * 92).toFixed(3),
+    cy: (100 + Math.sin(a) * 92).toFixed(3),
+  };
 });
 
-const SUNBURST_ANGLES = Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2);
+// Integer degrees avoid trig precision differences entirely
+const SUNBURST_ROTATIONS = Array.from({ length: 12 }, (_, i) => Math.round((i / 12) * 360));
 
 
 export default function SCLogo({ size = 80 }: { size?: number }) {
@@ -54,8 +59,8 @@ export default function SCLogo({ size = 80 }: { size?: number }) {
       </text>
 
       <g transform="translate(100 100)">
-{SUNBURST_ANGLES.map((a, i) => (
-  <polygon key={i} points="-4,-22 4,-22 0,-54" fill="#e5b53d" transform={`rotate(${(a * 180) / Math.PI})`} />
+{SUNBURST_ROTATIONS.map((deg, i) => (
+  <polygon key={i} points="-4,-22 4,-22 0,-54" fill="#e5b53d" transform={`rotate(${deg})`} />
 ))}
       </g>
 
