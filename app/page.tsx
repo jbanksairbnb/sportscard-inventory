@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { createClient } from '@/lib/supabase/client';
+import SCLogo from '@/components/SCLogo';
 
 type SetRow = {
   slug: string;
@@ -22,21 +22,203 @@ type SetRow = {
   updated_at: number;
 };
 
-/* =====================  Share helpers  ===================== */
-function simpleHash(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-  return (h >>> 0).toString(16);
+const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
+const DONUT_COLORS = ['#e8742c', '#ecdbb8'];
+
+const fmtCurrency = (n: number) =>
+  `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => void }) {
+  return (
+    <header style={{
+      position: 'sticky',
+      top: 0,
+      zIndex: 50,
+      background: 'rgba(248, 236, 208, 0.94)',
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
+      borderBottom: '3px solid var(--plum)',
+    }}>
+      <div style={{
+        maxWidth: 1280,
+        margin: '0 auto',
+        padding: '10px 28px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 28,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <SCLogo size={44} />
+          <div style={{ lineHeight: 0.95 }}>
+            <div className="wordmark" style={{ fontSize: 22, color: 'var(--orange)' }}>Sports</div>
+            <div className="display" style={{ fontSize: 13, color: 'var(--plum)', letterSpacing: '0.04em' }}>
+              COLLECTIVE
+            </div>
+          </div>
+        </div>
+
+        <nav style={{
+          display: 'flex',
+          gap: 22,
+          fontSize: 11.5,
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          color: 'var(--ink-soft)',
+        }}>
+          <span style={{
+            color: 'var(--plum)',
+            borderBottom: '3px solid var(--orange)',
+            paddingBottom: 4,
+            cursor: 'default',
+          }}>
+            My Shelf
+          </span>
+          <Link href="/shared" style={{ color: 'inherit' }}>Community</Link>
+        </nav>
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
+          {userEmail && (
+            <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
+              {userEmail}
+            </span>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={onLogout}>
+            Sign out
+          </button>
+        </div>
+      </div>
+    </header>
+  );
 }
-function decodeSharePayload(code: string): any | null {
-  try {
-    return JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
-  } catch {
-    return null;
-  }
-}
-function slugify(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 80);
+
+function SetCard({
+  s,
+  colorIndex,
+  onDelete,
+}: {
+  s: SetRow;
+  colorIndex: number;
+  onDelete: (slug: string, title: string) => void;
+}) {
+  const color = SET_COLORS[colorIndex % SET_COLORS.length];
+  const pct = s.owned_pct || 0;
+  const owned = s.owned_count || 0;
+  const gainLoss = s.gain_loss || 0;
+  const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
+
+  const donutData = [
+    { name: 'Owned',  value: Math.round(pct * 10) / 10 },
+    { name: 'Needed', value: Math.round(Math.max(0, 100 - pct) * 10) / 10 },
+  ];
+
+  return (
+    <div className="panel-bordered" style={{ padding: '18px 20px', position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div style={{
+          width: 58, height: 58,
+          background: color, color: 'var(--cream)',
+          display: 'grid', placeItems: 'center',
+          fontFamily: 'var(--font-display)', fontSize: 20,
+          borderRadius: 10, border: '2px solid var(--plum)',
+          boxShadow: '0 2px 0 var(--plum)', flexShrink: 0,
+        }}>
+          {yearShort}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Link href={`/set/${encodeURIComponent(s.slug)}`} style={{ textDecoration: 'none' }}>
+            <div className="display" style={{
+              fontSize: 17, color: 'var(--plum)', marginBottom: 2,
+              lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {s.title}
+            </div>
+          </Link>
+          <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 10 }}>
+            {[s.year, s.brand].filter(Boolean).join(' · ')}
+          </div>
+
+          <div className="progress" style={{ marginBottom: 6 }}>
+            <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+          </div>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            fontFamily: 'var(--font-mono)', fontSize: 10.5,
+            color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            <span>{owned} / {s.row_count || 0} cards</span>
+            <span>{pct.toFixed(1)}%</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
+            {[
+              { label: 'Cost',      value: fmtCurrency(s.total_cost) },
+              { label: 'Value',     value: fmtCurrency(s.total_value) },
+              { label: 'Gain/Loss', value: fmtCurrency(gainLoss), gain: gainLoss },
+            ].map(({ label, value, gain }) => (
+              <div key={label} style={{
+                background: 'var(--paper)', border: '1.5px solid var(--plum)',
+                borderRadius: 10, padding: '7px 10px',
+              }}>
+                <div className="eyebrow" style={{ fontSize: 8.5, color: 'var(--ink-mute)', marginBottom: 2 }}>
+                  {label}
+                </div>
+                <div className="mono" style={{
+                  fontSize: 11.5, fontWeight: 700,
+                  color: gain === undefined ? 'var(--ink)' : gain >= 0 ? 'var(--teal)' : 'var(--rust)',
+                }}>
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {s.updated_at && (
+            <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 8 }}>
+              Updated {new Date(s.updated_at).toLocaleString()}
+            </div>
+          )}
+        </div>
+
+        <div style={{ flexShrink: 0, textAlign: 'center' }}>
+          <div style={{ width: 80, height: 80 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Tooltip formatter={(v: number) => `${v}%`} />
+                <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={26} outerRadius={38} stroke="none">
+                  {donutData.map((_, idx) => (
+                    <Cell key={idx} fill={DONUT_COLORS[idx % DONUT_COLORS.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="eyebrow" style={{ fontSize: 8, color: 'var(--ink-mute)', marginTop: 2 }}>Owned</div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => onDelete(s.slug, s.title)}
+        title="Delete set"
+        style={{
+          position: 'absolute', top: 10, right: 10,
+          padding: '3px 8px', fontSize: 11,
+          fontFamily: 'var(--font-body)', fontWeight: 700,
+          color: 'var(--ink-mute)', background: 'var(--paper)',
+          border: '1.5px solid var(--plum)', borderRadius: 100,
+          cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s',
+        }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
+        onFocus={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
+        onBlur={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
+      >
+        ✕
+      </button>
+    </div>
+  );
 }
 
 export default function HomePage() {
@@ -45,26 +227,17 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // Import shared set state
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [importCode, setImportCode] = useState('');
-  const [importPin, setImportPin] = useState('');
-  const [importError, setImportError] = useState('');
-  const [importSuccess, setImportSuccess] = useState('');
-  const importCodeRef = useRef<HTMLTextAreaElement>(null);
-
   useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserEmail(user.email || '');
-
       const { data } = await supabase
         .from('sets')
         .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at')
+        .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
-
       if (data) setSets(data as SetRow[]);
       setLoading(false);
     }
@@ -77,80 +250,13 @@ export default function HomePage() {
     router.push('/login');
   }
 
-  async function handleImportSharedSet() {
-    setImportError('');
-    setImportSuccess('');
-    const payload = decodeSharePayload(importCode);
-    if (!payload || typeof payload !== 'object') {
-      setImportError('Invalid share code. Please check and try again.');
-      return;
-    }
-    if (payload.pinHash) {
-      if (!importPin.trim()) {
-        setImportError('This set is PIN-protected. Please enter the PIN.');
-        return;
-      }
-      if (simpleHash(importPin.trim()) !== payload.pinHash) {
-        setImportError('Incorrect PIN.');
-        return;
-      }
-    }
-
+  async function handleDeleteSet(slug: string, title: string) {
+    if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // Find a unique slug
-    const base = slugify(payload.title || 'imported-set');
-    const { data: existing } = await supabase
-      .from('sets')
-      .select('slug')
-      .ilike('slug', `${base}%`);
-    const existingSlugs = new Set((existing || []).map((r: any) => r.slug as string));
-    let slug = base, i = 2;
-    while (existingSlugs.has(slug)) slug = `${base}-${i++}`;
-
-    const rows = Array.isArray(payload.rows) ? payload.rows : [];
-    const owned = rows.filter((r: any) => String(r?.['Owned'] || '') === 'Yes').length;
-    const ownedPct = rows.length ? (owned / rows.length) * 100 : 0;
-
-    const { error } = await supabase.from('sets').insert({
-      user_id: user.id,
-      slug,
-      title: payload.title,
-      year: Number(payload.year) || null,
-      brand: payload.brand || '',
-      description: payload.desc || '',
-      rows,
-      row_count: rows.length,
-      owned_count: owned,
-      owned_pct: ownedPct,
-      total_cost: 0,
-      total_value: 0,
-      gain_loss: 0,
-      updated_at: Date.now(),
-    });
-
-    if (error) {
-      setImportError('Failed to import: ' + error.message);
-      return;
-    }
-
-    setImportSuccess(`Imported "${payload.title}" successfully!`);
-    setImportCode('');
-    setImportPin('');
-
-    // Refresh list
-    const { data } = await supabase
-      .from('sets')
-      .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at')
-      .order('updated_at', { ascending: false });
-    if (data) setSets(data as SetRow[]);
+    const { error } = await supabase.from('sets').delete().eq('slug', slug);
+    if (error) { alert('Failed to delete: ' + error.message); return; }
+    setSets((prev) => prev.filter((s) => s.slug !== slug));
   }
-
-  const COLORS = ['#10b981', '#e5e7eb'];
-  const fmtCurrency = (n: number) =>
-    `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const sorted = useMemo(
     () => [...sets].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0)),
@@ -159,202 +265,69 @@ export default function HomePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">Loading…</p>
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <SCLogo size={80} />
+          <p className="eyebrow" style={{ marginTop: 20, color: 'var(--ink-mute)' }}>Loading your shelf…</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="mx-auto max-w-5xl space-y-6">
-        {/* Header */}
-        <header className="flex flex-col items-center gap-2">
-          <div className="w-full flex items-center justify-between">
-            <Image
-              src="/sports-collective-logo.png"
-              alt="Sports Collective logo"
-              width={120}
-              height={30}
-              priority
-            />
-            <div className="flex items-center gap-3 text-sm text-gray-600">
-              <span className="hidden sm:inline">{userEmail}</span>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm shadow hover:bg-gray-50"
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-          <Image
-            src="/Sets.png"
-            alt="Your Sets secondary logo"
-            width={300}
-            height={100}
-          />
-        </header>
+    <div style={{ minHeight: '100vh' }}>
+      <TopNav userEmail={userEmail} onLogout={handleLogout} />
 
-        {/* Action buttons */}
-        <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setImportCode('');
-              setImportPin('');
-              setImportError('');
-              setImportSuccess('');
-              setShowImportModal(true);
-            }}
-            className="rounded-2xl border border-emerald-600 bg-white px-4 py-2 text-emerald-700 shadow hover:bg-emerald-50"
-          >
-            Import Shared Set
-          </button>
-          <Link
-            href="/set/new"
-            className="rounded-2xl bg-blue-600 px-4 py-2 text-white shadow hover:bg-blue-700"
-          >
-            New Upload
-          </Link>
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 32 }}>
+          <div className="section-head" style={{ flex: 1, marginBottom: 0 }}>
+            <span className="eyebrow" style={{ fontSize: 12 }}>★ My Shelf ★</span>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+            <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
+            <Link href="/set/new" className="btn btn-primary btn-sm">+ New Upload</Link>
+          </div>
         </div>
 
         {sorted.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-300 p-8 text-center text-gray-600">
-            No saved sets yet. Click <span className="font-medium">New Upload</span> to import a CSV and start editing.
+          <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'center' }}>
+              <SCLogo size={64} />
+            </div>
+            <div className="display" style={{ fontSize: 26, color: 'var(--plum)', marginBottom: 10 }}>No sets yet</div>
+            <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: '0 auto 24px', maxWidth: 360 }}>
+              Import a CSV to start tracking your collection.
+            </p>
+            <Link href="/set/new" className="btn btn-primary">+ New Upload</Link>
           </div>
         ) : (
-          <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {sorted.map((s) => {
-              const owned = s.owned_count || 0;
-              const pct = s.owned_pct || 0;
-              const needPct = Math.max(0, 100 - pct);
-              const data = [
-                { name: 'Owned', value: Math.round(pct * 10) / 10 },
-                { name: 'Needed', value: Math.round(needPct * 10) / 10 },
-              ];
-              const totalCost = s.total_cost || 0;
-              const totalValue = s.total_value || 0;
-              const gainLoss = s.gain_loss || 0;
-
-              return (
-                <Link
-                  key={s.slug}
-                  href={`/set/${encodeURIComponent(s.slug)}`}
-                  className="rounded-2xl border border-gray-200 bg-white p-4 shadow hover:shadow-md"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="text-lg font-semibold">{s.title}</div>
-                      <div className="text-sm text-gray-600">{s.year} • {s.brand}</div>
-                      <div className="text-sm text-gray-600 truncate">{s.description}</div>
-
-                      <div className="mt-2 text-sm">
-                        <div>
-                          <span className="text-gray-600">Cards owned:</span>{' '}
-                          <span className="font-medium">{owned}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-600">% owned:</span>{' '}
-                          <span className="font-medium">{(Math.round(pct * 10) / 10).toFixed(1)}%</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 grid grid-cols-3 gap-2 text-xs sm:text-sm">
-                        <div className="rounded-lg bg-gray-50 p-2">
-                          <div className="text-gray-500">Total Cost</div>
-                          <div className="font-semibold">{fmtCurrency(totalCost)}</div>
-                        </div>
-                        <div className="rounded-lg bg-gray-50 p-2">
-                          <div className="text-gray-500">Total Value</div>
-                          <div className="font-semibold">{fmtCurrency(totalValue)}</div>
-                        </div>
-                        <div className={`rounded-lg p-2 ${gainLoss >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                          <div className="text-gray-500">Gain/Loss</div>
-                          <div className={`font-semibold ${gainLoss >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                            {fmtCurrency(gainLoss)}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-2 text-xs text-gray-500">
-                        Last updated {new Date(s.updated_at).toLocaleString()}
-                      </div>
-                    </div>
-
-                    <div className="h-28 w-28">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Tooltip formatter={(v: any) => `${v}%`} />
-                          <Pie data={data} dataKey="value" nameKey="name" innerRadius={36} outerRadius={54} stroke="none">
-                            {data.map((_, idx) => (
-                              <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="mt-1 text-center text-xs text-gray-600">Owned vs Needed</div>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </section>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(480px, 1fr))', gap: 16 }}>
+            {sorted.map((s, i) => (
+              <SetCard key={s.slug} s={s} colorIndex={i} onDelete={handleDeleteSet} />
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Import shared set modal */}
-      {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-semibold">Import Shared Set</h2>
-            <p className="mt-1 text-sm text-gray-600">
-              Paste the share code you received. Enter the PIN if the set is protected.
-            </p>
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700">Share Code</label>
-              <textarea
-                ref={importCodeRef}
-                value={importCode}
-                onChange={(e) => setImportCode(e.target.value)}
-                rows={4}
-                placeholder="Paste share code here…"
-                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm font-mono"
-              />
-            </div>
-            <div className="mt-3">
-              <label className="block text-sm font-medium text-gray-700">PIN (if required)</label>
-              <input
-                type="password"
-                value={importPin}
-                onChange={(e) => setImportPin(e.target.value)}
-                placeholder="Leave blank if no PIN"
-                className="mt-1 w-full rounded-xl border border-gray-300 p-2 text-sm"
-              />
-            </div>
-            {importError && <p className="mt-2 text-sm text-red-600">{importError}</p>}
-            {importSuccess && <p className="mt-2 text-sm text-emerald-600">{importSuccess}</p>}
-            <div className="mt-4 flex gap-3">
-              <button
-                type="button"
-                onClick={handleImportSharedSet}
-                disabled={!importCode.trim()}
-                className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2 text-sm text-white shadow hover:bg-emerald-700 disabled:opacity-40"
-              >
-                Import
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowImportModal(false)}
-                className="rounded-2xl border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 shadow hover:bg-gray-50"
-              >
-                Close
-              </button>
-            </div>
+      <footer style={{
+        borderTop: '3px solid var(--plum)',
+        padding: '24px 28px', maxWidth: 1280, margin: '0 auto',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        color: 'var(--plum)', fontSize: 11.5, letterSpacing: '0.12em',
+        textTransform: 'uppercase', fontWeight: 700,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <SCLogo size={32} />
+          <div style={{ lineHeight: 0.9 }}>
+            <div className="wordmark" style={{ fontSize: 16, color: 'var(--orange)' }}>Sports</div>
+            <div className="display" style={{ fontSize: 10, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
           </div>
         </div>
-      )}
+        <div style={{ display: 'flex', gap: 20 }}>
+          <span>Est. 2023</span>
+          <span>Keep on collectin&apos;</span>
+        </div>
+      </footer>
     </div>
   );
 }
