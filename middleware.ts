@@ -12,11 +12,11 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options as Parameters<typeof supabaseResponse.cookies.set>[2])
+            supabaseResponse.cookies.set(name, value, options)
           )
         },
       },
@@ -27,11 +27,8 @@ export async function middleware(request: NextRequest) {
 
   const isLoginPage = request.nextUrl.pathname.startsWith('/login')
   const isAuthCallback = request.nextUrl.pathname.startsWith('/auth/callback')
-  const isPublicShare = request.nextUrl.pathname.startsWith('/share')
-  const isPublicCommunity = request.nextUrl.pathname.startsWith('/shared')
-  const isResetPassword = request.nextUrl.pathname.startsWith('/auth/reset-password')
 
-  if (!user && !isLoginPage && !isAuthCallback && !isPublicShare && !isPublicCommunity && !isResetPassword) {
+  if (!user && !isLoginPage && !isAuthCallback) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
