@@ -98,7 +98,13 @@ function asNumberForSort(field: string, row: Record<string, any>): number | null
 function textForSort(raw: any): string { return String(raw ?? "").toLowerCase(); }
 
 /* =====================  Image Modal  ===================== */
-function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () => void; onDelete?: () => void }) {
+function ImageViewModal({ urls, onClose, onDelete }: { urls: string[]; onClose: () => void; onDelete?: () => void }) {
+  const [idx, setIdx] = useState(0);
+  const arrowBtn: React.CSSProperties = {
+    pointerEvents: 'all', background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 100,
@@ -106,9 +112,17 @@ function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () =
       background: 'rgba(42, 20, 52, 0.88)',
     }} onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img src={urls[idx]} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        {urls.length > 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', pointerEvents: 'none', padding: '0 4px' }}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
+              style={{ ...arrowBtn, opacity: idx === 0 ? 0.25 : 1 }} disabled={idx === 0}>‹</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.min(urls.length - 1, i + 1)); }}
+              style={{ ...arrowBtn, opacity: idx === urls.length - 1 ? 0.25 : 1 }} disabled={idx === urls.length - 1}>›</button>
+          </div>
+        )}
         <div style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 8 }}>
-          {onDelete && (
+          {onDelete && idx === 0 && (
             <button type="button" onClick={onDelete} className="btn btn-sm"
               style={{ background: 'var(--rust)', color: 'var(--cream)', borderColor: 'var(--rust)' }}>
               🗑 Delete
@@ -122,8 +136,8 @@ function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () =
 }
 
 /* =====================  Image Cell  ===================== */
-function ImageCell({ url, label, onUpload, onDelete }: {
-  url: string; label: string;
+function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
+  url: string; label: string; otherUrl?: string;
   onUpload: (file: File) => Promise<void>;
   onDelete: () => void;
 }) {
@@ -149,7 +163,7 @@ function ImageCell({ url, label, onUpload, onDelete }: {
             onClick={() => setShowModal(true)}
             style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           {showModal && (
-            <ImageViewModal url={url} onClose={() => setShowModal(false)}
+            <ImageViewModal urls={[url, ...(otherUrl ? [otherUrl] : [])]} onClose={() => setShowModal(false)}
               onDelete={() => { onDelete(); setShowModal(false); }} />
           )}
         </>
@@ -177,6 +191,7 @@ const CELL_INPUT: React.CSSProperties = {
 const CELL_SELECT: React.CSSProperties = {
   ...CELL_INPUT, cursor: 'pointer',
 };
+
 /* =====================  Component  ===================== */
 export default function SetEditorPage() {
   const router = useRouter();
@@ -250,9 +265,11 @@ export default function SetEditorPage() {
     if (error) { alert("Image upload failed: " + error.message); return; }
     const { data } = supabase.storage.from("card-images").getPublicUrl(path);
     const field = slot === 1 ? "Image 1" : "Image 2";
-    setRows((prev) => { const copy = [...prev]; copy[origIndex] = { ...copy[origIndex], [field]: data.publicUrl }; return copy; });
-    scheduleAutoSave();
+    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: data.publicUrl } : r);
+    setRows(nextRows);
+    scheduleAutoSave(nextRows);
   }
+
   function onChangeCell(index: number, field: string, value: any) {
     setRows((prev) => {
       const copy = [...prev]; const r = { ...copy[index] };
@@ -292,8 +309,9 @@ export default function SetEditorPage() {
       const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
       await supabase.storage.from('card-images').remove([path]);
     }
-    setRows((prev) => { const copy = [...prev]; copy[origIndex] = { ...copy[origIndex], [field]: '' }; return copy; });
-    scheduleAutoSave();
+    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: '' } : r);
+    setRows(nextRows);
+    scheduleAutoSave(nextRows);
   }
 
   function handleExport() {
@@ -512,11 +530,13 @@ export default function SetEditorPage() {
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 1"])} label="Img 1"
+                          otherUrl={v(row["Image 2"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
                           onDelete={() => handleImageDelete(origIndex, 1)} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 2"])} label="Img 2"
+                          otherUrl={v(row["Image 1"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
                           onDelete={() => handleImageDelete(origIndex, 2)} />
                       </td>
