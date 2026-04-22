@@ -97,18 +97,6 @@ function asNumberForSort(field: string, row: Record<string, any>): number | null
 }
 function textForSort(raw: any): string { return String(raw ?? "").toLowerCase(); }
 
-/* =====================  Share helpers  ===================== */
-function simpleHash(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-  return (h >>> 0).toString(16);
-}
-function encodeSharePayload(data: {
-  title: string; year: string; brand: string; desc: string; rows: any[]; pinHash: string | null;
-}): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
-}
-
 /* =====================  Image Modal  ===================== */
 function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () => void; onDelete?: () => void }) {
   return (
@@ -189,7 +177,6 @@ const CELL_INPUT: React.CSSProperties = {
 const CELL_SELECT: React.CSSProperties = {
   ...CELL_INPUT, cursor: 'pointer',
 };
-
 /* =====================  Component  ===================== */
 export default function SetEditorPage() {
   const router = useRouter();
@@ -207,9 +194,8 @@ export default function SetEditorPage() {
   const [showNeededOnly, setShowNeededOnly] = useState<boolean>(false);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [sharePin, setSharePin] = useState('');
-  const [shareCopied, setShareCopied] = useState(false);
+  const [isShared, setIsShared] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -227,6 +213,8 @@ export default function SetEditorPage() {
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
           setRows(data.rows ?? []);
+          setShareToken(data.share_token ?? null);
+          setIsShared(!!data.share_token);
         }
       }
     }
@@ -313,12 +301,19 @@ export default function SetEditorPage() {
     downloadCSV(datasetTitle || "sportscard-export", rows);
   }
 
-  function handleCopyShareCode() {
-    const pinHash = sharePin.trim() ? simpleHash(sharePin.trim()) : null;
-    const code = encodeSharePayload({ title: datasetTitle, year, brand, desc, rows, pinHash });
-    navigator.clipboard.writeText(code).then(() => {
-      setShareCopied(true); setTimeout(() => setShareCopied(false), 2500);
-    });
+  async function handleToggleShare() {
+    if (!datasetTitle || !rows.length || !userId || !slug || slug === 'new') return;
+    const supabase = createClient();
+    if (isShared) {
+      await supabase.from('sets').update({ share_token: null }).eq('user_id', userId).eq('slug', slug);
+      setShareToken(null);
+      setIsShared(false);
+    } else {
+      const token = crypto.randomUUID();
+      await supabase.from('sets').update({ share_token: token }).eq('user_id', userId).eq('slug', slug);
+      setShareToken(token);
+      setIsShared(true);
+    }
   }
 
   const displayRows = useMemo(() => {
@@ -402,10 +397,10 @@ export default function SetEditorPage() {
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>{saveStatus}</span>
             )}
             <button type="button"
-              onClick={() => { setSharePin(''); setShareCopied(false); setShowShareModal(true); }}
+              onClick={handleToggleShare}
               disabled={!datasetTitle || !rows.length}
-              className="btn btn-sm btn-primary">
-              Share
+              className={`btn btn-sm ${isShared ? 'btn-outline' : 'btn-primary'}`}>
+              {isShared ? 'Unshare' : 'Share'}
             </button>
             <button type="button" onClick={handleExport} disabled={!rows.length}
               className="btn btn-sm btn-outline">
@@ -540,38 +535,6 @@ export default function SetEditorPage() {
           </div>
         )}
       </div>
-
-      {/* Share modal */}
-      {showShareModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 100,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(42, 20, 52, 0.7)',
-        }}>
-          <div className="panel-bordered" style={{ width: '100%', maxWidth: 420, padding: '28px 32px', margin: 16 }}>
-            <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 6 }}>
-              Share &ldquo;{datasetTitle}&rdquo;
-            </div>
-            <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--ink-soft)' }}>
-              Generate a share code others can import. Optionally set a PIN to protect it.
-            </p>
-            <div style={{ marginBottom: 16 }}>
-              <label className="input-label" htmlFor="share-pin">PIN (optional)</label>
-              <input id="share-pin" type="password" value={sharePin}
-                onChange={(e) => setSharePin(e.target.value)}
-                placeholder="Leave blank for no PIN" className="input-sc" />
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={handleCopyShareCode} className="btn btn-primary" style={{ flex: 1 }}>
-                {shareCopied ? '✓ Copied!' : 'Copy Share Code'}
-              </button>
-              <button type="button" onClick={() => setShowShareModal(false)} className="btn btn-outline">
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Footer */}
       <footer style={{
