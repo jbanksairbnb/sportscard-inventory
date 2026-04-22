@@ -6,7 +6,13 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+function ImageLightbox({ urls, onClose }: { urls: string[]; onClose: () => void }) {
+  const [idx, setIdx] = useState(0);
+  const arrowBtn: React.CSSProperties = {
+    background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
   return (
     <div
       style={{
@@ -17,7 +23,15 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
       onClick={onClose}
     >
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img src={urls[idx]} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        {urls.length > 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
+              style={{ ...arrowBtn, opacity: idx === 0 ? 0.25 : 1 }} disabled={idx === 0}>‹</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.min(urls.length - 1, i + 1)); }}
+              style={{ ...arrowBtn, opacity: idx === urls.length - 1 ? 0.25 : 1 }} disabled={idx === urls.length - 1}>›</button>
+          </div>
+        )}
         <button type="button" onClick={onClose} className="btn btn-sm"
           style={{ position: 'absolute', top: 4, right: 4 }}>
           ✕ Close
@@ -28,7 +42,7 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
 }
 
 function CardTile({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
-  const [lightboxUrl, setLightboxUrl] = useState('');
+  const [lightboxUrls, setLightboxUrls] = useState<string[]>([]);
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const description = row['Description'] || '';
   const gradingCo = row['Grading Company'] || '';
@@ -64,23 +78,23 @@ function CardTile({ row, year, brand }: { row: Record<string, any>; year: string
         {(img1 || img2) && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             {img1 && (
-              <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
+              <img src={img1} alt="Front" onClick={() => setLightboxUrls([img1, img2].filter(Boolean))}
                 style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
             )}
             {img2 && (
-              <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
+              <img src={img2} alt="Back" onClick={() => setLightboxUrls([img2, img1].filter(Boolean))}
                 style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
             )}
           </div>
         )}
       </div>
-      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
+      {lightboxUrls.length > 0 && <ImageLightbox urls={lightboxUrls} onClose={() => setLightboxUrls([])} />}
     </>
   );
 }
 
 function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
-  const [lightboxUrl, setLightboxUrl] = useState('');
+  const [lightboxUrls, setLightboxUrls] = useState<string[]>([]);
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const img1 = row['Image 1'] || '';
   const img2 = row['Image 2'] || '';
@@ -111,17 +125,17 @@ function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: st
         <td style={{ padding: '10px 14px' }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {img1 && (
-              <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
+              <img src={img1} alt="Front" onClick={() => setLightboxUrls([img1, img2].filter(Boolean))}
                 style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
             )}
             {img2 && (
-              <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
+              <img src={img2} alt="Back" onClick={() => setLightboxUrls([img2, img1].filter(Boolean))}
                 style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
             )}
           </div>
         </td>
       </tr>
-      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
+      {lightboxUrls.length > 0 && <ImageLightbox urls={lightboxUrls} onClose={() => setLightboxUrls([])} />}
     </>
   );
 }

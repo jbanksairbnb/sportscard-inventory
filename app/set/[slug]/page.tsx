@@ -17,7 +17,7 @@ const EXPECTED_HEADERS = [
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
 const BRANDS = ["Topps", "Bowman", "Play Ball"];
 const YES_NO = ["Yes", "No"] as const;
-const COMPANIES = ["", "PSA", "SGC"] as const;
+const COMPANIES = ["", "PSA", "SGC", "BGS", "CGC", "TAG"] as const;
 const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
 const GRADES_NUMERIC = ["", ...Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""))];
 
@@ -97,20 +97,14 @@ function asNumberForSort(field: string, row: Record<string, any>): number | null
 }
 function textForSort(raw: any): string { return String(raw ?? "").toLowerCase(); }
 
-/* =====================  Share helpers  ===================== */
-function simpleHash(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-  return (h >>> 0).toString(16);
-}
-function encodeSharePayload(data: {
-  title: string; year: string; brand: string; desc: string; rows: any[]; pinHash: string | null;
-}): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
-}
-
 /* =====================  Image Modal  ===================== */
-function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () => void; onDelete?: () => void }) {
+function ImageViewModal({ urls, onClose, onDelete }: { urls: string[]; onClose: () => void; onDelete?: () => void }) {
+  const [idx, setIdx] = useState(0);
+  const arrowBtn: React.CSSProperties = {
+    pointerEvents: 'all', background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 100,
@@ -118,9 +112,17 @@ function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () =
       background: 'rgba(42, 20, 52, 0.88)',
     }} onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img src={urls[idx]} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        {urls.length > 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', pointerEvents: 'none', padding: '0 4px' }}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
+              style={{ ...arrowBtn, opacity: idx === 0 ? 0.25 : 1 }} disabled={idx === 0}>‹</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.min(urls.length - 1, i + 1)); }}
+              style={{ ...arrowBtn, opacity: idx === urls.length - 1 ? 0.25 : 1 }} disabled={idx === urls.length - 1}>›</button>
+          </div>
+        )}
         <div style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 8 }}>
-          {onDelete && (
+          {onDelete && idx === 0 && (
             <button type="button" onClick={onDelete} className="btn btn-sm"
               style={{ background: 'var(--rust)', color: 'var(--cream)', borderColor: 'var(--rust)' }}>
               🗑 Delete
@@ -134,8 +136,8 @@ function ImageViewModal({ url, onClose, onDelete }: { url: string; onClose: () =
 }
 
 /* =====================  Image Cell  ===================== */
-function ImageCell({ url, label, onUpload, onDelete }: {
-  url: string; label: string;
+function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
+  url: string; label: string; otherUrl?: string;
   onUpload: (file: File) => Promise<void>;
   onDelete: () => void;
 }) {
@@ -161,7 +163,7 @@ function ImageCell({ url, label, onUpload, onDelete }: {
             onClick={() => setShowModal(true)}
             style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           {showModal && (
-            <ImageViewModal url={url} onClose={() => setShowModal(false)}
+            <ImageViewModal urls={[url, ...(otherUrl ? [otherUrl] : [])]} onClose={() => setShowModal(false)}
               onDelete={() => { onDelete(); setShowModal(false); }} />
           )}
         </>
@@ -203,14 +205,12 @@ export default function SetEditorPage() {
   const [brand, setBrand] = useState<string>("");
   const [desc, setDesc] = useState<string>("");
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
-  const [errors, setErrors] = useState<string[]>([]);
   const [saveStatus, setSaveStatus] = useState<string>("");
   const [showNeededOnly, setShowNeededOnly] = useState<boolean>(false);
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [sharePin, setSharePin] = useState('');
-  const [shareCopied, setShareCopied] = useState(false);
+  const [isShared, setIsShared] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -228,17 +228,13 @@ export default function SetEditorPage() {
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
           setRows(data.rows ?? []);
+          setShareToken(data.share_token ?? null);
+          setIsShared(!!data.share_token);
         }
       }
     }
     init();
   }, [paramSlug, router]);
-
-  const canCreateTitle = year.trim().length > 0 && brand.trim().length > 0 && desc.trim().length > 0;
-  const titlePreview = useMemo(
-    () => (canCreateTitle ? `${year.trim()} ${brand.trim()} — ${desc.trim()}` : ""),
-    [year, brand, desc, canCreateTitle]
-  );
 
   function scheduleAutoSave(nextRows?: any[]) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -269,71 +265,9 @@ export default function SetEditorPage() {
     if (error) { alert("Image upload failed: " + error.message); return; }
     const { data } = supabase.storage.from("card-images").getPublicUrl(path);
     const field = slot === 1 ? "Image 1" : "Image 2";
-    setRows((prev) => { const copy = [...prev]; copy[origIndex] = { ...copy[origIndex], [field]: data.publicUrl }; return copy; });
-    scheduleAutoSave();
-  }
-
-  function handleFileChosen(file: File) {
-    setErrors([]);
-    Papa.parse(file, {
-      header: true, skipEmptyLines: true,
-      complete: (result) => {
-        const missing = EXPECTED_HEADERS.filter((h) => !(result.meta.fields || []).includes(h));
-        if (missing.length > 0) { setErrors([`CSV is missing required columns: ${missing.join(", ")}.`]); setRows([]); return; }
-        const cleaned = (result.data as any[]).map((r) => {
-          const norm: Record<string, any> = {};
-          EXPECTED_HEADERS.forEach((h) => { norm[h] = r[h] ?? ""; });
-          ["Owned", "Graded"].forEach((f) => {
-            const val = String(norm[f]).trim().toLowerCase();
-            norm[f] = val === "yes" || val === "y" || val === "true" || val === "1" ? "Yes"
-              : val === "no" || val === "n" || val === "false" || val === "0" ? "No" : "";
-          });
-          const rg = String(norm["Raw Grade"]).trim();
-          norm["Raw Grade"] = RAW_GRADES.includes(rg as any) ? rg : "";
-          norm["Grade"] = normalizeNumericGrade(norm["Grade"]);
-          ["Cost", "Value", "Target Price", "Sale Price"].forEach((f) => {
-            const raw = norm[f];
-            if (String(raw).trim() !== "") { const stripped = stripCurrency(String(raw)); if (!Number.isNaN(Number(stripped))) norm[f] = toCurrency(stripped); }
-          });
-          const d = String(norm["Date Purchased"]).trim();
-          if (d) { const digits = d.replace(/[^0-9]/g, ""); if (digits.length === 8) norm["Date Purchased"] = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`; }
-          const cardNum = Number(String(norm["Card #"]).trim());
-          if (Number.isNaN(cardNum)) norm["Card #"] = "";
-          if (!String(norm["Description"]).trim()) norm["Description"] = "";
-          return norm;
-        });
-        setRows(cleaned);
-        scheduleAutoSave(cleaned);
-      },
-      error: (err) => setErrors([`Parse error: ${err.message}`]),
-    });
-  }
-
-  async function handleCreateTitle(e?: React.MouseEvent) {
-    e?.preventDefault();
-    if (!canCreateTitle || !userId) return;
-    const newTitle = `${year.trim()} ${brand.trim()} — ${desc.trim()}`;
-    let newSlug = slug;
-    if (slug === "new") {
-      const base = slugify(newTitle);
-      const supabase = createClient();
-      const { data: existing } = await supabase.from("sets").select("slug").ilike("slug", `${base}%`);
-      const taken = new Set((existing || []).map((r: any) => r.slug as string));
-      newSlug = base; let i = 2;
-      while (taken.has(newSlug)) newSlug = `${base}-${i++}`;
-    }
-    const { ownedCount, ownedPct } = computeOwnedStats(rows);
-    const { totalCost, totalValue, gainLoss } = computeFinancials(rows);
-    const supabase = createClient();
-    await supabase.from("sets").upsert({
-      user_id: userId, slug: newSlug, title: newTitle,
-      year: Number(year) || null, brand: brand.trim(), description: desc,
-      rows, row_count: rows.length, owned_count: ownedCount, owned_pct: ownedPct,
-      total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss, updated_at: Date.now(),
-    }, { onConflict: "user_id,slug" });
-    setDatasetTitle(newTitle); setSlug(newSlug);
-    setSaveStatus(`Saved at ${new Date().toLocaleTimeString()}`);
-    if (slug === "new") router.replace(`/set/${newSlug}`);
+    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: data.publicUrl } : r);
+    setRows(nextRows);
+    scheduleAutoSave(nextRows);
   }
 
   function onChangeCell(index: number, field: string, value: any) {
@@ -375,8 +309,9 @@ export default function SetEditorPage() {
       const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
       await supabase.storage.from('card-images').remove([path]);
     }
-    setRows((prev) => { const copy = [...prev]; copy[origIndex] = { ...copy[origIndex], [field]: '' }; return copy; });
-    scheduleAutoSave();
+    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: '' } : r);
+    setRows(nextRows);
+    scheduleAutoSave(nextRows);
   }
 
   function handleExport() {
@@ -384,12 +319,19 @@ export default function SetEditorPage() {
     downloadCSV(datasetTitle || "sportscard-export", rows);
   }
 
-  function handleCopyShareCode() {
-    const pinHash = sharePin.trim() ? simpleHash(sharePin.trim()) : null;
-    const code = encodeSharePayload({ title: datasetTitle, year, brand, desc, rows, pinHash });
-    navigator.clipboard.writeText(code).then(() => {
-      setShareCopied(true); setTimeout(() => setShareCopied(false), 2500);
-    });
+  async function handleToggleShare() {
+    if (!datasetTitle || !rows.length || !userId || !slug || slug === 'new') return;
+    const supabase = createClient();
+    if (isShared) {
+      await supabase.from('sets').update({ share_token: null }).eq('user_id', userId).eq('slug', slug);
+      setShareToken(null);
+      setIsShared(false);
+    } else {
+      const token = crypto.randomUUID();
+      await supabase.from('sets').update({ share_token: token }).eq('user_id', userId).eq('slug', slug);
+      setShareToken(token);
+      setIsShared(true);
+    }
   }
 
   const displayRows = useMemo(() => {
@@ -425,7 +367,7 @@ export default function SetEditorPage() {
   const TH_STYLE: React.CSSProperties = {
     padding: '10px 12px', textAlign: 'left', whiteSpace: 'nowrap',
     background: 'var(--plum)', color: 'var(--mustard)',
-    fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
+    fontFamily: 'var(--font-body)', fontSize: 13, fontWeight: 700,
     letterSpacing: '0.15em', textTransform: 'uppercase',
     position: 'sticky', top: 0, zIndex: 10,
   };
@@ -473,10 +415,10 @@ export default function SetEditorPage() {
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>{saveStatus}</span>
             )}
             <button type="button"
-              onClick={() => { setSharePin(''); setShareCopied(false); setShowShareModal(true); }}
+              onClick={handleToggleShare}
               disabled={!datasetTitle || !rows.length}
-              className="btn btn-sm btn-primary">
-              Share
+              className={`btn btn-sm ${isShared ? 'btn-outline' : 'btn-primary'}`}>
+              {isShared ? 'Unshare' : 'Share'}
             </button>
             <button type="button" onClick={handleExport} disabled={!rows.length}
               className="btn btn-sm btn-outline">
@@ -487,73 +429,6 @@ export default function SetEditorPage() {
       </header>
 
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '28px 28px 80px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-        {/* 1. Upload CSV */}
-        <section className="panel-bordered" style={{ padding: '20px 24px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 4 }}>1. Upload CSV</div>
-              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>
-                Required columns: {EXPECTED_HEADERS.join(', ')}
-              </div>
-            </div>
-            <input type="file" accept=".csv,text/csv"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileChosen(f); }}
-              style={{
-                display: 'block', padding: '8px 12px',
-                border: '2px solid var(--plum)', borderRadius: 10,
-                background: 'var(--cream)', fontFamily: 'var(--font-body)',
-                fontSize: 13, color: 'var(--plum)', cursor: 'pointer',
-                alignSelf: 'flex-start',
-              }} />
-          </div>
-          {errors.length > 0 && (
-            <div style={{
-              marginTop: 14, background: 'rgba(197,74,44,0.08)',
-              border: '1.5px solid var(--rust)', borderRadius: 10, padding: '10px 16px',
-            }}>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {errors.map((er, i) => (
-                  <li key={i} style={{ fontSize: 13, color: 'var(--rust)', fontWeight: 600 }}>{er}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </section>
-
-        {/* 2. Name this set */}
-        <section className="panel-bordered" style={{ padding: '20px 24px' }}>
-          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 16 }}>2. Name This Set</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 16 }}>
-            <div>
-              <label className="input-label" htmlFor="year-input">Year</label>
-              <input id="year-input" type="text" list="year-options" value={year}
-                onChange={(e) => setYear(e.target.value)} placeholder="e.g., 1954" className="input-sc" />
-              <datalist id="year-options">{YEARS.map((y) => <option key={y} value={y} />)}</datalist>
-            </div>
-            <div>
-              <label className="input-label" htmlFor="brand-input">Brand</label>
-              <input id="brand-input" type="text" list="brand-options" value={brand}
-                onChange={(e) => setBrand(e.target.value)} placeholder="e.g., Topps" className="input-sc" />
-              <datalist id="brand-options">{BRANDS.map((b) => <option key={b} value={b} />)}</datalist>
-            </div>
-            <div>
-              <label className="input-label" htmlFor="desc-input">Description (≤ 60 chars)</label>
-              <input id="desc-input" type="text" value={v(desc)} maxLength={60}
-                onChange={(e) => setDesc(e.target.value)} placeholder="e.g., Base set checklist" className="input-sc" />
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-            <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-              {canCreateTitle
-                ? <><span style={{ color: 'var(--ink-mute)', fontWeight: 600 }}>Preview: </span><span className="display" style={{ color: 'var(--plum)' }}>{titlePreview}</span></>
-                : 'Choose year, brand, and a short description.'}
-            </div>
-            <button type="button" onClick={handleCreateTitle} disabled={!canCreateTitle} className="btn btn-primary">
-              Save Title
-            </button>
-          </div>
-        </section>
 
         {/* Controls */}
         {datasetTitle && (
@@ -655,11 +530,13 @@ export default function SetEditorPage() {
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 1"])} label="Img 1"
+                          otherUrl={v(row["Image 2"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
                           onDelete={() => handleImageDelete(origIndex, 1)} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 2"])} label="Img 2"
+                          otherUrl={v(row["Image 1"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
                           onDelete={() => handleImageDelete(origIndex, 2)} />
                       </td>
@@ -673,43 +550,11 @@ export default function SetEditorPage() {
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center', borderStyle: 'dashed' }}>
             <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 8 }}>No data yet</div>
             <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: 0 }}>
-              Upload a CSV above to start tracking your collection. Edits auto-save after you name the set.
+              No cards loaded yet. Upload a CSV from My Shelf to populate this set.
             </p>
           </div>
         )}
       </div>
-
-      {/* Share modal */}
-      {showShareModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 100,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(42, 20, 52, 0.7)',
-        }}>
-          <div className="panel-bordered" style={{ width: '100%', maxWidth: 420, padding: '28px 32px', margin: 16 }}>
-            <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 6 }}>
-              Share &ldquo;{datasetTitle}&rdquo;
-            </div>
-            <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--ink-soft)' }}>
-              Generate a share code others can import. Optionally set a PIN to protect it.
-            </p>
-            <div style={{ marginBottom: 16 }}>
-              <label className="input-label" htmlFor="share-pin">PIN (optional)</label>
-              <input id="share-pin" type="password" value={sharePin}
-                onChange={(e) => setSharePin(e.target.value)}
-                placeholder="Leave blank for no PIN" className="input-sc" />
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={handleCopyShareCode} className="btn btn-primary" style={{ flex: 1 }}>
-                {shareCopied ? '✓ Copied!' : 'Copy Share Code'}
-              </button>
-              <button type="button" onClick={() => setShowShareModal(false)} className="btn btn-outline">
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Footer */}
       <footer style={{
