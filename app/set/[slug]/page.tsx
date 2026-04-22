@@ -17,7 +17,7 @@ const EXPECTED_HEADERS = [
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
 const BRANDS = ["Topps", "Bowman", "Play Ball"];
 const YES_NO = ["Yes", "No"] as const;
-const COMPANIES = ["", "PSA", "SGC"] as const;
+const COMPANIES = ["", "PSA", "SGC", "BGS", "CGC", "TAG"] as const;
 const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
 const GRADES_NUMERIC = ["", ...Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""))];
 
