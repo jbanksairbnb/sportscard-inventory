@@ -64,7 +64,7 @@ function CardTile({ row, year, brand }: { row: Record<string, any>; year: string
             padding: '2px 7px', borderRadius: 100,
           }}>OWNED</div>
         )}
-        <div className="eyebrow" style={{ fontSize: 8.5, color: 'var(--orange)', marginBottom: 4 }}>
+        <div className="eyebrow" style={{ fontSize: 10.5, color: 'var(--orange)', marginBottom: 4 }}>
           {[year, brand].filter(Boolean).join(' · ')}
         </div>
         <div style={{ marginBottom: 4 }}>
@@ -73,7 +73,7 @@ function CardTile({ row, year, brand }: { row: Record<string, any>; year: string
           <span className="display" style={{ fontSize: 14, color: 'var(--plum)' }}>{description}</span>
         </div>
         {details && (
-          <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-soft)', marginBottom: 6 }}>{details}</div>
+          <div className="eyebrow" style={{ fontSize: 11, color: 'var(--ink-soft)', marginBottom: 6 }}>{details}</div>
         )}
         {(img1 || img2) && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -104,19 +104,19 @@ function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: st
       <tr style={{ borderTop: '1.5px solid var(--cream-warm)' }}
         onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--cream-warm)'}
         onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}>
-        <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 8.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>
+        <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>
           {[year, brand].filter(Boolean).join(' · ')}
         </td>
         <td className="mono" style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>
           {cardNum}
         </td>
-        <td className="display" style={{ padding: '10px 14px', fontSize: 13, color: 'var(--plum)' }}>
+        <td className="display" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--plum)' }}>
           {row['Description'] || ''}
         </td>
-        <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 9, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+        <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
           {row['Grading Company'] || ''}
         </td>
-        <td className="mono" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>
+        <td className="mono" style={{ padding: '10px 14px', fontSize: 13, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>
           {row['Grade'] ? `Grade ${row['Grade']}` : ''}
         </td>
         <td className="mono" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>
