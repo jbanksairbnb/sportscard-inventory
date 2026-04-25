@@ -256,19 +256,20 @@ export default function SetEditorPage() {
     }, 600);
   }
 
-  async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
-    if (!userId || !slug || slug === "new") return;
-    const supabase = createClient();
-    const ext = file.name.split(".").pop() || "jpg";
-    const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
-    const { error } = await supabase.storage.from("card-images").upload(path, file, { upsert: true });
-    if (error) { alert("Image upload failed: " + error.message); return; }
-    const { data } = supabase.storage.from("card-images").getPublicUrl(path);
-    const field = slot === 1 ? "Image 1" : "Image 2";
-    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: data.publicUrl } : r);
-    setRows(nextRows);
-    scheduleAutoSave(nextRows);
-  }
+async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
+  if (!userId || !slug || slug === "new") return;
+  const supabase = createClient();
+  const ext = file.name.split(".").pop() || "jpg";
+  const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
+  const { error } = await supabase.storage.from("card-images").upload(path, file, { upsert: true });
+  if (error) { alert("Image upload failed: " + error.message); return; }
+  const { data } = supabase.storage.from("card-images").getPublicUrl(path);
+  const field = slot === 1 ? "Image 1" : "Image 2";
+  const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
+  const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: publicUrl } : r);
+  setRows(nextRows);
+  scheduleAutoSave(nextRows);
+}
 
   function onChangeCell(index: number, field: string, value: any) {
     setRows((prev) => {
