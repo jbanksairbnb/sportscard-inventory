@@ -943,7 +943,7 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
               textDecoration: 'none',
             };
             return active
-              ? <Link key={label} href="/home" style={style}>{label}</Link>
+              ? <Link key={label} href="/" style={style}>{label}</Link>
               : <span key={label} style={style}>{label}</span>;
           })}
         </nav>
