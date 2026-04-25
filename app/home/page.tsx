@@ -89,23 +89,6 @@ type SetRow = {
   updated_at: number;
 };
 
-function RainbowArc({ width = 200, height = 44 }: { width?: number; height?: number }) {
-  const arcs = [
-    { c: '#c54a2c', r: 42 },
-    { c: '#e8742c', r: 34 },
-    { c: '#e5b53d', r: 26 },
-    { c: '#2d7a6e', r: 18 },
-  ];
-  return (
-    <svg width={width} height={height} viewBox="0 0 200 44" style={{ display: 'block' }}>
-      {arcs.map((b, i) => (
-        <path key={i} d={`M ${100 - b.r} 44 A ${b.r} ${b.r} 0 0 1 ${100 + b.r} 44`}
-          fill="none" stroke={b.c} strokeWidth="7" strokeLinecap="butt" />
-      ))}
-    </svg>
-  );
-}
-
 function LogoShowcase() {
   return (
     <section style={{ maxWidth: 1280, margin: '28px auto 0', padding: '0 28px' }}>
@@ -133,13 +116,10 @@ function LogoShowcase() {
             A home for collectors. Manage your binder, chase want lists, and swap doubles with the crew.
           </p>
         </div>
-        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
-          <RainbowArc width={200} height={44} />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <span className="chip chip-rust">Collect</span>
-            <span className="chip chip-gold">Trade</span>
-            <span className="chip chip-forest">Connect</span>
-          </div>
+        <div style={{ position: 'relative', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span className="chip chip-rust">Collect</span>
+          <span className="chip chip-gold">Trade</span>
+          <span className="chip chip-forest">Connect</span>
         </div>
       </div>
     </section>
@@ -180,9 +160,6 @@ function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
                 return <polygon key={i} points="-40,0 40,0 0,-700" fill={fill} transform={`rotate(${(a * 180) / Math.PI})`} />;
               })}
             </g>
-            {[{ c: '#c54a2c', r: 220 }, { c: '#e8742c', r: 190 }, { c: '#e5b53d', r: 160 }, { c: '#2d7a6e', r: 130 }].map((b, i) => (
-              <path key={i} d={`M ${640 - b.r} 360 A ${b.r} ${b.r} 0 0 1 ${640 + b.r} 360`} fill="none" stroke={b.c} strokeWidth="22" />
-            ))}
             {([[120,60,14],[220,120,8],[1100,80,16],[1180,160,10],[90,200,10],[1200,260,12],[1060,220,7]] as [number,number,number][]).map(([x,y,s],i) => (
               <polygon key={i}
                 points={`${x},${y-s} ${x+s/3},${y-s/3} ${x+s},${y} ${x+s/3},${y+s/3} ${x},${y+s} ${x-s/3},${y+s/3} ${x-s},${y} ${x-s/3},${y-s/3}`}
@@ -275,6 +252,504 @@ function StatsStrip({ stats }: { stats: StatItem[] }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function HeartIcon({ size = 14, filled = false }: { size?: number; filled?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  );
+}
+
+function CommentIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+type FeedEntry = {
+  id: string;
+  kind: 'wantlist-hit' | 'comment' | 'post';
+  time: string;
+  user: { name: string; handle: string; av: string; verified?: boolean };
+  card?: { year: number; player: string; set: string; num: string; grade: string; colors: string[] };
+  price?: number;
+  action?: string;
+  auctionEnds?: string;
+  note?: string;
+  target?: string;
+  body?: string;
+  photo?: boolean;
+  likes: number;
+  comments: number;
+};
+
+const MOCK_FEED: FeedEntry[] = [
+  {
+    id: 'p1', kind: 'wantlist-hit', time: '12 min ago',
+    user: { name: 'Marcy Fernandez', handle: 'mfdiamond', av: 'M' },
+    card: { year: 1968, player: 'Nolan Ryan RC', set: 'Topps', num: '#177', grade: 'PSA 4', colors: ['#b4462b', '#1b2a49'] },
+    price: 2450, action: 'listed',
+    note: 'Fresh from PSA. Open to trades for \'53 Topps hi-numbers.',
+    likes: 24, comments: 6,
+  },
+  {
+    id: 'p2', kind: 'comment', time: '1 hr ago',
+    user: { name: 'Dale Rutherford', handle: 'drutherford', av: 'D' },
+    target: 'your 1955 Koufax RC',
+    body: 'That corner is sharper than any \'55 I\'ve seen. What book are you using on this one?',
+    likes: 3, comments: 2,
+  },
+  {
+    id: 'p3', kind: 'wantlist-hit', time: '3 hr ago',
+    user: { name: 'Topps Vault', handle: 'toppsvault', av: 'T', verified: true },
+    card: { year: 1953, player: 'Satchel Paige', set: 'Topps', num: '#220', grade: 'SGC 3', colors: ['#2f4a32', '#d9b668'] },
+    price: 8900, action: 'auction', auctionEnds: '2d 14h',
+    likes: 142, comments: 38,
+  },
+  {
+    id: 'p4', kind: 'post', time: '5 hr ago',
+    user: { name: 'Ellis Park', handle: 'ellispk', av: 'E' },
+    body: 'Finally completed the \'75 Topps mini set. Eight years. Trading partner shoutout to @jbanks53 who sent me the last three needs.',
+    photo: true, likes: 89, comments: 17,
+  },
+  {
+    id: 'p5', kind: 'wantlist-hit', time: 'Yesterday',
+    user: { name: 'Iris Nakamura', handle: 'irisn', av: 'I' },
+    card: { year: 1962, player: 'Maury Wills', set: 'Topps', num: '#489', grade: 'Raw EX', colors: ['#1b2a49', '#f3ead3'] },
+    price: 185, action: 'listed',
+    note: 'Centering is off but corners are clean. Priced to move.',
+    likes: 11, comments: 3,
+  },
+];
+
+function FeedAvatar({ u, size = 38 }: { u: { name: string; av: string }; size?: number }) {
+  const palette = ['#3d1f4a', '#e8742c', '#2d7a6e', '#c54a2c', '#e5b53d'];
+  const color = palette[u.av.charCodeAt(0) % palette.length];
+  const textColor = color === '#e5b53d' ? '#3d1f4a' : '#f5e9d0';
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: color, color: textColor,
+      display: 'grid', placeItems: 'center',
+      fontFamily: 'var(--font-display)', fontSize: size * 0.44,
+      border: '2px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
+      flexShrink: 0,
+    }}>
+      {u.av}
+    </div>
+  );
+}
+
+function FeedItem({ item }: { item: FeedEntry }) {
+  const [liked, setLiked] = useState(false);
+  const likes = item.likes + (liked ? 1 : 0);
+
+  if (item.kind === 'wantlist-hit' && item.card) {
+    return (
+      <article className="panel" style={{ padding: 16, display: 'flex', gap: 16 }}>
+        <CardFace card={item.card} width={115} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className="chip chip-rust" style={{ fontSize: 10 }}>◆ Want-list match</span>
+            {item.action === 'auction' && (
+              <span className="chip chip-navy" style={{ fontSize: 10 }}>Auction · ends {item.auctionEnds}</span>
+            )}
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginLeft: 'auto', fontWeight: 600 }}>{item.time}</span>
+          </div>
+          <h3 className="display" style={{ fontSize: 22, margin: '4px 0 2px', color: 'var(--plum)' }}>
+            {item.card.year} {item.card.set} — {item.card.player}
+          </h3>
+          <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8, fontWeight: 500 }}>
+            {item.card.num} · {item.card.grade} · listed by{' '}
+            <strong style={{ color: 'var(--plum)' }}>@{item.user.handle}</strong>
+            {item.user.verified && <span style={{ color: 'var(--mustard)', marginLeft: 4 }}>✓</span>}
+          </div>
+          {item.note && (
+            <p style={{ margin: '8px 0', fontSize: 13.5, color: 'var(--ink-soft)', fontStyle: 'italic', borderLeft: '3px solid var(--mustard)', paddingLeft: 12 }}>
+              "{item.note}"
+            </p>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
+            <div className="stat-num" style={{ fontSize: 26, color: 'var(--orange)' }}>${item.price?.toLocaleString()}</div>
+            <button className="btn btn-primary btn-sm">View listing</button>
+            <button className="btn btn-outline btn-sm">Make offer</button>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 14, fontSize: 12, fontWeight: 600 }}>
+              <button onClick={() => setLiked(!liked)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: liked ? 'var(--orange)' : 'var(--ink-mute)' }}>
+                <HeartIcon size={13} filled={liked} /> {likes}
+              </button>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--ink-mute)' }}>
+                <CommentIcon size={13} /> {item.comments}
+              </span>
+            </div>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  if (item.kind === 'comment') {
+    return (
+      <article className="panel" style={{ padding: 16, display: 'flex', gap: 12 }}>
+        <FeedAvatar u={item.user} size={44} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, marginBottom: 4 }}>
+            <strong style={{ color: 'var(--plum)' }}>{item.user.name}</strong>{' '}
+            <span style={{ color: 'var(--ink-mute)' }}>commented on {item.target}</span>
+            <span className="mono" style={{ float: 'right', fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>{item.time}</span>
+          </div>
+          <p style={{ margin: 0, fontSize: 14, color: 'var(--ink)', lineHeight: 1.5 }}>"{item.body}"</p>
+          <div style={{ display: 'flex', gap: 12, marginTop: 10, fontSize: 11.5, fontWeight: 700, color: 'var(--ink-mute)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            <button style={{ color: 'inherit' }}>Reply</button>
+            <button style={{ color: 'inherit' }}>Like</button>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className="panel" style={{ padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <FeedAvatar u={item.user} size={38} />
+        <div>
+          <div style={{ fontSize: 13 }}>
+            <strong style={{ color: 'var(--plum)' }}>{item.user.name}</strong>
+            <span style={{ color: 'var(--ink-mute)' }}> · @{item.user.handle}</span>
+          </div>
+          <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>{item.time}</div>
+        </div>
+      </div>
+      <p style={{ margin: '0 0 12px', fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>{item.body}</p>
+      {item.photo && (
+        <div className="halftone" style={{
+          height: 220, borderRadius: 8, border: '2px solid var(--plum)',
+          background: 'linear-gradient(135deg, #2d7a6e 0%, #3d1f4a 100%)',
+          display: 'grid', placeItems: 'center',
+          fontFamily: 'var(--font-display)', color: 'rgba(245,233,208,0.35)', fontSize: 32,
+          marginBottom: 12,
+        }}>
+          [ photo ]
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--ink-mute)', fontWeight: 600 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><HeartIcon size={13} /> {item.likes}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><CommentIcon size={13} /> {item.comments}</span>
+      </div>
+    </article>
+  );
+}
+
+const FEED_FILTERS = ['All activity', 'Want-list hits', 'Comments', 'Following', 'Auctions'];
+
+function FeedSection() {
+  const [activeFilter, setActiveFilter] = useState('All activity');
+  return (
+    <section>
+      <div className="section-head">
+        <span className="eyebrow" style={{ fontSize: 12 }}>★ Your Feed ★</span>
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {FEED_FILTERS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setActiveFilter(f)}
+            className={`chip${f === activeFilter ? ' chip-rust' : ''}`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {MOCK_FEED.map((item) => <FeedItem key={item.id} item={item} />)}
+      </div>
+    </section>
+  );
+}
+
+const FAVORITE_CARDS = [
+  { id: 'f1', year: 1955, player: 'Sandy Koufax',     team: 'BKN', num: '#123',   grade: 'PSA 5',   colors: ['#c2342a', '#f4d06f'] },
+  { id: 'f2', year: 1972, player: 'Roberto Clemente', team: 'PIT', num: '#309',   grade: 'SGC 7',   colors: ['#1b2a49', '#d9b668'] },
+  { id: 'f3', year: 1975, player: 'Ron Cey',          team: 'LAD', num: '#390',   grade: 'PSA 8',   colors: ['#2f4a32', '#ece0be'] },
+  { id: 'f4', year: 1954, player: 'Ted Williams',     team: 'BOS', num: '#1',     grade: 'PSA 4',   colors: ['#b4462b', '#1b2a49'] },
+  { id: 'f5', year: 2001, player: 'Albert Pujols RC', team: 'STL', num: '#340',   grade: 'BGS 9.5', colors: ['#8f331d', '#f3ead3'] },
+  { id: 'f6', year: 2011, player: 'Mike Trout RC',    team: 'LAA', num: '#US175', grade: 'PSA 10',  colors: ['#b8923a', '#1b2a49'] },
+];
+
+function CardFace({ card, width = 130 }: {
+  card: typeof FAVORITE_CARDS[0];
+  width?: number;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [c1, c2] = card.colors;
+  const height = Math.round(width * 1.4);
+  const initials = card.player.replace(' RC', '').split(' ').map((s) => s[0]).slice(0, 2).join('');
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width, height, position: 'relative',
+        background: 'var(--cream)',
+        border: '2px solid var(--plum)',
+        borderRadius: 8,
+        overflow: 'hidden',
+        transition: 'transform 0.18s, box-shadow 0.18s',
+        transform: hovered ? 'translateY(-4px) rotate(-0.8deg)' : undefined,
+        boxShadow: hovered ? '0 10px 0 var(--plum), 0 16px 24px rgba(42,20,52,0.2)' : '0 3px 0 var(--plum)',
+      }}
+    >
+      <div style={{ position: 'absolute', inset: 5, border: `1.5px solid ${c1}`, borderRadius: 5 }} />
+      <div className="halftone" style={{
+        position: 'absolute', top: 10, left: 10, right: 10,
+        height: height * 0.6,
+        background: `radial-gradient(circle at 30% 30%, ${c2} 0%, ${c1} 100%)`,
+        display: 'grid', placeItems: 'center',
+        overflow: 'hidden', borderRadius: 3,
+      }}>
+        <span style={{ fontFamily: 'var(--font-display)', color: 'rgba(255,255,255,0.85)', fontSize: width * 0.34, mixBlendMode: 'overlay' }}>
+          {initials}
+        </span>
+      </div>
+      <div style={{
+        position: 'absolute', left: 10, right: 10, top: height * 0.6 + 14,
+        background: c1, color: 'var(--cream)', padding: '4px 6px',
+        fontFamily: 'var(--font-display)', fontSize: Math.max(9, width * 0.095),
+        lineHeight: 1.05, borderRadius: 4, textAlign: 'center',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        border: '1px solid var(--plum)',
+      }}>
+        {card.player.replace(' RC', '')}
+      </div>
+      <div style={{
+        position: 'absolute', left: 10, right: 10, bottom: 8,
+        display: 'flex', justifyContent: 'space-between',
+        fontFamily: 'var(--font-mono)', fontSize: Math.max(7, width * 0.07),
+        color: 'var(--plum)', fontWeight: 700, letterSpacing: '0.05em',
+      }}>
+        <span>{card.team}</span><span>{card.num}</span>
+      </div>
+      <div style={{
+        position: 'absolute', top: 8, left: 12,
+        fontFamily: 'var(--font-display)', fontSize: Math.max(8, width * 0.08),
+        color: 'var(--plum)', background: 'var(--mustard)',
+        padding: '1px 5px', border: '1px solid var(--plum)', borderRadius: 3,
+      }}>
+        '{String(card.year).slice(2)}
+      </div>
+      {card.grade && (
+        <div style={{
+          position: 'absolute', top: 8, right: 12,
+          fontFamily: 'var(--font-mono)', fontSize: Math.max(7, width * 0.06),
+          color: 'var(--cream)', background: c1,
+          padding: '2px 5px', borderRadius: 3, fontWeight: 700,
+        }}>
+          {card.grade}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FavoritesShowcase() {
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <div className="section-head">
+        <span className="eyebrow" style={{ fontSize: 12 }}>★ The Showcase ★</span>
+      </div>
+      <div style={{
+        position: 'relative',
+        padding: '32px 20px 24px',
+        background: 'var(--plum)',
+        border: '2px solid var(--plum)',
+        borderRadius: 16,
+        boxShadow: '0 4px 0 var(--plum-deep)',
+        overflow: 'hidden',
+      }}>
+        <svg viewBox="0 0 800 320" preserveAspectRatio="xMidYMid slice"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.55 }}>
+          <g transform="translate(400 320)">
+            {Array.from({ length: 14 }).map((_, i) => {
+              const a = -Math.PI + (i / 13) * Math.PI;
+              const c = i % 2 === 0 ? '#e5b53d' : '#e8742c';
+              return <polygon key={i} points="-42,0 42,0 0,-700" fill={c} opacity="0.35"
+                transform={`rotate(${(a * 180) / Math.PI})`} />;
+            })}
+          </g>
+          {([[60,40,8],[740,60,10],[120,180,6],[700,200,7]] as [number,number,number][]).map(([x,y,s],i) => (
+            <polygon key={i}
+              points={`${x},${y-s} ${x+s/3},${y-s/3} ${x+s},${y} ${x+s/3},${y+s/3} ${x},${y+s} ${x-s/3},${y+s/3} ${x-s},${y} ${x-s/3},${y-s/3}`}
+              fill="#e5b53d" />
+          ))}
+        </svg>
+        <div style={{ position: 'relative', textAlign: 'center', marginBottom: 20 }}>
+          <div className="wordmark" style={{
+            fontSize: 52, color: 'var(--orange)',
+            textShadow: '3px 3px 0 var(--mustard), 6px 6px 0 var(--plum-deep)',
+          }}>
+            Favorite Cards
+          </div>
+        </div>
+        <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16 }}>
+          {FAVORITE_CARDS.map((card, i) => (
+            <div key={card.id} style={{ transform: `rotate(${(i % 2 === 0 ? -1 : 1) * (1.2 + (i % 3) * 0.5)}deg)` }}>
+              <CardFace card={card} width={130} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
+
+function SetsInProgress({ sets }: { sets: SetRow[] }) {
+  if (sets.length === 0) return null;
+  return (
+    <section style={{ marginBottom: 32 }}>
+      <div className="section-head">
+        <span className="eyebrow" style={{ fontSize: 12 }}>★ Sets in Progress ★</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+        {sets.map((s, i) => {
+          const color = SET_COLORS[i % SET_COLORS.length];
+          const pct = s.owned_pct || 0;
+          const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
+          return (
+            <div key={s.slug} className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
+              <div style={{
+                width: 58, height: 58,
+                background: color, color: 'var(--cream)',
+                display: 'grid', placeItems: 'center',
+                fontFamily: 'var(--font-display)', fontSize: 22,
+                borderRadius: 10,
+                border: '2px solid var(--plum)',
+                boxShadow: '0 2px 0 var(--plum)',
+                flexShrink: 0,
+              }}>
+                {yearShort}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 7, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.year} {s.title}
+                </div>
+                <div className="progress">
+                  <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+                </div>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', marginTop: 5,
+                  fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                  color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
+                }}>
+                  <span>{s.owned_count} / {s.row_count}</span>
+                  <span>{pct.toFixed(1)}%</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+const MOCK_BIO = "Chasing every Topps set from '53 to '80. Traders welcome. Will travel for a clean '55 Koufax RC.";
+const MOCK_PLAYERS = ['Albert Pujols', 'Mike Trout', 'Roberto Clemente', 'Sandy Koufax', 'Ron Cey'];
+const MOCK_ACTIVITY = [
+  { id: 'a1', text: "Dale commented on your 1955 Koufax", time: "1h", dot: "#b4462b" },
+  { id: 'a2', text: "3 new want list matches", time: "3h", dot: "#b8923a" },
+  { id: 'a3', text: "Ellis tagged you in a post", time: "5h", dot: "#2f4a32" },
+  { id: 'a4', text: "Trade offer from @toppsvault", time: "1d", dot: "#1b2a49" },
+  { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
+];
+
+function Sidebar() {
+  return (
+    <aside style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'sticky', top: 20, alignSelf: 'start' }}>
+      <div className="panel-bordered" style={{ padding: 22 }}>
+        <div className="eyebrow" style={{ marginBottom: 14 }}>★ The Collector ★</div>
+        <p style={{ margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+          "{MOCK_BIO}"
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '12px 14px', fontSize: 12.5 }}>
+          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Home</span>
+          <span style={{ fontWeight: 500 }}>Vienna, VA</span>
+          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Team</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#005A9C', outline: '1.5px solid var(--plum)' }} />
+            Los Angeles Dodgers
+          </span>
+          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'start', paddingTop: 2, color: 'var(--orange)' }}>Roster</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+            {MOCK_PLAYERS.map((p) => (
+              <span key={p} className="chip" style={{ fontSize: 9.5 }}>{p}</span>
+            ))}
+          </div>
+          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Chasing</span>
+          <span style={{ fontWeight: 500 }}>Topps runs '53 – '80</span>
+        </div>
+      </div>
+
+      <div className="panel" style={{ padding: 18 }}>
+        <div className="section-head" style={{ marginBottom: 12 }}>
+          <span className="eyebrow">★ Activity ★</span>
+        </div>
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 11 }}>
+          {MOCK_ACTIVITY.map((a) => (
+            <li key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: a.dot, marginTop: 6, flexShrink: 0, outline: '1.5px solid var(--plum)' }} />
+              <span style={{ flex: 1, color: 'var(--ink-soft)' }}>{a.text}</span>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600 }}>{a.time}</span>
+            </li>
+          ))}
+        </ul>
+        <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}>
+          View all
+        </button>
+      </div>
+
+      <div style={{
+        padding: 22,
+        background: 'var(--plum)', color: 'var(--cream)',
+        borderRadius: 16, position: 'relative',
+        border: '2px solid var(--plum)',
+        boxShadow: '0 4px 0 var(--plum-deep)',
+        overflow: 'hidden',
+      }}>
+        <svg viewBox="0 0 280 200" preserveAspectRatio="none"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.3 }}>
+          <g transform="translate(140 200)">
+            {Array.from({ length: 10 }).map((_, i) => {
+              const a = -Math.PI + (i / 9) * Math.PI;
+              return <polygon key={i} points="-15,0 15,0 0,-300" fill="#e5b53d"
+                transform={`rotate(${(a * 180) / Math.PI})`} />;
+            })}
+          </g>
+        </svg>
+        <div style={{ position: 'relative' }}>
+          <div className="eyebrow" style={{ color: 'var(--mustard)', marginBottom: 10 }}>★ Open for Trade ★</div>
+          <div className="display" style={{ fontSize: 30, color: 'var(--orange)', marginBottom: 8, textShadow: '2px 2px 0 var(--mustard)' }}>
+            47 doubles
+          </div>
+          <p style={{ margin: '0 0 16px', fontSize: 13, lineHeight: 1.5, color: 'rgba(245,233,208,0.85)' }}>
+            Chasing '53 hi-numbers and any Koufax.
+          </p>
+          <button className="btn" style={{
+            background: 'var(--mustard)', color: 'var(--plum)',
+            width: '100%', justifyContent: 'center', fontWeight: 700,
+            border: '2px solid var(--cream)', boxShadow: '0 2px 0 var(--cream)',
+          }}>
+            See trade binder →
+          </button>
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -404,8 +879,13 @@ export default function HomePage() {
         { label: 'Want list', value: '316', sub: 'chasing' },
         { label: 'Est. value', value: '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k', sub: 'book price' },
       ]} />
-      <div style={{ maxWidth: 1280, margin: '40px auto', padding: '0 28px', textAlign: 'center' }}>
-        <p className="eyebrow" style={{ color: 'var(--ink-mute)' }}>More sections coming soon…</p>
+      <div className="home-grid">
+        <main style={{ minWidth: 0 }}>
+          <SetsInProgress sets={sets} />
+          <FavoritesShowcase />
+          <FeedSection />
+        </main>
+        <Sidebar />
       </div>
     </div>
   );
