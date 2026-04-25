@@ -259,7 +259,7 @@ export default function HomePage() {
   }
 
   const sorted = useMemo(
-    () => [...sets].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0)),
+    () => [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || '')),
     [sets]
   );
 
