@@ -105,6 +105,48 @@ function CardTile({ row }: { row: CardRow }) {
   );
 }
 
+function ListRow({ row, even }: { row: CardRow; even: boolean }) {
+  const [lightboxUrl, setLightboxUrl] = useState('');
+  const owned = String(row['Owned'] || '') === 'Yes';
+  const gradingCo = String(row['Grading Company'] || '');
+  const grade = row['Grade'] ? `Grade ${row['Grade']}` : '';
+  const img1 = String(row['Image 1'] || '');
+  const img2 = String(row['Image 2'] || '');
+  return (
+    <>
+      <tr style={{ borderTop: '1.5px solid var(--cream-warm)', background: even ? 'var(--cream)' : 'var(--paper)' }}>
+        <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
+          {row['Card #'] ? `#${row['Card #']}` : '—'}
+        </td>
+        <td style={{ padding: '10px 16px' }}>
+          <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>{String(row['Description'] || '—')}</span>
+        </td>
+        <td className="eyebrow" style={{ padding: '10px 16px', fontSize: 9, color: 'var(--orange)' }}>
+          {[gradingCo, grade].filter(Boolean).join(' · ') || '—'}
+        </td>
+        <td style={{ padding: '10px 16px' }}>
+          {owned && (
+            <span style={{ background: 'var(--teal)', color: 'var(--cream)', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100 }}>OWNED</span>
+          )}
+        </td>
+        <td style={{ padding: '10px 16px' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {img1 && (
+              <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
+                style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+            )}
+            {img2 && (
+              <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
+                style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+            )}
+          </div>
+        </td>
+      </tr>
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
+    </>
+  );
+}
+
 export default function SharePage() {
   const params = useParams();
   const token = String(params?.token || '');
@@ -279,7 +321,7 @@ export default function SharePage() {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                  {['Card #', 'Description', 'Grading', 'Owned'].map((h) => (
+                  {['Card #', 'Description', 'Grading', 'Owned', 'Images'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 16px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
@@ -291,40 +333,9 @@ export default function SharePage() {
                 </tr>
               </thead>
               <tbody>
-                {displayed.map((row, i) => {
-                  const owned = String(row['Owned'] || '') === 'Yes';
-                  const gradingCo = String(row['Grading Company'] || '');
-                  const grade = row['Grade'] ? `Grade ${row['Grade']}` : '';
-                  return (
-                    <tr key={i} style={{
-                      borderTop: '1.5px solid var(--cream-warm)',
-                      background: i % 2 === 0 ? 'var(--cream)' : 'var(--paper)',
-                    }}>
-                      <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
-                        {row['Card #'] ? `#${row['Card #']}` : '—'}
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>
-                          {String(row['Description'] || '—')}
-                        </span>
-                      </td>
-                      <td className="eyebrow" style={{ padding: '10px 16px', fontSize: 9, color: 'var(--orange)' }}>
-                        {[gradingCo, grade].filter(Boolean).join(' · ') || '—'}
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        {owned && (
-                          <span style={{
-                            background: 'var(--teal)', color: 'var(--cream)',
-                            fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
-                            padding: '2px 8px', borderRadius: 100,
-                          }}>
-                            OWNED
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {displayed.map((row, i) => (
+                  <ListRow key={i} row={row} even={i % 2 === 0} />
+                ))}
               </tbody>
             </table>
           </div>

@@ -228,7 +228,7 @@ function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
   );
 }
 
-type StatItem = { label: string; value: string; sub: string };
+type StatItem = { label: string; value: string; sub: string; onClick?: () => void };
 
 function StatsStrip({ stats }: { stats: StatItem[] }) {
   return (
@@ -243,15 +243,141 @@ function StatsStrip({ stats }: { stats: StatItem[] }) {
         <div style={{ display: 'flex', alignItems: 'stretch' }}>
           {stats.flatMap((s, i) => [
             i > 0 ? <div key={`div-${i}`} style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} /> : null,
-            <div key={s.label} style={{ flex: 1 }}>
+            <div key={s.label} style={{ flex: 1, cursor: s.onClick ? 'pointer' : undefined }} onClick={s.onClick}>
               <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6 }}>{s.label}</div>
-              <div className="stat-num" style={{ fontSize: 38 }}>{s.value}</div>
+              <div className="stat-num" style={{ fontSize: 38, color: s.onClick ? 'var(--orange)' : undefined }}>{s.value}</div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-mute)', marginTop: 3, fontWeight: 600 }}>{s.sub}</div>
             </div>,
           ])}
         </div>
       </div>
     </section>
+  );
+}
+
+type WantCard = { year: number; brand: string; description: string; targetPrice: string };
+
+function WantListModal({ onClose }: { onClose: () => void }) {
+  const [cards, setCards] = useState<WantCard[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const supabase = createClient();
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: setsData } = await supabase.from('sets').select('year, brand, rows').eq('user_id', user.id);
+      if (!setsData) { setLoading(false); return; }
+      const unowned: WantCard[] = [];
+      for (const s of setsData) {
+        for (const row of (s.rows || [])) {
+          if (String(row['Owned'] || '') !== 'Yes') {
+            unowned.push({
+              year: s.year || 0,
+              brand: s.brand || '',
+              description: String(row['Description'] || ''),
+              targetPrice: String(row['Target Price'] || ''),
+            });
+          }
+        }
+      }
+      setCards(unowned);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  const filtered = search.trim()
+    ? cards.filter((c) => {
+        const q = search.toLowerCase();
+        return (
+          String(c.year).includes(q) ||
+          c.brand.toLowerCase().includes(q) ||
+          c.description.toLowerCase().includes(q) ||
+          c.targetPrice.toLowerCase().includes(q)
+        );
+      })
+    : cards;
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(42,20,52,0.82)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '60px 24px 24px', overflowY: 'auto',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: 'var(--cream)', border: '3px solid var(--plum)',
+          borderRadius: 16, boxShadow: '0 8px 0 var(--plum)',
+          width: '100%', maxWidth: 860, padding: 28,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+          <div className="display" style={{ fontSize: 26, color: 'var(--plum)', flex: 1 }}>Want List</div>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>{filtered.length} cards</span>
+          <button type="button" className="btn btn-sm btn-outline" onClick={onClose}>✕ Close</button>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 14px', border: '2px solid var(--plum)',
+          borderRadius: 100, background: 'var(--cream)', marginBottom: 20,
+        }}>
+          <SearchIcon size={14} />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by year, brand, description…"
+            autoFocus
+            style={{
+              border: 'none', outline: 'none', background: 'transparent',
+              fontFamily: 'var(--font-body)', fontSize: 13, flex: 1, color: 'var(--plum)',
+            }}
+          />
+        </div>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--ink-mute)' }} className="eyebrow">Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--ink-mute)' }} className="eyebrow">No cards found</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--plum)' }}>
+                  {['Year', 'Brand', 'Description', 'Target Price'].map((h) => (
+                    <th key={h} style={{
+                      padding: '10px 14px', textAlign: 'left',
+                      fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
+                      letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--mustard)',
+                      whiteSpace: 'nowrap',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c, i) => (
+                  <tr key={i} style={{
+                    borderTop: '1.5px solid var(--cream-warm)',
+                    background: i % 2 === 0 ? 'var(--cream)' : 'var(--paper)',
+                  }}>
+                    <td className="mono" style={{ padding: '9px 14px', fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>{c.year || '—'}</td>
+                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.brand || '—'}</td>
+                    <td className="display" style={{ padding: '9px 14px', fontSize: 13, color: 'var(--plum)' }}>{c.description || '—'}</td>
+                    <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.targetPrice || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -830,6 +956,7 @@ export default function HomePage() {
   const [avatar, setAvatar] = useState<string | null>(null);
   const [cover, setCover] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('Home');
+  const [showWantList, setShowWantList] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -875,10 +1002,10 @@ export default function HomePage() {
       <StatsStrip stats={[
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
         { label: 'Sets tracked', value: sets.length.toString() || '—', sub: 'in progress' },
-        { label: 'Trades done', value: '87', sub: '100% feedback' },
-        { label: 'Want list', value: '316', sub: 'chasing' },
+        { label: 'Want list', value: sets.reduce((n, s) => n + Math.max(0, (s.row_count || 0) - (s.owned_count || 0)), 0).toLocaleString() || '—', sub: 'chasing', onClick: () => setShowWantList(true) },
         { label: 'Est. value', value: '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k', sub: 'book price' },
       ]} />
+      {showWantList && <WantListModal onClose={() => setShowWantList(false)} />}
       <div className="home-grid">
         <main style={{ minWidth: 0 }}>
           <SetsInProgress sets={sets} />
