@@ -66,14 +66,14 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
           textTransform: 'uppercase',
           color: 'var(--ink-soft)',
         }}>
-          <span style={{
+          <Link href="/home" style={{
             color: 'var(--plum)',
             borderBottom: '3px solid var(--orange)',
             paddingBottom: 4,
-            cursor: 'default',
+            textDecoration: 'none',
           }}>
             My Shelf
-          </span>
+          </Link>
           <Link href="/shared" style={{ color: 'inherit' }}>Community</Link>
         </nav>
 

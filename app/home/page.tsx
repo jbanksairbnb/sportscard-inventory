@@ -750,10 +750,8 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
           const color = SET_COLORS[i % SET_COLORS.length];
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
-          return (
-            <Link key={s.slug} href={`/set/${encodeURIComponent(s.slug)}/view`}
-              style={{ textDecoration: 'none' }}>
-              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
+          const inner = (
+              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: s.share_token ? 'pointer' : 'default' }}>
                 <div style={{
                   width: 58, height: 58,
                   background: color, color: 'var(--cream)',
@@ -769,7 +767,7 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {s.year} {s.title}
+                      {s.title}
                     </div>
                     {s.share_token && (
                       <span style={{
@@ -792,8 +790,10 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
                   </div>
                 </div>
               </div>
-            </Link>
           );
+          return s.share_token
+            ? <Link key={s.slug} href={`/set/${encodeURIComponent(s.slug)}/view`} style={{ textDecoration: 'none' }}>{inner}</Link>
+            : <div key={s.slug}>{inner}</div>;
         })}
       </div>
     </section>
