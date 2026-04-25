@@ -47,7 +47,7 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
         alignItems: 'center',
         gap: 28,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <Link href="/home" style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, textDecoration: 'none' }}>
           <SCLogo size={44} />
           <div style={{ lineHeight: 0.95 }}>
             <div className="wordmark" style={{ fontSize: 22, color: 'var(--orange)' }}>Sports</div>
@@ -55,7 +55,7 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
               COLLECTIVE
             </div>
           </div>
-        </div>
+        </Link>
 
         <nav style={{
           display: 'flex',
