@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
@@ -87,6 +88,7 @@ type SetRow = {
   owned_pct: number;
   total_value: number;
   updated_at: number;
+  share_token: string | null;
 };
 
 function LogoShowcase() {
@@ -737,47 +739,60 @@ const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7
 
 function SetsInProgress({ sets }: { sets: SetRow[] }) {
   if (sets.length === 0) return null;
+  const sorted = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
   return (
     <section style={{ marginBottom: 32 }}>
       <div className="section-head">
         <span className="eyebrow" style={{ fontSize: 12 }}>★ Sets in Progress ★</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-        {sets.map((s, i) => {
+        {sorted.map((s, i) => {
           const color = SET_COLORS[i % SET_COLORS.length];
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
           return (
-            <div key={s.slug} className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
-              <div style={{
-                width: 58, height: 58,
-                background: color, color: 'var(--cream)',
-                display: 'grid', placeItems: 'center',
-                fontFamily: 'var(--font-display)', fontSize: 22,
-                borderRadius: 10,
-                border: '2px solid var(--plum)',
-                boxShadow: '0 2px 0 var(--plum)',
-                flexShrink: 0,
-              }}>
-                {yearShort}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 7, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {s.year} {s.title}
-                </div>
-                <div className="progress">
-                  <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
-                </div>
+            <Link key={s.slug} href={`/set/${encodeURIComponent(s.slug)}/view`}
+              style={{ textDecoration: 'none' }}>
+              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
                 <div style={{
-                  display: 'flex', justifyContent: 'space-between', marginTop: 5,
-                  fontFamily: 'var(--font-mono)', fontSize: 10.5,
-                  color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
+                  width: 58, height: 58,
+                  background: color, color: 'var(--cream)',
+                  display: 'grid', placeItems: 'center',
+                  fontFamily: 'var(--font-display)', fontSize: 22,
+                  borderRadius: 10,
+                  border: '2px solid var(--plum)',
+                  boxShadow: '0 2px 0 var(--plum)',
+                  flexShrink: 0,
                 }}>
-                  <span>{s.owned_count} / {s.row_count}</span>
-                  <span>{pct.toFixed(1)}%</span>
+                  {yearShort}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                      {s.year} {s.title}
+                    </div>
+                    {s.share_token && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+                        background: 'var(--teal)', color: 'var(--cream)',
+                        padding: '2px 6px', borderRadius: 100, flexShrink: 0,
+                      }}>SHARED</span>
+                    )}
+                  </div>
+                  <div className="progress">
+                    <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+                  </div>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', marginTop: 5,
+                    fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                    color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
+                  }}>
+                    <span>{s.owned_count} / {s.row_count}</span>
+                    <span>{pct.toFixed(1)}%</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            </Link>
           );
         })}
       </div>
@@ -918,13 +933,19 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
           </div>
         </div>
         <nav style={{ display: 'flex', gap: 22, fontSize: 11.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-soft)' }}>
-          {NAV_LINKS.map((label) => (
-            <span key={label} style={{
-              color: label === 'My Shelf' ? 'var(--plum)' : 'inherit',
-              borderBottom: label === 'My Shelf' ? '3px solid var(--orange)' : undefined,
-              paddingBottom: label === 'My Shelf' ? 4 : undefined, cursor: 'pointer',
-            }}>{label}</span>
-          ))}
+          {NAV_LINKS.map((label) => {
+            const active = label === 'My Shelf';
+            const style: React.CSSProperties = {
+              color: active ? 'var(--plum)' : 'inherit',
+              borderBottom: active ? '3px solid var(--orange)' : undefined,
+              paddingBottom: active ? 4 : undefined,
+              cursor: 'pointer',
+              textDecoration: 'none',
+            };
+            return active
+              ? <Link key={label} href="/home" style={style}>{label}</Link>
+              : <span key={label} style={style}>{label}</span>;
+          })}
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
@@ -967,7 +988,7 @@ export default function HomePage() {
       setUserEmail(user.email || '');
       const { data } = await supabase
         .from('sets')
-        .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_value, updated_at')
+        .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_value, updated_at, share_token')
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
       if (data) setSets(data as SetRow[]);
