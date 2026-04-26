@@ -199,6 +199,7 @@ export default function SetEditorPage() {
   const paramSlug = String(params?.slug || "new");
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
   const [slug, setSlug] = useState<string>(paramSlug);
   const [datasetTitle, setDatasetTitle] = useState<string>("");
   const [year, setYear] = useState<string>("");
@@ -219,6 +220,7 @@ export default function SetEditorPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/login"); return; }
       setUserId(user.id);
+      setUserEmail(user.email || '');
       if (paramSlug !== "new") {
         const { data } = await supabase.from("sets").select("*").eq("slug", paramSlug).single();
         if (data) {
@@ -247,6 +249,7 @@ export default function SetEditorPage() {
       await supabase.from("sets").upsert({
         user_id: userId, slug, title: datasetTitle,
         year: Number(year) || null, brand, description: desc,
+        owner_email: userEmail,
         rows: theRows, row_count: theRows.length,
         owned_count: ownedCount, owned_pct: ownedPct,
         total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss,

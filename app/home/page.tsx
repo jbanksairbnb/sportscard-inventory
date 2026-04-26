@@ -949,8 +949,6 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
   );
 }
 
-const MOCK_BIO = "Chasing every Topps set from '53 to '80. Traders welcome. Will travel for a clean '55 Koufax RC.";
-const MOCK_PLAYERS = ['Albert Pujols', 'Mike Trout', 'Roberto Clemente', 'Sandy Koufax', 'Ron Cey'];
 const MOCK_ACTIVITY = [
   { id: 'a1', text: "Dale commented on your 1955 Koufax", time: "1h", dot: "#b4462b" },
   { id: 'a2', text: "3 new want list matches", time: "3h", dot: "#b8923a" },
@@ -959,31 +957,117 @@ const MOCK_ACTIVITY = [
   { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
 ];
 
-function Sidebar() {
+type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; };
+const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '' };
+
+function Sidebar({ userId }: { userId: string }) {
+  const [profile, setProfile] = useState<CollectorProfile>(EMPTY_PROFILE);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<CollectorProfile>(EMPTY_PROFILE);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!userId) return;
+    const supabase = createClient();
+    supabase.from('user_profiles').select('display_name, handle, bio, city, team, favorite_players, chasing')
+      .eq('user_id', userId).single()
+      .then(({ data }) => {
+        if (data) {
+          const p: CollectorProfile = {
+            display_name: data.display_name || '', handle: data.handle || '',
+            bio: data.bio || '', city: data.city || '',
+            team: data.team || '', favorite_players: data.favorite_players || '',
+            chasing: data.chasing || '',
+          };
+          setProfile(p);
+          setDraft(p);
+        }
+      });
+  }, [userId]);
+
+  async function handleSave() {
+    setSaving(true);
+    const supabase = createClient();
+    await supabase.from('user_profiles').upsert({ user_id: userId, ...draft });
+    setProfile(draft);
+    setEditing(false);
+    setSaving(false);
+  }
+
+  const players = profile.favorite_players ? profile.favorite_players.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 6, padding: '5px 8px',
+    fontFamily: 'var(--font-body)', fontSize: 12.5, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+
   return (
     <aside style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'sticky', top: 20, alignSelf: 'start' }}>
       <div className="panel-bordered" style={{ padding: 22 }}>
-        <div className="eyebrow" style={{ marginBottom: 14 }}>★ The Collector ★</div>
-        <p style={{ margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
-          "{MOCK_BIO}"
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '12px 14px', fontSize: 12.5 }}>
-          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Home</span>
-          <span style={{ fontWeight: 500 }}>Vienna, VA</span>
-          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Team</span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#005A9C', outline: '1.5px solid var(--plum)' }} />
-            Los Angeles Dodgers
-          </span>
-          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'start', paddingTop: 2, color: 'var(--orange)' }}>Roster</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-            {MOCK_PLAYERS.map((p) => (
-              <span key={p} className="chip" style={{ fontSize: 9.5 }}>{p}</span>
-            ))}
-          </div>
-          <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Chasing</span>
-          <span style={{ fontWeight: 500 }}>Topps runs '53 – '80</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div className="eyebrow">★ The Collector ★</div>
+          {!editing && <button type="button" onClick={() => { setDraft(profile); setEditing(true); }} className="btn btn-ghost btn-sm">Edit</button>}
         </div>
+        {editing ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {([
+              { key: 'display_name', label: 'Name' },
+              { key: 'handle', label: 'Handle (@)' },
+              { key: 'city', label: 'City' },
+              { key: 'team', label: 'Favorite Team' },
+              { key: 'chasing', label: 'Chasing' },
+              { key: 'favorite_players', label: 'Roster (comma-separated)' },
+            ] as { key: keyof CollectorProfile; label: string }[]).map(({ key, label }) => (
+              <div key={key}>
+                <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>{label}</div>
+                <input value={draft[key]} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} style={fieldStyle} />
+              </div>
+            ))}
+            <div>
+              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>Bio</div>
+              <textarea value={draft.bio} onChange={e => setDraft(d => ({ ...d, bio: e.target.value }))}
+                rows={3} style={{ ...fieldStyle, resize: 'vertical' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={handleSave} disabled={saving} className="btn btn-primary btn-sm">{saving ? 'Saving…' : 'Save'}</button>
+              <button type="button" onClick={() => { setDraft(profile); setEditing(false); }} className="btn btn-outline btn-sm">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {profile.bio && (
+              <p style={{ margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+                "{profile.bio}"
+              </p>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '12px 14px', fontSize: 12.5 }}>
+              {profile.city && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Home</span>
+                <span style={{ fontWeight: 500 }}>{profile.city}</span>
+              </>}
+              {profile.team && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Team</span>
+                <span style={{ fontWeight: 500 }}>{profile.team}</span>
+              </>}
+              {players.length > 0 && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'start', paddingTop: 2, color: 'var(--orange)' }}>Roster</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {players.map(p => <span key={p} className="chip" style={{ fontSize: 9.5 }}>{p}</span>)}
+                </div>
+              </>}
+              {profile.chasing && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Chasing</span>
+                <span style={{ fontWeight: 500 }}>{profile.chasing}</span>
+              </>}
+              {!profile.bio && !profile.city && !profile.team && !profile.chasing && (
+                <span style={{ gridColumn: '1/-1', color: 'var(--ink-mute)', fontSize: 12, fontStyle: 'italic' }}>
+                  Click Edit to add your collector profile.
+                </span>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="panel" style={{ padding: 18 }}>
@@ -1184,7 +1268,7 @@ export default function HomePage() {
           <FavoritesShowcase userId={userId} />
           <FeedSection />
         </main>
-        <Sidebar />
+        <Sidebar userId={userId} />
       </div>
     </div>
   );

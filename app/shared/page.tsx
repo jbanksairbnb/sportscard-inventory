@@ -11,6 +11,7 @@ type SharedSet = {
   year: number | null;
   brand: string;
   owner_email: string;
+  user_id: string;
   owned_pct: number;
   row_count: number;
   owned_count: number;
@@ -20,6 +21,7 @@ const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c'];
 
 export default function CommunityPage() {
   const [sets, setSets] = useState<SharedSet[]>([]);
+  const [displayNames, setDisplayNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [listView, setListView] = useState(false);
@@ -29,10 +31,26 @@ export default function CommunityPage() {
     async function load() {
       const { data } = await supabase
         .from('sets')
-        .select('share_token, title, year, brand, owner_email, owned_pct, row_count, owned_count')
+        .select('share_token, title, year, brand, owner_email, user_id, owned_pct, row_count, owned_count')
         .not('share_token', 'is', null)
         .order('title', { ascending: true });
-      if (data) setSets(data as SharedSet[]);
+      if (data) {
+        setSets(data as SharedSet[]);
+        const userIds = [...new Set((data as SharedSet[]).map(s => s.user_id).filter(Boolean))];
+        if (userIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from('user_profiles')
+            .select('user_id, display_name')
+            .in('user_id', userIds);
+          if (profiles) {
+            const map: Record<string, string> = {};
+            profiles.forEach((p: { user_id: string; display_name: string | null }) => {
+              if (p.display_name) map[p.user_id] = p.display_name;
+            });
+            setDisplayNames(map);
+          }
+        }
+      }
       setLoading(false);
     }
     load();
@@ -179,8 +197,10 @@ export default function CommunityPage() {
                     borderTop: '1.5px solid var(--cream-warm)',
                     background: i % 2 === 0 ? 'var(--cream)' : 'var(--paper)',
                   }}>
-                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--ink-soft)', fontWeight: 500 }}>
-                      {s.owner_email || 'Unknown'}
+                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 500 }}>
+                      <Link href={`/profile/${s.user_id}`} style={{ color: 'var(--orange)', textDecoration: 'none', fontWeight: 600 }}>
+                        {displayNames[s.user_id] || s.owner_email || 'Unknown'}
+                      </Link>
                     </td>
                     <td style={{ padding: '12px 16px' }}>
                       <span className="display" style={{ fontSize: 14, color: 'var(--plum)' }}>{s.title}</span>
@@ -241,9 +261,10 @@ export default function CommunityPage() {
                         <div className="display" style={{ fontSize: 15, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {s.title}
                         </div>
-                        <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginTop: 2, fontWeight: 500 }}>
-                          {s.owner_email || 'Unknown'}
-                        </div>
+                        <Link href={`/profile/${s.user_id}`} onClick={e => e.stopPropagation()}
+                          style={{ fontSize: 12, color: 'var(--orange)', marginTop: 2, fontWeight: 600, textDecoration: 'none', display: 'block' }}>
+                          {displayNames[s.user_id] || s.owner_email || 'Unknown'}
+                        </Link>
                       </div>
                     </div>
                     <div className="progress" style={{ marginBottom: 6 }}>
