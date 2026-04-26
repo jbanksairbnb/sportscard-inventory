@@ -10,7 +10,7 @@ import SCLogo from "@/components/SCLogo";
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
   "Card #", "Description", "Owned", "Raw Grade", "Graded",
-  "Grading Company", "Grade", "Cost", "Value", "Target Price",
+  "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Condition",
   "Sale Price", "Date Purchased", "Purchased From", "Upload Image(s)",
 ];
 
@@ -28,6 +28,8 @@ const DEFAULT_DIR: Partial<Record<SortKey, SortDir>> = {
   "Grade": "desc", "Cost": "desc", "Value": "desc", "Target Price": "desc",
 };
 const CURRENCY_FIELDS = ["Cost", "Value", "Target Price", "Sale Price"] as const;
+const TARGET_CONDITIONS_RAW = ["G", "VG", "VG-EX", "EX", "EX+", "EX-MT", "NM", "NM+", "NM-MT", "MINT"] as const;
+const TARGET_CONDITIONS_GRADED = ["PSA/SGC 3", "PSA/SGC 4", "PSA/SGC 5", "PSA/SGC 6", "PSA/SGC 7", "PSA/SGC 8", "PSA/SGC 9", "PSA/SGC 10"] as const;
 
 /* =====================  Helpers  ===================== */
 const v = (x: any) => (x === undefined || x === null ? "" : String(x));
@@ -468,6 +470,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                     <SortableHeader label="Cost" />
                     <SortableHeader label="Value" />
                     <SortableHeader label="Target Price" />
+                    <SortableHeader label="Target Condition" />
                     <SortableHeader label="Sale Price" />
                     <SortableHeader label="Date Purchased" />
                     <SortableHeader label="Purchased From" />
@@ -522,6 +525,17 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Target Price"])} onChange={(e) => onChangeCell(origIndex, "Target Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Target Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
+                      </td>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                        <select value={v(row["Target Condition"])} onChange={(e) => onChangeCell(origIndex, "Target Condition", e.target.value)} style={{ ...CELL_SELECT, width: 130 }}>
+                          <option value="">—</option>
+                          <optgroup label="Raw">
+                            {TARGET_CONDITIONS_RAW.map(g => <option key={g} value={g}>{g}</option>)}
+                          </optgroup>
+                          <optgroup label="Graded">
+                            {TARGET_CONDITIONS_GRADED.map(g => <option key={g} value={g}>{g}</option>)}
+                          </optgroup>
+                        </select>
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Sale Price"])} onChange={(e) => onChangeCell(origIndex, "Sale Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Sale Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
