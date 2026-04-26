@@ -989,6 +989,13 @@ function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: 
   const [draft, setDraft] = useState<CollectorProfile>(profile);
   const [saving, setSaving] = useState(false);
 
+  const [pwOpen, setPwOpen] = useState(false);
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState('');
+  const [pwMessage, setPwMessage] = useState('');
+
   useEffect(() => { setDraft(profile); }, [profile]);
 
   async function handleSave() {
@@ -998,6 +1005,25 @@ function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: 
     onProfileSave(draft);
     setEditing(false);
     setSaving(false);
+  }
+
+  async function handleChangePassword() {
+    setPwError('');
+    setPwMessage('');
+    if (newPw.length < 6) { setPwError('Password must be at least 6 characters.'); return; }
+    if (newPw !== confirmPw) { setPwError('Passwords do not match.'); return; }
+    setPwSaving(true);
+    const supabase = createClient();
+    const { error } = await supabase.auth.updateUser({ password: newPw });
+    setPwSaving(false);
+    if (error) {
+      setPwError(error.message);
+    } else {
+      setPwMessage('Password updated.');
+      setNewPw('');
+      setConfirmPw('');
+      setTimeout(() => { setPwOpen(false); setPwMessage(''); }, 1500);
+    }
   }
 
   const players = profile.favorite_players ? profile.favorite_players.split(',').map(s => s.trim()).filter(Boolean) : [];
@@ -1075,6 +1101,48 @@ function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: 
           </>
         )}
       </div>
+
+      <div className="panel-bordered" style={{ padding: 22 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: pwOpen ? 14 : 0 }}>
+          <div className="eyebrow">★ Account ★</div>
+          {!pwOpen && (
+            <button type="button" onClick={() => { setPwError(''); setPwMessage(''); setNewPw(''); setConfirmPw(''); setPwOpen(true); }} className="btn btn-ghost btn-sm">
+              Change Password
+            </button>
+          )}
+        </div>
+        {pwOpen && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>New Password</div>
+              <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} minLength={6} style={fieldStyle} autoComplete="new-password" />
+            </div>
+            <div>
+              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>Confirm Password</div>
+              <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} minLength={6} style={fieldStyle} autoComplete="new-password" />
+            </div>
+            {pwError && (
+              <div style={{ background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--rust)', fontWeight: 600 }}>
+                {pwError}
+              </div>
+            )}
+            {pwMessage && (
+              <div style={{ background: 'rgba(45,122,110,0.1)', border: '1.5px solid var(--teal)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>
+                {pwMessage}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={handleChangePassword} disabled={pwSaving} className="btn btn-primary btn-sm">{pwSaving ? 'Saving…' : 'Update'}</button>
+              <button type="button" onClick={() => { setPwOpen(false); setPwError(''); setPwMessage(''); setNewPw(''); setConfirmPw(''); }} className="btn btn-outline btn-sm">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="panel" style={{ padding: 18 }}>
+        <div className="section-head" style={{ marginBottom: 12 }}>
+          <span className="eyebrow">★ Activity ★</span>
+        </div>
 
       <div className="panel" style={{ padding: 18 }}>
         <div className="section-head" style={{ marginBottom: 12 }}>
