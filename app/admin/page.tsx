@@ -2,10 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
-
-const ADMIN_EMAIL = 'jbanks@sports-collective.com';
 
 type Applicant = {
   user_id: string;
@@ -17,26 +14,29 @@ type Applicant = {
   display_name: string | null;
   handle: string | null;
   email?: string;
+  is_admin?: boolean;
 };
 
 export default function AdminPage() {
   const router = useRouter();
   const [applicants, setApplicants] = useState<Applicant[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [unauthorized, setUnauthorized] = useState(false);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [working, setWorking] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [adminWorking, setAdminWorking] = useState<string | null>(null);
 
-    useEffect(() => {
-    const supabase = createClient();
+  useEffect(() => {
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user || user.email !== ADMIN_EMAIL) { setUnauthorized(true); setLoading(false); return; }
       const res = await fetch('/api/admin/applicants');
-      if (res.ok) {
-        const { applicants } = await res.json();
+      if (res.status === 401) {
+        setUnauthorized(true);
+      } else if (res.ok) {
+        const { applicants, currentUserId } = await res.json();
         setApplicants((applicants || []) as Applicant[]);
+        setCurrentUserId(currentUserId || '');
       }
       setLoading(false);
     }
@@ -73,6 +73,22 @@ export default function AdminPage() {
       alert('Update failed: ' + error);
     }
     setWorking(null);
+  }
+
+  async function toggleAdmin(userId: string, isAdmin: boolean) {
+    setAdminWorking(userId);
+    const res = await fetch('/api/admin/applicants', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, isAdmin }),
+    });
+    if (res.ok) {
+      setApplicants(prev => prev.map(a => a.user_id === userId ? { ...a, is_admin: isAdmin } : a));
+    } else {
+      const { error } = await res.json();
+      alert('Update failed: ' + error);
+    }
+    setAdminWorking(null);
   }
 
   const filtered = applicants.filter(a => filter === 'all' || a.application_status === filter);
@@ -165,6 +181,14 @@ export default function AdminPage() {
                       }}>
                         {a.application_status.toUpperCase()}
                       </span>
+                      {a.is_admin && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
+                          background: 'var(--plum)', color: 'var(--mustard)',
+                        }}>
+                          ★ ADMIN
+                        </span>
+                      )}
                     </div>
                     {a.applied_at && (
                       <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 12 }}>
@@ -231,9 +255,24 @@ export default function AdminPage() {
                         {working === a.user_id ? '…' : a.application_status === 'approved' ? 'Revoke' : 'Approve'}
                       </button>
                     )}
+                    {a.application_status === 'approved' && a.user_id !== currentUserId && (
+                      <button
+                        onClick={() => toggleAdmin(a.user_id, !a.is_admin)}
+                        disabled={adminWorking === a.user_id}
+                        className="btn btn-sm"
+                        style={{
+                          justifyContent: 'center',
+                          background: a.is_admin ? 'transparent' : 'var(--plum)',
+                          color: a.is_admin ? 'var(--plum)' : 'var(--mustard)',
+                          border: '2px solid var(--plum)',
+                        }}
+                      >
+                        {adminWorking === a.user_id ? '…' : a.is_admin ? 'Remove Admin' : '★ Make Admin'}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(a.user_id, a.display_name || a.handle || 'this user')}
-                      disabled={deleting === a.user_id}
+                      disabled={deleting === a.user_id || a.user_id === currentUserId}
                       className="btn btn-sm"
                       style={{ justifyContent: 'center', background: 'transparent', color: 'var(--ink-mute)', border: '1.5px solid var(--rule)' }}
                     >
