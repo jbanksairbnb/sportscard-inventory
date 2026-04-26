@@ -1,9 +1,9 @@
 import { createServerClient } from '@supabase/ssr'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient, User } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 
-const ADMIN_EMAIL = 'jbanks@sports-collective.com'
+const BOOTSTRAP_ADMIN_EMAIL = 'jbanks@sports-collective.com'
 
 const PLUM = '#3d1f4a'
 const ORANGE = '#e8742c'
@@ -105,55 +105,86 @@ function adminClient() {
   )
 }
 
+async function isAdminUser(admin: SupabaseClient, user: User): Promise<boolean> {
+  if (user.email === BOOTSTRAP_ADMIN_EMAIL) return true
+  const { data } = await admin
+    .from('user_profiles')
+    .select('is_admin')
+    .eq('user_id', user.id)
+    .maybeSingle()
+  return !!data?.is_admin
+}
+
 export async function GET() {
   const supabase = authedSupabase(await cookies())
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user || user.email !== ADMIN_EMAIL) {
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const admin = adminClient()
+  if (!(await isAdminUser(admin, user))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { data, error } = await adminClient()
+  const { data, error } = await admin
     .from('user_profiles')
-    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email')
+    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin')
     .not('application_status', 'is', null)
     .order('applied_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ applicants: data || [] })
+  return NextResponse.json({ applicants: data || [], currentUserId: user.id })
 }
 
 export async function PATCH(req: Request) {
   const supabase = authedSupabase(await cookies())
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user || user.email !== ADMIN_EMAIL) {
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const admin = adminClient()
+  if (!(await isAdminUser(admin, user))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { userId, status } = await req.json()
-  if (!userId || !['pending', 'approved', 'rejected'].includes(status)) {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+  const { userId, status, isAdmin } = await req.json()
+  if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 })
+
+  if (status !== undefined) {
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+    }
+    const { data: prev } = await admin
+      .from('user_profiles')
+      .select('email, application_status')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    const { error } = await admin
+      .from('user_profiles')
+      .update({ application_status: status })
+      .eq('user_id', userId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    if (
+      prev?.email &&
+      (status === 'approved' || status === 'rejected') &&
+      prev.application_status !== status
+    ) {
+      await sendStatusEmail(prev.email, status)
+    }
   }
 
-  const admin = adminClient()
-  const { data: prev } = await admin
-    .from('user_profiles')
-    .select('email, application_status')
-    .eq('user_id', userId)
-    .maybeSingle()
-
-  const { error } = await admin
-    .from('user_profiles')
-    .update({ application_status: status })
-    .eq('user_id', userId)
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  if (
-    prev?.email &&
-    (status === 'approved' || status === 'rejected') &&
-    prev.application_status !== status
-  ) {
-    await sendStatusEmail(prev.email, status)
+  if (isAdmin !== undefined) {
+    if (typeof isAdmin !== 'boolean') {
+      return NextResponse.json({ error: 'Invalid isAdmin' }, { status: 400 })
+    }
+    if (userId === user.id && !isAdmin) {
+      return NextResponse.json({ error: 'You cannot remove your own admin access' }, { status: 400 })
+    }
+    const { error } = await admin
+      .from('user_profiles')
+      .update({ is_admin: isAdmin })
+      .eq('user_id', userId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })
