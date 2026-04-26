@@ -121,20 +121,36 @@ function LogoShowcase() {
   );
 }
 
-function Hero({ avatar, cover, profile, onAvatarChange, onCoverChange }: {
+function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange }: {
+  userId: string;
   avatar: string | null; cover: string | null;
   profile: CollectorProfile;
   onAvatarChange: (url: string) => void; onCoverChange: (url: string) => void;
 }) {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>, cb: (url: string) => void) {
+  async function handleUpload(
+    e: React.ChangeEvent<HTMLInputElement>,
+    storagePath: string,
+    profileKey: 'avatar_url' | 'cover_url',
+    cb: (url: string) => void,
+    setUploading: (v: boolean) => void,
+  ) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => cb(reader.result as string);
-    reader.readAsDataURL(file);
+    setUploading(true);
+    const supabase = createClient();
+    const { error } = await supabase.storage.from('card-images').upload(storagePath, file, { upsert: true });
+    if (error) { alert('Upload failed: ' + error.message); setUploading(false); return; }
+    const { data } = supabase.storage.from('card-images').getPublicUrl(storagePath);
+    const url = data.publicUrl + `?t=${Date.now()}`;
+    cb(url);
+    await supabase.from('user_profiles').upsert({ user_id: userId, [profileKey]: url });
+    setUploading(false);
+    e.target.value = '';
   }
 
   const name = profile.display_name || 'YOUR NAME';
@@ -177,10 +193,13 @@ function Hero({ avatar, cover, profile, onAvatarChange, onCoverChange }: {
         </div>
         <div style={{ position: 'absolute', top: 18, right: 22 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => coverInputRef.current?.click()}
+            disabled={uploadingCover}
             style={{ background: 'rgba(245,233,208,0.95)' }}>
-            <CameraIcon size={13} /> Change cover
+            <CameraIcon size={13} /> {uploadingCover ? 'Uploading…' : 'Change cover'}
           </button>
-          <input ref={coverInputRef} type="file" accept="image/*" onChange={(e) => handleFile(e, onCoverChange)} style={{ display: 'none' }} />
+          <input ref={coverInputRef} type="file" accept="image/*"
+            onChange={(e) => handleUpload(e, `${userId}/cover`, 'cover_url', onCoverChange, setUploadingCover)}
+            style={{ display: 'none' }} />
         </div>
       </div>
 
@@ -198,12 +217,15 @@ function Hero({ avatar, cover, profile, onAvatarChange, onCoverChange }: {
               }}>{initials}</div>
             )}
           </div>
-          <button onClick={() => avatarInputRef.current?.click()} title="Change profile picture" style={{
+          <button onClick={() => avatarInputRef.current?.click()} title="Change profile picture" disabled={uploadingAvatar} style={{
             position: 'absolute', right: 4, bottom: 4, width: 38, height: 38, borderRadius: '50%',
             background: 'var(--orange)', color: 'var(--cream)', display: 'grid', placeItems: 'center',
             border: '2.5px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
+            opacity: uploadingAvatar ? 0.6 : 1,
           }}><CameraIcon size={16} /></button>
-          <input ref={avatarInputRef} type="file" accept="image/*" onChange={(e) => handleFile(e, onAvatarChange)} style={{ display: 'none' }} />
+          <input ref={avatarInputRef} type="file" accept="image/*"
+            onChange={(e) => handleUpload(e, `${userId}/avatar`, 'avatar_url', onAvatarChange, setUploadingAvatar)}
+            style={{ display: 'none' }} />
         </div>
 
         <div style={{ flex: 1, paddingTop: 96 }}>
@@ -1207,7 +1229,7 @@ export default function HomePage() {
       setUserEmail(user.email || '');
       setUserId(user.id);
       const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1216,6 +1238,8 @@ export default function HomePage() {
           team: profileData.team || '', favorite_players: profileData.favorite_players || '',
           chasing: profileData.chasing || '',
         });
+        if (profileData.avatar_url) setAvatar(profileData.avatar_url);
+        if (profileData.cover_url) setCover(profileData.cover_url);
       }
       const { data } = await supabase
         .from('sets')
@@ -1249,7 +1273,7 @@ export default function HomePage() {
     <div style={{ minHeight: '100vh' }}>
       <TopNav userEmail={userEmail} onLogout={handleLogout} />
       <LogoShowcase />
-      <Hero avatar={avatar} cover={cover} profile={profile} onAvatarChange={setAvatar} onCoverChange={setCover} />
+      <Hero userId={userId} avatar={avatar} cover={cover} profile={profile} onAvatarChange={setAvatar} onCoverChange={setCover} />
       <SubNav active={activeTab} setActive={setActiveTab} />
       <StatsStrip stats={[
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
