@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-const ADMIN_EMAIL = 'jbanks@sportscollective.com';
+const ADMIN_EMAIL = 'jbanks@sports-collective.com';
 
 type Applicant = {
   user_id: string;
@@ -26,6 +26,7 @@ export default function AdminPage() {
   const [unauthorized, setUnauthorized] = useState(false);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [working, setWorking] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -42,6 +43,23 @@ export default function AdminPage() {
     }
     load();
   }, []);
+
+  async function handleDelete(userId: string, name: string) {
+    if (!confirm(`Permanently delete "${name}"? This removes them from auth and cannot be undone.`)) return;
+    setDeleting(userId);
+    const res = await fetch('/api/admin/delete-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    });
+    if (!res.ok) {
+      const { error } = await res.json();
+      alert('Delete failed: ' + error);
+    } else {
+      setApplicants(prev => prev.filter(a => a.user_id !== userId));
+    }
+    setDeleting(null);
+  }
 
   async function updateStatus(userId: string, status: 'approved' | 'rejected') {
     setWorking(userId);
@@ -176,37 +194,46 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {a.application_status === 'pending' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, minWidth: 140 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, minWidth: 140 }}>
+                    {a.application_status === 'pending' && (
+                      <>
+                        <button
+                          onClick={() => updateStatus(a.user_id, 'approved')}
+                          disabled={working === a.user_id}
+                          className="btn btn-primary btn-sm"
+                          style={{ justifyContent: 'center' }}
+                        >
+                          {working === a.user_id ? '…' : '✓ Approve'}
+                        </button>
+                        <button
+                          onClick={() => updateStatus(a.user_id, 'rejected')}
+                          disabled={working === a.user_id}
+                          className="btn btn-sm"
+                          style={{ justifyContent: 'center', background: 'var(--rust)', color: 'var(--cream)', border: '2px solid var(--plum)' }}
+                        >
+                          {working === a.user_id ? '…' : '✕ Reject'}
+                        </button>
+                      </>
+                    )}
+                    {a.application_status !== 'pending' && (
                       <button
-                        onClick={() => updateStatus(a.user_id, 'approved')}
+                        onClick={() => updateStatus(a.user_id, a.application_status === 'approved' ? 'rejected' : 'approved')}
                         disabled={working === a.user_id}
-                        className="btn btn-primary btn-sm"
+                        className="btn btn-ghost btn-sm"
                         style={{ justifyContent: 'center' }}
                       >
-                        {working === a.user_id ? '…' : '✓ Approve'}
+                        {working === a.user_id ? '…' : a.application_status === 'approved' ? 'Revoke' : 'Approve'}
                       </button>
-                      <button
-                        onClick={() => updateStatus(a.user_id, 'rejected')}
-                        disabled={working === a.user_id}
-                        className="btn btn-sm"
-                        style={{ justifyContent: 'center', background: 'var(--rust)', color: 'var(--cream)', border: '2px solid var(--plum)' }}
-                      >
-                        {working === a.user_id ? '…' : '✕ Reject'}
-                      </button>
-                    </div>
-                  )}
-
-                  {a.application_status !== 'pending' && (
+                    )}
                     <button
-                      onClick={() => updateStatus(a.user_id, a.application_status === 'approved' ? 'rejected' : 'approved')}
-                      disabled={working === a.user_id}
-                      className="btn btn-ghost btn-sm"
-                      style={{ flexShrink: 0 }}
+                      onClick={() => handleDelete(a.user_id, a.display_name || a.handle || 'this user')}
+                      disabled={deleting === a.user_id}
+                      className="btn btn-sm"
+                      style={{ justifyContent: 'center', background: 'transparent', color: 'var(--ink-mute)', border: '1.5px solid var(--rule)' }}
                     >
-                      {working === a.user_id ? '…' : a.application_status === 'approved' ? 'Revoke' : 'Approve'}
+                      {deleting === a.user_id ? '…' : '🗑 Delete'}
                     </button>
-                  )}
+                  </div>
                 </div>
               </div>
             ))}
