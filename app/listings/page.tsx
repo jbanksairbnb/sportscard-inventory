@@ -54,7 +54,15 @@ function emptyDraft(userId: string): Partial<Listing> {
     status: 'draft',
   };
 }
-
+function buildTitle(d: Partial<Listing>): string {
+  const parts = [
+    d.year ? String(d.year) : '',
+    d.brand || '',
+    d.card_number ? `#${d.card_number}` : '',
+    d.player || '',
+  ].filter(Boolean);
+  return parts.join(' ').trim();
+}
 function fmtMoney(n: number | null) {
   if (n === null || n === undefined) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
@@ -124,7 +132,10 @@ export default function ListingsPage() {
   async function saveListing() {
     if (!editing) return;
     setFormError('');
-    if (!editing.title?.trim()) { setFormError('Title is required.'); return; }
+        if (!editing.year) { setFormError('Year is required.'); return; }
+    if (!editing.brand?.trim()) { setFormError('Brand is required.'); return; }
+    if (!editing.card_number?.trim()) { setFormError('Card # is required.'); return; }
+    if (!editing.player?.trim()) { setFormError('Player is required.'); return; }
     if (editing.condition_type === 'graded' && (!editing.grading_company || !editing.grade)) {
       setFormError('Graded cards need a grading company and grade.');
       return;
@@ -137,6 +148,7 @@ export default function ListingsPage() {
     const supabase = createClient();
     const payload = {
       ...editing,
+      title: buildTitle(editing),
       year: editing.year ? Number(editing.year) : null,
       asking_price: editing.asking_price !== null && editing.asking_price !== undefined && String(editing.asking_price) !== '' ? Number(editing.asking_price) : null,
       cost: editing.cost !== null && editing.cost !== undefined && String(editing.cost) !== '' ? Number(editing.cost) : null,
@@ -377,45 +389,35 @@ function ListingEditor({
           <button type="button" onClick={onCancel} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
-          <div>
-            <div className="eyebrow" style={labelStyle}>Title *</div>
-            <input value={draft.title || ''} onChange={e => set('title', e.target.value)}
-              placeholder="e.g. 1953 Topps #82 Mickey Mantle" style={fieldStyle} />
-          </div>
-
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 130px', gap: 12 }}>
             <div>
-              <div className="eyebrow" style={labelStyle}>Year</div>
+              <div className="eyebrow" style={labelStyle}>Year *</div>
               <input type="number" value={draft.year ?? ''} onChange={e => set('year', e.target.value ? Number(e.target.value) : null)}
                 placeholder="1953" style={fieldStyle} />
             </div>
             <div>
-              <div className="eyebrow" style={labelStyle}>Brand</div>
+              <div className="eyebrow" style={labelStyle}>Brand *</div>
               <input value={draft.brand || ''} onChange={e => set('brand', e.target.value)}
                 placeholder="Topps" style={fieldStyle} />
             </div>
             <div>
-              <div className="eyebrow" style={labelStyle}>Card #</div>
+              <div className="eyebrow" style={labelStyle}>Card # *</div>
               <input value={draft.card_number || ''} onChange={e => set('card_number', e.target.value)}
-                style={fieldStyle} />
+                placeholder="82" style={fieldStyle} />
             </div>
           </div>
 
           <div>
-            <div className="eyebrow" style={labelStyle}>Player (optional)</div>
+            <div className="eyebrow" style={labelStyle}>Player *</div>
             <input value={draft.player || ''} onChange={e => set('player', e.target.value)}
               placeholder="Mickey Mantle" style={fieldStyle} />
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 4 }}>
+              Title preview: <span style={{ color: 'var(--plum)' }}>{buildTitle(draft) || '—'}</span>
+            </div>
           </div>
 
-          <div>
-            <div className="eyebrow" style={labelStyle}>Description (optional)</div>
-            <textarea value={draft.description || ''} onChange={e => set('description', e.target.value)}
-              rows={3} style={{ ...fieldStyle, resize: 'vertical' }} />
-          </div>
-
-          <div>
-            <div className="eyebrow" style={labelStyle}>Condition Type *</div>
+          <div>            <div className="eyebrow" style={labelStyle}>Condition Type *</div>
             <div style={{ display: 'flex', gap: 8 }}>
               {(['raw', 'graded'] as const).map(t => (
                 <button
