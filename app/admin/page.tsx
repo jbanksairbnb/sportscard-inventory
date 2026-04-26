@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-const ADMIN_EMAIL = 'jbanks@sportscollective.com';
+const ADMIN_EMAIL = 'jbanks@sports-collective.com';
 
 type Applicant = {
   user_id: string;
@@ -35,7 +35,7 @@ export default function AdminPage() {
       if (!user || user.email !== ADMIN_EMAIL) { setUnauthorized(true); setLoading(false); return; }
       const { data } = await supabase
         .from('user_profiles')
-        .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle')
+        .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email')
         .not('application_status', 'is', null)
         .order('applied_at', { ascending: false });
       setApplicants((data || []) as Applicant[]);
@@ -162,7 +162,7 @@ export default function AdminPage() {
                     </div>
                     {a.applied_at && (
                       <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 12 }}>
-                        Applied {new Date(a.applied_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                       Applied {new Date(a.applied_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}{a.email && <span style={{ marginLeft: 10 }}>· {a.email}</span>}
                       </div>
                     )}
 
