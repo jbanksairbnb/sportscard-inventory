@@ -83,8 +83,8 @@ export default function PendingPage() {
                 <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
                   If you believe this is a mistake or have additional information to share,
                   please reach out to us at{' '}
-                  <a href="mailto:jbanks@sportscollective.com" style={{ color: 'var(--orange)', fontWeight: 600 }}>
-                    jbanks@sportscollective.com
+                  <a href="mailto:jbanks@sports-collective.com" style={{ color: 'var(--orange)', fontWeight: 600 }}>
+                    jbanks@sports-collective.com
                   </a>.
                 </p>
               </>
@@ -100,8 +100,8 @@ export default function PendingPage() {
                 </p>
                 <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
                   Questions? Email us at{' '}
-                  <a href="mailto:jbanks@sportscollective.com" style={{ color: 'var(--orange)', fontWeight: 600 }}>
-                    jbanks@sportscollective.com
+                  <a href="mailto:jbanks@sports-collective.com" style={{ color: 'var(--orange)', fontWeight: 600 }}>
+                    jbanks@sports-collective.com
                   </a>.
                 </p>
               </>

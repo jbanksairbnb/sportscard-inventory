@@ -69,7 +69,7 @@ export default function LoginPage() {
 
   const headings: Record<Mode, { title: string; sub: string }> = {
     login:    { title: 'Sign in',        sub: 'Welcome back to the Collective' },
-    register: { title: 'Create account', sub: 'Start managing your card sets' },
+    register: { title: 'Create account', sub: 'Enter your details below to start the screening process' },
     forgot:   { title: 'Reset password', sub: "Enter your email and we'll send a reset link" },
   }
   const { title, sub } = headings[mode]

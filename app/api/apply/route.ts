@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     </div>
   `
 
-  await fetch('https://api.resend.com/emails', {
+  const resendRes = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -48,5 +48,8 @@ export async function POST(req: NextRequest) {
     }),
   })
 
-  return NextResponse.json({ ok: true })
+  const resendData = await resendRes.json()
+  console.log('Resend response:', JSON.stringify(resendData))
+
+  return NextResponse.json({ ok: true, resend: resendData })
 }
