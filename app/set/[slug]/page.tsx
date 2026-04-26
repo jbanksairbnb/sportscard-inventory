@@ -277,32 +277,30 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
 }
 
   function onChangeCell(index: number, field: string, value: any) {
-    setRows((prev) => {
-      const copy = [...prev]; const r = { ...copy[index] };
-      if (field === "Purchased From" && value.length > 50) r[field] = value.slice(0, 50);
-      else if (CURRENCY_FIELDS.includes(field as any)) r[field] = value;
-      else if (field === "Date Purchased") r[field] = autoSlashDate(value);
-      else r[field] = value;
-      copy[index] = r; return copy;
-    });
-    scheduleAutoSave();
+    const copy = [...rows];
+    const r = { ...copy[index] };
+    if (field === "Purchased From" && value.length > 50) r[field] = value.slice(0, 50);
+    else if (CURRENCY_FIELDS.includes(field as any)) r[field] = value;
+    else if (field === "Date Purchased") r[field] = autoSlashDate(value);
+    else r[field] = value;
+    copy[index] = r;
+    setRows(copy);
+    scheduleAutoSave(copy);
   }
   function onBlurCurrency(index: number, field: string) {
-    setRows((prev) => {
-      const copy = [...prev]; const r = { ...copy[index] };
-      const raw = stripCurrency(String(r[field] ?? ""));
-      r[field] = raw ? toCurrency(raw) : ""; copy[index] = r; return copy;
-    });
-    scheduleAutoSave();
+    const copy = [...rows];
+    const r = { ...copy[index] };
+    const raw = stripCurrency(String(r[field] ?? ""));
+    r[field] = raw ? toCurrency(raw) : "";
+    copy[index] = r;
+    setRows(copy);
+    scheduleAutoSave(copy);
   }
   function onBlurDate(index: number) {
-    setRows((prev) => {
-      const copy = [...prev];
-      const s = String(copy[index]["Date Purchased"] ?? "");
-      if (s && !isValidMMDDYYYY(s)) alert(`Invalid date: ${s}. Use MM/DD/YYYY`);
-      return copy;
-    });
-    scheduleAutoSave();
+    const copy = [...rows];
+    const s = String(copy[index]["Date Purchased"] ?? "");
+    if (s && !isValidMMDDYYYY(s)) alert(`Invalid date: ${s}. Use MM/DD/YYYY`);
+    scheduleAutoSave(copy);
   }
 
   async function handleImageDelete(origIndex: number, slot: 1 | 2) {
