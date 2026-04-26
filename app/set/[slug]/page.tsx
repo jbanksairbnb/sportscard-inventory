@@ -10,7 +10,7 @@ import SCLogo from "@/components/SCLogo";
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
   "Card #", "Description", "Owned", "Raw Grade", "Graded",
-  "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Condition",
+    "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Condition - Low", "Target Condition - High",
   "Sale Price", "Date Purchased", "Purchased From", "Upload Image(s)",
 ];
 
@@ -80,6 +80,14 @@ function computeFinancials(rows: any[]) {
   const totalCost = rows?.reduce((acc: number, r: any) => acc + toNumber(r?.["Cost"]), 0) || 0;
   const totalValue = rows?.reduce((acc: number, r: any) => acc + toNumber(r?.["Value"]), 0) || 0;
   return { totalCost, totalValue, gainLoss: totalValue - totalCost };
+}
+function migrateRows(rows: Array<Record<string, any>>) {
+  return rows.map((r) => {
+    if (r['Target Condition'] !== undefined && r['Target Condition - Low'] === undefined) {
+      return { ...r, 'Target Condition - Low': r['Target Condition'] };
+    }
+    return r;
+  });
 }
 function downloadCSV(filename: string, rows: Array<Record<string, any>>) {
   const csv = Papa.unparse({ fields: EXPECTED_HEADERS, data: rows.map(r => EXPECTED_HEADERS.map(h => r[h] ?? "")) });
@@ -231,7 +239,7 @@ export default function SetEditorPage() {
           setYear(data.year ? String(data.year) : "");
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
-          setRows(data.rows ?? []);
+          setRows(migrateRows(data.rows ?? []));
           setShareToken(data.share_token ?? null);
           setIsShared(!!data.share_token);
         }
@@ -468,7 +476,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                     <SortableHeader label="Cost" />
                     <SortableHeader label="Value" />
                     <SortableHeader label="Target Price" />
-                    <SortableHeader label="Target Condition" />
+                                        <SortableHeader label="Target Condition - Low" />
+                    <SortableHeader label="Target Condition - High" />
                     <SortableHeader label="Sale Price" />
                     <SortableHeader label="Date Purchased" />
                     <SortableHeader label="Purchased From" />
@@ -525,7 +534,18 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         <input value={v(row["Target Price"])} onChange={(e) => onChangeCell(origIndex, "Target Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Target Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <select value={v(row["Target Condition"])} onChange={(e) => onChangeCell(origIndex, "Target Condition", e.target.value)} style={{ ...CELL_SELECT, width: 130 }}>
+                        <select value={v(row["Target Condition - Low"])} onChange={(e) => onChangeCell(origIndex, "Target Condition - Low", e.target.value)} style={{ ...CELL_SELECT, width: 130 }}>
+                          <option value="">—</option>
+                          <optgroup label="Raw">
+                            {TARGET_CONDITIONS_RAW.map(g => <option key={g} value={g}>{g}</option>)}
+                          </optgroup>
+                          <optgroup label="Graded">
+                            {TARGET_CONDITIONS_GRADED.map(g => <option key={g} value={g}>{g}</option>)}
+                          </optgroup>
+                        </select>
+                      </td>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                        <select value={v(row["Target Condition - High"])} onChange={(e) => onChangeCell(origIndex, "Target Condition - High", e.target.value)} style={{ ...CELL_SELECT, width: 130 }}>
                           <option value="">—</option>
                           <optgroup label="Raw">
                             {TARGET_CONDITIONS_RAW.map(g => <option key={g} value={g}>{g}</option>)}
