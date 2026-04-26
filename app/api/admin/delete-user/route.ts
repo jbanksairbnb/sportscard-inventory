@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
-const ADMIN_EMAIL = 'jbanks@sportscollective.com'
+const ADMIN_EMAIL = 'jbanks@sports-collective.com'
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
