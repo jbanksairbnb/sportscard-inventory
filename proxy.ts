@@ -1,7 +1,11 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+const PUBLIC_PATHS = ['/login', '/apply', '/pending', '/auth', '/share', '/shared', '/profile']
+
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -25,25 +29,44 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const isLoginPage = request.nextUrl.pathname.startsWith('/login')
-  const isAuthCallback = request.nextUrl.pathname.startsWith('/auth/callback')
-  const isPublicShare = request.nextUrl.pathname.startsWith('/share')
-  const isPublicCommunity = request.nextUrl.pathname.startsWith('/shared')
-  const isResetPassword = request.nextUrl.pathname.startsWith('/auth/reset-password')
+  // Allow public paths through
+  if (PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))) {
+    // Redirect logged-in users away from /login
+    if (user && pathname.startsWith('/login')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/home'
+      return NextResponse.redirect(url)
+    }
+    return supabaseResponse
+  }
 
-  if (!user && !isLoginPage && !isAuthCallback && !isPublicShare && !isPublicCommunity && !isResetPassword) {
+  // Not logged in — send to login
+  if (!user) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  if (user && isLoginPage) {
+  // Logged in — check application status
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('application_status')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  const status = profile?.application_status
+
+  if (status === 'approved') return supabaseResponse
+  if (status === 'pending') {
     const url = request.nextUrl.clone()
-    url.pathname = '/'
+    url.pathname = '/pending'
     return NextResponse.redirect(url)
   }
 
-  return supabaseResponse
+  // No application yet
+  const url = request.nextUrl.clone()
+  url.pathname = '/apply'
+  return NextResponse.redirect(url)
 }
 
 export const config = {
