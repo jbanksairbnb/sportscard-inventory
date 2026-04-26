@@ -70,13 +70,6 @@ function DiamondIcon({ size = 10 }: { size?: number }) {
   );
 }
 
-const MOCK_USER = {
-  name: 'Jonathan Banks',
-  handle: 'jbanks53',
-  city: 'Vienna, VA',
-  team: 'Los Angeles Dodgers',
-  joined: 'Est. 2023',
-};
 
 type SetRow = {
   slug: string;
@@ -128,8 +121,9 @@ function LogoShowcase() {
   );
 }
 
-function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
+function Hero({ avatar, cover, profile, onAvatarChange, onCoverChange }: {
   avatar: string | null; cover: string | null;
+  profile: CollectorProfile;
   onAvatarChange: (url: string) => void; onCoverChange: (url: string) => void;
 }) {
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -143,7 +137,13 @@ function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
     reader.readAsDataURL(file);
   }
 
-  const initials = MOCK_USER.name.split(' ').map((s) => s[0]).slice(0, 2).join('');
+  const name = profile.display_name || 'YOUR NAME';
+  const handle = profile.handle || 'handle';
+  const city = profile.city || 'City';
+  const team = profile.team || 'Your Team';
+  const initials = name !== 'YOUR NAME'
+    ? name.split(' ').map((s) => s[0]).slice(0, 2).join('')
+    : 'YN';
 
   return (
     <section>
@@ -173,7 +173,7 @@ function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
           </svg>
         )}
         <div style={{ position: 'absolute', top: 18, left: 22 }}>
-          <span className="chip chip-gold"><DiamondIcon size={10} /> Charter Member · {MOCK_USER.joined}</span>
+          <span className="chip chip-gold"><DiamondIcon size={10} /> Charter Member · Est. 2023</span>
         </div>
         <div style={{ position: 'absolute', top: 18, right: 22 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => coverInputRef.current?.click()}
@@ -190,7 +190,7 @@ function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
       }}>
         <div style={{ position: 'relative', width: 172, height: 172, flexShrink: 0 }}>
           <div className="avatar" data-shape="circle" style={{ width: 172, height: 172 }}>
-            {avatar ? <img src={avatar} alt={MOCK_USER.name} /> : (
+            {avatar ? <img src={avatar} alt={name} /> : (
               <div style={{
                 width: '100%', height: '100%', display: 'grid', placeItems: 'center',
                 background: 'linear-gradient(135deg, var(--plum) 0%, var(--plum-deep) 100%)',
@@ -209,14 +209,14 @@ function Hero({ avatar, cover, onAvatarChange, onCoverChange }: {
         <div style={{ flex: 1, paddingTop: 96 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
             <div>
-              <div className="eyebrow" style={{ marginBottom: 6, color: 'var(--orange)' }}>★ Collector · Vienna, Virginia ★</div>
-              <h1 className="display" style={{ fontSize: 62, margin: 0, color: 'var(--plum)', lineHeight: 0.95 }}>{MOCK_USER.name}</h1>
+              <div className="eyebrow" style={{ marginBottom: 6, color: 'var(--orange)' }}>★ Collector · {city} ★</div>
+              <h1 className="display" style={{ fontSize: 62, margin: 0, color: 'var(--plum)', lineHeight: 0.95 }}>{name}</h1>
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 12, fontSize: 13, color: 'var(--ink-soft)', fontWeight: 500 }}>
-                <span className="mono" style={{ fontWeight: 600 }}>@{MOCK_USER.handle}</span>
+                <span className="mono" style={{ fontWeight: 600 }}>@{handle}</span>
                 <span style={{ color: 'var(--rule)' }}>●</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><PinIcon size={12} /> {MOCK_USER.city}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><PinIcon size={12} /> {city}</span>
                 <span style={{ color: 'var(--rule)' }}>●</span>
-                <span>Rooting for the <strong style={{ color: 'var(--plum)' }}>{MOCK_USER.team}</strong></span>
+                <span>Rooting for the <strong style={{ color: 'var(--plum)' }}>{team}</strong></span>
               </div>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
@@ -960,36 +960,18 @@ const MOCK_ACTIVITY = [
 type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; };
 const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '' };
 
-function Sidebar({ userId }: { userId: string }) {
-  const [profile, setProfile] = useState<CollectorProfile>(EMPTY_PROFILE);
+function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<CollectorProfile>(EMPTY_PROFILE);
+  const [draft, setDraft] = useState<CollectorProfile>(profile);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!userId) return;
-    const supabase = createClient();
-    supabase.from('user_profiles').select('display_name, handle, bio, city, team, favorite_players, chasing')
-      .eq('user_id', userId).single()
-      .then(({ data }) => {
-        if (data) {
-          const p: CollectorProfile = {
-            display_name: data.display_name || '', handle: data.handle || '',
-            bio: data.bio || '', city: data.city || '',
-            team: data.team || '', favorite_players: data.favorite_players || '',
-            chasing: data.chasing || '',
-          };
-          setProfile(p);
-          setDraft(p);
-        }
-      });
-  }, [userId]);
+  useEffect(() => { setDraft(profile); }, [profile]);
 
   async function handleSave() {
     setSaving(true);
     const supabase = createClient();
     await supabase.from('user_profiles').upsert({ user_id: userId, ...draft });
-    setProfile(draft);
+    onProfileSave(draft);
     setEditing(false);
     setSaving(false);
   }
@@ -1212,6 +1194,7 @@ export default function HomePage() {
   const [cover, setCover] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('Home');
   const [showWantList, setShowWantList] = useState(false);
+  const [profile, setProfile] = useState<CollectorProfile>(EMPTY_PROFILE);
   const router = useRouter();
 
   useEffect(() => {
@@ -1221,6 +1204,17 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserEmail(user.email || '');
       setUserId(user.id);
+      const { data: profileData } = await supabase.from('user_profiles')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing')
+        .eq('user_id', user.id).single();
+      if (profileData) {
+        setProfile({
+          display_name: profileData.display_name || '', handle: profileData.handle || '',
+          bio: profileData.bio || '', city: profileData.city || '',
+          team: profileData.team || '', favorite_players: profileData.favorite_players || '',
+          chasing: profileData.chasing || '',
+        });
+      }
       const { data } = await supabase
         .from('sets')
         .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_value, updated_at, share_token')
@@ -1253,7 +1247,7 @@ export default function HomePage() {
     <div style={{ minHeight: '100vh' }}>
       <TopNav userEmail={userEmail} onLogout={handleLogout} />
       <LogoShowcase />
-      <Hero avatar={avatar} cover={cover} onAvatarChange={setAvatar} onCoverChange={setCover} />
+      <Hero avatar={avatar} cover={cover} profile={profile} onAvatarChange={setAvatar} onCoverChange={setCover} />
       <SubNav active={activeTab} setActive={setActiveTab} />
       <StatsStrip stats={[
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
@@ -1268,7 +1262,7 @@ export default function HomePage() {
           <FavoritesShowcase userId={userId} />
           <FeedSection />
         </main>
-        <Sidebar userId={userId} />
+        <Sidebar userId={userId} profile={profile} onProfileSave={setProfile} />
       </div>
     </div>
   );
