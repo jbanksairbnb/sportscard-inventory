@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-const ADMIN_EMAIL = 'jbanks@sports-collective.com';
+const ADMIN_EMAIL = 'jbanks@sportscollective.com';
 
 type Applicant = {
   user_id: string;
