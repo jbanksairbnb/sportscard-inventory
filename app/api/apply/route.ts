@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'noreply@sportscollective.com',
+      from: 'noreply@sports-collective.com',
       to: 'jbanks@sportscollective.com',
       subject: `New Application: ${applicantEmail}`,
       html,
