@@ -684,20 +684,162 @@ function CardFace({ card, width = 130 }: {
   );
 }
 
-function FavoritesShowcase() {
+function FavoriteLightbox({ images, startSlot, onClose }: {
+  images: (string | null)[];
+  startSlot: number;
+  onClose: () => void;
+}) {
+  const filled = images
+    .map((url, i) => ({ url, i }))
+    .filter((x): x is { url: string; i: number } => x.url !== null);
+  const [pos, setPos] = useState(() => {
+    const idx = filled.findIndex(f => f.i === startSlot);
+    return idx >= 0 ? idx : 0;
+  });
+  if (filled.length === 0) return null;
+  const current = filled[pos];
+  const arrowBtn = (disabled: boolean): React.CSSProperties => ({
+    background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.25 : 1, lineHeight: 1,
+  });
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(42,20,52,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onClick={onClose}>
+      <div style={{ position: 'relative', padding: 16 }} onClick={e => e.stopPropagation()}>
+        <img src={current.url} alt="Favorite card" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        {filled.length > 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
+            <button type="button" onClick={e => { e.stopPropagation(); setPos(p => Math.max(0, p - 1)); }} disabled={pos === 0} style={arrowBtn(pos === 0)}>‹</button>
+            <button type="button" onClick={e => { e.stopPropagation(); setPos(p => Math.min(filled.length - 1, p + 1)); }} disabled={pos === filled.length - 1} style={arrowBtn(pos === filled.length - 1)}>›</button>
+          </div>
+        )}
+        <div style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+          {filled.length > 1 && (
+            <span className="mono" style={{ fontSize: 10, color: 'var(--cream)', fontWeight: 700, padding: '3px 8px', background: 'rgba(42,20,52,0.7)', borderRadius: 6 }}>
+              {pos + 1} / {filled.length}
+            </span>
+          )}
+          <button type="button" onClick={onClose} className="btn btn-sm">✕ Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FavoriteFrame({ card, imageUrl, slotIdx, userId, onImageChange, onLightboxOpen }: {
+  card: typeof FAVORITE_CARDS[0];
+  imageUrl: string | null;
+  slotIdx: number;
+  userId: string;
+  onImageChange: (slotIdx: number, url: string | null) => void;
+  onLightboxOpen: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const width = 130;
+  const height = Math.round(width * 1.4);
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const supabase = createClient();
+    const path = `${userId}/favorites/${slotIdx}`;
+    const { error } = await supabase.storage.from('card-images').upload(path, file, { upsert: true });
+    if (error) { alert('Upload failed: ' + error.message); setUploading(false); return; }
+    const { data } = supabase.storage.from('card-images').getPublicUrl(path);
+    onImageChange(slotIdx, data.publicUrl + `?t=${Date.now()}`);
+    setUploading(false);
+    e.target.value = '';
+  }
+
+  async function handleDelete() {
+    const supabase = createClient();
+    await supabase.storage.from('card-images').remove([`${userId}/favorites/${slotIdx}`]);
+    onImageChange(slotIdx, null);
+  }
+
+  const btnStyle: React.CSSProperties = {
+    background: 'var(--cream)', color: 'var(--plum)',
+    border: '2px solid var(--plum)', borderRadius: '50%',
+    width: 34, height: 34, display: 'grid', placeItems: 'center',
+    cursor: 'pointer', fontSize: 15,
+  };
+
+  if (imageUrl) {
+    return (
+      <div style={{ width, height, position: 'relative', borderRadius: 8, overflow: 'hidden', border: '2px solid var(--plum)', boxShadow: '0 3px 0 var(--plum)' }}
+        onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+        <img src={imageUrl} alt="Favorite card" onClick={onLightboxOpen}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', cursor: 'pointer' }} />
+        {hovered && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(42,20,52,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <button type="button" onClick={e => { e.stopPropagation(); inputRef.current?.click(); }} style={btnStyle} title="Change image">
+              <CameraIcon size={14} />
+            </button>
+            <button type="button" onClick={e => { e.stopPropagation(); handleDelete(); }} style={btnStyle} title="Remove">✕</button>
+          </div>
+        )}
+        <input ref={inputRef} type="file" accept="image/*" onChange={handleUpload} style={{ display: 'none' }} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative' }}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <CardFace card={card} width={width} />
+      {(hovered || uploading) && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(42,20,52,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>
+          <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}
+            style={{ ...btnStyle, width: 40, height: 40 }}>
+            {uploading ? '…' : <CameraIcon size={16} />}
+          </button>
+        </div>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" onChange={handleUpload} style={{ display: 'none' }} />
+    </div>
+  );
+}
+
+function FavoritesShowcase({ userId }: { userId: string }) {
+  const [images, setImages] = useState<(string | null)[]>(Array(6).fill(null));
+  const [lightboxSlot, setLightboxSlot] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    const supabase = createClient();
+    async function load() {
+      const { data } = await supabase
+        .from('user_profiles')
+        .select('favorite_cards')
+        .eq('user_id', userId)
+        .single();
+      if (data?.favorite_cards && Array.isArray(data.favorite_cards)) {
+        setImages(Array(6).fill(null).map((_, i) => (data.favorite_cards as (string | null)[])[i] ?? null));
+      }
+    }
+    load();
+  }, [userId]);
+
+  async function handleImageChange(slotIdx: number, url: string | null) {
+    const next = images.map((u, i) => (i === slotIdx ? url : u));
+    setImages(next);
+    const supabase = createClient();
+    await supabase.from('user_profiles').upsert({ user_id: userId, favorite_cards: next });
+  }
+
   return (
     <section style={{ marginBottom: 32 }}>
       <div className="section-head">
         <span className="eyebrow" style={{ fontSize: 12 }}>★ The Showcase ★</span>
       </div>
       <div style={{
-        position: 'relative',
-        padding: '32px 20px 24px',
-        background: 'var(--plum)',
-        border: '2px solid var(--plum)',
-        borderRadius: 16,
-        boxShadow: '0 4px 0 var(--plum-deep)',
-        overflow: 'hidden',
+        position: 'relative', padding: '32px 20px 24px',
+        background: 'var(--plum)', border: '2px solid var(--plum)',
+        borderRadius: 16, boxShadow: '0 4px 0 var(--plum-deep)', overflow: 'hidden',
       }}>
         <svg viewBox="0 0 800 320" preserveAspectRatio="xMidYMid slice"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.55 }}>
@@ -716,21 +858,28 @@ function FavoritesShowcase() {
           ))}
         </svg>
         <div style={{ position: 'relative', textAlign: 'center', marginBottom: 20 }}>
-          <div className="wordmark" style={{
-            fontSize: 52, color: 'var(--orange)',
-            textShadow: '3px 3px 0 var(--mustard), 6px 6px 0 var(--plum-deep)',
-          }}>
+          <div className="wordmark" style={{ fontSize: 52, color: 'var(--orange)', textShadow: '3px 3px 0 var(--mustard), 6px 6px 0 var(--plum-deep)' }}>
             Favorite Cards
           </div>
         </div>
         <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16 }}>
           {FAVORITE_CARDS.map((card, i) => (
             <div key={card.id} style={{ transform: `rotate(${(i % 2 === 0 ? -1 : 1) * (1.2 + (i % 3) * 0.5)}deg)` }}>
-              <CardFace card={card} width={130} />
+              <FavoriteFrame
+                card={card}
+                imageUrl={images[i]}
+                slotIdx={i}
+                userId={userId}
+                onImageChange={handleImageChange}
+                onLightboxOpen={() => setLightboxSlot(i)}
+              />
             </div>
           ))}
         </div>
       </div>
+      {lightboxSlot !== null && (
+        <FavoriteLightbox images={images} startSlot={lightboxSlot} onClose={() => setLightboxSlot(null)} />
+      )}
     </section>
   );
 }
@@ -972,6 +1121,7 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
 
 export default function HomePage() {
   const [userEmail, setUserEmail] = useState('');
+  const [userId, setUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [sets, setSets] = useState<SetRow[]>([]);
   const [avatar, setAvatar] = useState<string | null>(null);
@@ -986,6 +1136,7 @@ export default function HomePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserEmail(user.email || '');
+      setUserId(user.id);
       const { data } = await supabase
         .from('sets')
         .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_value, updated_at, share_token')
@@ -1030,7 +1181,7 @@ export default function HomePage() {
       <div className="home-grid">
         <main style={{ minWidth: 0 }}>
           <SetsInProgress sets={sets} />
-          <FavoritesShowcase />
+          <FavoritesShowcase userId={userId} />
           <FeedSection />
         </main>
         <Sidebar />
