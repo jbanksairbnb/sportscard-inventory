@@ -28,17 +28,16 @@ export default function AdminPage() {
   const [working, setWorking] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  useEffect(() => {
+    useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user || user.email !== ADMIN_EMAIL) { setUnauthorized(true); setLoading(false); return; }
-      const { data } = await supabase
-        .from('user_profiles')
-        .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email')
-        .not('application_status', 'is', null)
-        .order('applied_at', { ascending: false });
-      setApplicants((data || []) as Applicant[]);
+      const res = await fetch('/api/admin/applicants');
+      if (res.ok) {
+        const { applicants } = await res.json();
+        setApplicants((applicants || []) as Applicant[]);
+      }
       setLoading(false);
     }
     load();
@@ -60,12 +59,19 @@ export default function AdminPage() {
     }
     setDeleting(null);
   }
-
   async function updateStatus(userId: string, status: 'approved' | 'rejected') {
     setWorking(userId);
-    const supabase = createClient();
-    await supabase.from('user_profiles').update({ application_status: status }).eq('user_id', userId);
-    setApplicants(prev => prev.map(a => a.user_id === userId ? { ...a, application_status: status } : a));
+    const res = await fetch('/api/admin/applicants', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, status }),
+    });
+    if (res.ok) {
+      setApplicants(prev => prev.map(a => a.user_id === userId ? { ...a, application_status: status } : a));
+    } else {
+      const { error } = await res.json();
+      alert('Update failed: ' + error);
+    }
     setWorking(null);
   }
 
