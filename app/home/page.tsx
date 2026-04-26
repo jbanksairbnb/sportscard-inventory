@@ -1219,8 +1219,9 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
 }
 
 export default function HomePage() {
-  const [userEmail, setUserEmail] = useState('');
+  const BOOTSTRAP_ADMIN_EMAIL = 'jbanks@sports-collective.com';
   const [userId, setUserId] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sets, setSets] = useState<SetRow[]>([]);
   const [avatar, setAvatar] = useState<string | null>(null);
@@ -1235,10 +1236,9 @@ export default function HomePage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      setUserEmail(user.email || '');
       setUserId(user.id);
       const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1249,6 +1249,9 @@ export default function HomePage() {
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
+        setIsAdmin(!!profileData.is_admin || user.email === BOOTSTRAP_ADMIN_EMAIL);
+      } else {
+        setIsAdmin(user.email === BOOTSTRAP_ADMIN_EMAIL);
       }
       const { data } = await supabase
         .from('sets')
@@ -1280,7 +1283,7 @@ export default function HomePage() {
 
   return (
     <div style={{ minHeight: '100vh' }}>
-      <TopNav userEmail={userEmail} onLogout={handleLogout} />
+            <TopNav isAdmin={isAdmin} onLogout={handleLogout} />
       <LogoShowcase />
       <Hero userId={userId} avatar={avatar} cover={cover} profile={profile} onAvatarChange={setAvatar} onCoverChange={setCover} />
       <SubNav active={activeTab} setActive={setActiveTab} />
