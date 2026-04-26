@@ -1156,7 +1156,7 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
 
 const NAV_LINKS = ['My Shelf', 'Feed', 'Discover', 'Sets', 'Trades'];
 
-function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => void }) {
+function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void }) {
   return (
     <header style={{
       position: 'sticky', top: 0, zIndex: 50,
@@ -1185,6 +1185,15 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
               ? <Link key={label} href="/" style={style}>{label}</Link>
               : <span key={label} style={style}>{label}</span>;
           })}
+          {isAdmin && (
+            <Link href="/admin" style={{
+              color: 'var(--orange)',
+              cursor: 'pointer',
+              textDecoration: 'none',
+            }}>
+              ★ Admin
+            </Link>
+          )}
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
