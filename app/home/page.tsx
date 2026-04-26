@@ -279,7 +279,7 @@ function StatsStrip({ stats }: { stats: StatItem[] }) {
   );
 }
 
-type WantCard = { year: number; brand: string; description: string; targetPrice: string; targetCondition: string };
+type WantCard = { year: number; brand: string; description: string; targetPrice: string; targetConditionLow: string; targetConditionHigh: string };
 
 function WantListModal({ onClose }: { onClose: () => void }) {
   const [cards, setCards] = useState<WantCard[]>([]);
@@ -302,7 +302,8 @@ function WantListModal({ onClose }: { onClose: () => void }) {
               brand: s.brand || '',
               description: String(row['Description'] || ''),
               targetPrice: String(row['Target Price'] || ''),
-              targetCondition: String(row['Target Condition'] || ''),
+                            targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || ''),
+              targetConditionHigh: String(row['Target Condition - High'] || ''),
             });
           }
         }
@@ -375,7 +376,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                  {['Year', 'Brand', 'Description', 'Target Price', 'Target Condition'].map((h) => (
+                                    {['Year', 'Brand', 'Description', 'Target Price', 'Target Condition - Low', 'Target Condition - High'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 14px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
@@ -395,7 +396,8 @@ function WantListModal({ onClose }: { onClose: () => void }) {
                     <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.brand || '—'}</td>
                     <td className="display" style={{ padding: '9px 14px', fontSize: 13, color: 'var(--plum)' }}>{c.description || '—'}</td>
                     <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.targetPrice || '—'}</td>
-                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetCondition || '—'}</td>
+                     <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetConditionLow || '—'}</td>
+                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetConditionHigh || '—'}</td>
                   </tr>
                 ))}
               </tbody>
