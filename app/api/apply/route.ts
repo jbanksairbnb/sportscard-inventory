@@ -4,8 +4,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { applicantEmail, collectionDescription, ebayProfile, fbGroups } = body
 
+  console.log('[apply] POST called, applicant:', applicantEmail)
+
   const apiKey = process.env.RESEND_API_KEY
+  console.log('[apply] RESEND_API_KEY present:', !!apiKey, 'length:', apiKey?.length ?? 0)
+
   if (!apiKey) {
+    console.warn('[apply] No RESEND_API_KEY — skipping email')
     return NextResponse.json({ ok: true, warning: 'Email not configured' })
   }
 
@@ -34,22 +39,27 @@ export async function POST(req: NextRequest) {
     </div>
   `
 
-  const resendRes = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: 'noreply@sports-collective.com',
-      to: 'jbanks@sports-collective.com',
-      subject: `New Application: ${applicantEmail}`,
-      html,
-    }),
-  })
+  try {
+    const resendRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'noreply@sports-collective.com',
+        to: 'jbanks@sports-collective.com',
+        subject: `New Application: ${applicantEmail}`,
+        html,
+      }),
+    })
 
-  const resendData = await resendRes.json()
-  console.log('Resend response:', JSON.stringify(resendData))
+    const resendData = await resendRes.json()
+    console.log('[apply] Resend status:', resendRes.status, 'response:', JSON.stringify(resendData))
 
-  return NextResponse.json({ ok: true, resend: resendData })
+    return NextResponse.json({ ok: true, resend: resendData })
+  } catch (err) {
+    console.error('[apply] Resend fetch error:', err)
+    return NextResponse.json({ ok: true, error: String(err) })
+  }
 }
