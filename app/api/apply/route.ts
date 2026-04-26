@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     },
     body: JSON.stringify({
       from: 'noreply@sports-collective.com',
-      to: 'jbanks@sportscollective.com',
+      to: 'jbanks@sports-collective.com',
       subject: `New Application: ${applicantEmail}`,
       html,
     }),
