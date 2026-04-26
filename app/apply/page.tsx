@@ -39,8 +39,9 @@ export default function ApplyPage() {
     if (!collectionDescription.trim()) return;
     setSubmitting(true);
     const supabase = createClient();
-    await supabase.from('user_profiles').upsert({
-      user_id: userId,
+await supabase.from('user_profiles').upsert({
+  user_id: userId,
+  email,     
       application_status: 'pending',
       collection_description: collectionDescription,
       ebay_profile: ebayProfile,
