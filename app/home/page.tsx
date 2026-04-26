@@ -1138,12 +1138,6 @@ function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: 
           </div>
         )}
       </div>
-
-      <div className="panel" style={{ padding: 18 }}>
-        <div className="section-head" style={{ marginBottom: 12 }}>
-          <span className="eyebrow">★ Activity ★</span>
-        </div>
-
       <div className="panel" style={{ padding: 18 }}>
         <div className="section-head" style={{ marginBottom: 12 }}>
           <span className="eyebrow">★ Activity ★</span>
