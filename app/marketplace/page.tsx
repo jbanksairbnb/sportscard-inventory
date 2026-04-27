@@ -35,6 +35,35 @@ function fmtMoney(n: number | null) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
+function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: number; onClose: () => void }) {
+  const [idx, setIdx] = useState(startIdx);
+  const arrowBtn: React.CSSProperties = {
+    background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 250,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(42, 20, 52, 0.92)',
+    }} onClick={onClose}>
+      <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
+        <img src={urls[idx]} alt="Listing" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }} />
+        {urls.length > 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
+              style={{ ...arrowBtn, opacity: idx === 0 ? 0.25 : 1 }} disabled={idx === 0}>‹</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.min(urls.length - 1, i + 1)); }}
+              style={{ ...arrowBtn, opacity: idx === urls.length - 1 ? 0.25 : 1 }} disabled={idx === urls.length - 1}>›</button>
+          </div>
+        )}
+        <button type="button" onClick={onClose} className="btn btn-sm" style={{ position: 'absolute', top: 4, right: 4 }}>✕ Close</button>
+      </div>
+    </div>
+  );
+}
+
 export default function MarketplacePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -45,6 +74,7 @@ export default function MarketplacePage() {
   const [maxPrice, setMaxPrice] = useState('');
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [currentUserId, setCurrentUserId] = useState<string>('');
+  const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -176,11 +206,14 @@ export default function MarketplacePage() {
           }}>
             {filtered.map(l => (
               <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                <div style={{
-                  width: '100%', aspectRatio: '4/3', background: 'var(--paper)',
-                  display: 'grid', placeItems: 'center', overflow: 'hidden',
-                  borderBottom: '2px solid var(--plum)',
-                }}>
+                                <div
+                  onClick={() => l.photos && l.photos.length > 0 && setLightboxPhotos(l.photos)}
+                  style={{
+                    width: '100%', aspectRatio: '4/3', background: 'var(--paper)',
+                    display: 'grid', placeItems: 'center', overflow: 'hidden',
+                    borderBottom: '2px solid var(--plum)',
+                    cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
+                  }}>
                   {l.photos && l.photos.length > 0 ? (
                     <img src={l.photos[0]} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -218,12 +251,15 @@ export default function MarketplacePage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {filtered.map(l => (
               <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', alignItems: 'stretch' }}>
-                <div style={{
-                  width: 140, height: 140, flexShrink: 0,
-                  background: 'var(--paper)',
-                  display: 'grid', placeItems: 'center', overflow: 'hidden',
-                  borderRight: '2px solid var(--plum)',
-                }}>
+                                <div
+                  onClick={() => l.photos && l.photos.length > 0 && setLightboxPhotos(l.photos)}
+                  style={{
+                    width: 140, height: 140, flexShrink: 0,
+                    background: 'var(--paper)',
+                    display: 'grid', placeItems: 'center', overflow: 'hidden',
+                    borderRight: '2px solid var(--plum)',
+                    cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
+                  }}>
                   {l.photos && l.photos.length > 0 ? (
                     <img src={l.photos[0]} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -261,9 +297,15 @@ export default function MarketplacePage() {
                 </div>
               </div>
             ))}
+                        </div>
+            ))}
           </div>
         )}
       </div>
+
+      {lightboxPhotos && (
+        <PhotoLightbox urls={lightboxPhotos} startIdx={0} onClose={() => setLightboxPhotos(null)} />
+      )}
     </div>
   );
 }
