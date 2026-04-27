@@ -91,6 +91,63 @@ function conditionLabel(l: Listing | Partial<Listing>) {
   return l.raw_grade || 'Raw';
 }
 
+const MAX_PHOTOS = 5;
+
+function ListingPhotoStrip({ photos }: { photos: string[] }) {
+  const [lbStart, setLbStart] = useState<number | null>(null);
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {photos.slice(0, 3).map((p, i) => (
+          <img key={p + i} src={p} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
+            style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
+        ))}
+        {photos.length > 3 && (
+          <div onClick={() => setLbStart(3)}
+            style={{
+              width: 72, height: 72, borderRadius: 8, border: '2px solid var(--plum)',
+              background: 'var(--plum)', color: 'var(--mustard)',
+              display: 'grid', placeItems: 'center', cursor: 'pointer',
+              fontSize: 14, fontWeight: 700,
+            }}>
+            +{photos.length - 3}
+          </div>
+        )}
+      </div>
+      {lbStart !== null && <PhotoLightbox urls={photos} startIdx={lbStart} onClose={() => setLbStart(null)} />}
+    </>
+  );
+}
+
+function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: number; onClose: () => void }) {
+  const [idx, setIdx] = useState(startIdx);
+  const arrowBtn: React.CSSProperties = {
+    background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 250,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(42, 20, 52, 0.92)',
+    }} onClick={onClose}>
+      <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
+        <img src={urls[idx]} alt="Listing" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }} />
+        {urls.length > 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
+              style={{ ...arrowBtn, opacity: idx === 0 ? 0.25 : 1 }} disabled={idx === 0}>‹</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.min(urls.length - 1, i + 1)); }}
+              style={{ ...arrowBtn, opacity: idx === urls.length - 1 ? 0.25 : 1 }} disabled={idx === urls.length - 1}>›</button>
+          </div>
+        )}
+        <button type="button" onClick={onClose} className="btn btn-sm" style={{ position: 'absolute', top: 4, right: 4 }}>✕ Close</button>
+      </div>
+    </div>
+  );
+}
+
 export default function ListingsPage() {
   const router = useRouter();
   const [userId, setUserId] = useState<string>('');
@@ -199,6 +256,37 @@ export default function ListingsPage() {
     }
   }
 
+  async function uploadPhoto(file: File) {
+    if (!editing?.id || !userId) { alert('Save the listing before adding photos.'); return; }
+    if ((editing.photos?.length || 0) >= MAX_PHOTOS) { alert(`Max ${MAX_PHOTOS} photos.`); return; }
+    const supabase = createClient();
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `listings/${userId}/${editing.id}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
+    if (upErr) { alert('Upload failed: ' + upErr.message); return; }
+    const { data } = supabase.storage.from('card-images').getPublicUrl(path);
+    const url = data.publicUrl;
+    const newPhotos = [...(editing.photos || []), url];
+    const { error: updErr } = await supabase.from('listings').update({ photos: newPhotos }).eq('id', editing.id);
+    if (updErr) { alert(updErr.message); return; }
+    setEditing(prev => prev ? { ...prev, photos: newPhotos } : prev);
+    setListings(prev => prev.map(l => l.id === editing.id ? { ...l, photos: newPhotos } : l));
+  }
+
+  async function deletePhoto(idx: number) {
+    if (!editing?.id || !editing.photos) return;
+    const url = editing.photos[idx];
+    if (!url) return;
+    const supabase = createClient();
+    const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
+    if (m?.[1]) await supabase.storage.from('card-images').remove([decodeURIComponent(m[1])]);
+    const newPhotos = editing.photos.filter((_, i) => i !== idx);
+    const { error } = await supabase.from('listings').update({ photos: newPhotos }).eq('id', editing.id);
+    if (error) { alert(error.message); return; }
+    setEditing(prev => prev ? { ...prev, photos: newPhotos } : prev);
+    setListings(prev => prev.map(l => l.id === editing.id ? { ...l, photos: newPhotos } : l));
+  }
+
   async function markSold(l: Listing) {
     const input = prompt('Final sale price:', l.asking_price ? String(l.asking_price) : '');
     if (input === null) return;
@@ -279,6 +367,9 @@ export default function ListingsPage() {
               return (
                 <div key={l.id} className="panel-bordered" style={{ padding: '18px 22px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+                    {l.photos && l.photos.length > 0 && (
+                      <ListingPhotoStrip photos={l.photos} />
+                    )}
                     <div style={{ flex: 1, minWidth: 280 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                         <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>{l.title}</div>
@@ -347,6 +438,8 @@ export default function ListingsPage() {
           onSave={saveListing}
           saving={saving}
           error={formError}
+          onUploadPhoto={uploadPhoto}
+          onDeletePhoto={deletePhoto}
         />
       )}
     </div>
@@ -354,7 +447,7 @@ export default function ListingsPage() {
 }
 
 function ListingEditor({
-  draft, onChange, onCancel, onSave, saving, error,
+  draft, onChange, onCancel, onSave, saving, error, onUploadPhoto, onDeletePhoto,
 }: {
   draft: Partial<Listing>;
   onChange: (next: Partial<Listing>) => void;
@@ -362,7 +455,23 @@ function ListingEditor({
   onSave: () => void;
   saving: boolean;
   error: string;
+  onUploadPhoto: (file: File) => Promise<void>;
+  onDeletePhoto: (idx: number) => Promise<void>;
 }) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [lbStart, setLbStart] = useState<number | null>(null);
+  const photos = draft.photos || [];
+  const canUpload = !!draft.id && photos.length < MAX_PHOTOS;
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    await onUploadPhoto(file);
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
   const fieldStyle: React.CSSProperties = {
     border: '2px solid var(--plum)', borderRadius: 8, padding: '8px 12px',
     fontFamily: 'var(--font-body)', fontSize: 13.5, color: 'var(--plum)',
@@ -477,7 +586,46 @@ function ListingEditor({
               <div className="eyebrow" style={labelStyle}>Cost ($) — private</div>
               <input type="number" step="0.01" value={draft.cost ?? ''} onChange={e => set('cost', e.target.value ? Number(e.target.value) : null)}
                 placeholder="0.00" style={fieldStyle} />
-            </div>
+                       </div>
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Photos ({photos.length} / {MAX_PHOTOS})</div>
+            {!draft.id ? (
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, fontStyle: 'italic' }}>
+                Save the listing first, then re-open to add photos.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {photos.map((url, i) => (
+                  <div key={url + i} style={{ position: 'relative' }}>
+                    <img src={url} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
+                      style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
+                    <button type="button" onClick={() => onDeletePhoto(i)}
+                      style={{
+                        position: 'absolute', top: -6, right: -6,
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: 'var(--rust)', color: 'var(--cream)',
+                        border: '2px solid var(--cream)', cursor: 'pointer',
+                        fontSize: 11, fontWeight: 700, lineHeight: 1, padding: 0,
+                      }}>×</button>
+                  </div>
+                ))}
+                {canUpload && (
+                  <>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                      style={{
+                        width: 80, height: 80, borderRadius: 8,
+                        border: '2px dashed var(--plum)', background: 'var(--paper)',
+                        color: 'var(--plum)', cursor: 'pointer', fontSize: 24, fontWeight: 700,
+                      }}>
+                      {uploading ? '…' : '+'}
+                    </button>
+                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} />
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {error && (
@@ -493,11 +641,14 @@ function ListingEditor({
             <button type="button" onClick={onSave} disabled={saving} className="btn btn-primary"
               style={{ flex: 1, justifyContent: 'center' }}>
               {saving ? 'Saving…' : draft.id ? 'Save Changes' : 'Create Listing'}
-            </button>
+                        </button>
             <button type="button" onClick={onCancel} className="btn btn-outline">Cancel</button>
           </div>
         </div>
       </div>
+      {lbStart !== null && photos.length > 0 && (
+        <PhotoLightbox urls={photos} startIdx={lbStart} onClose={() => setLbStart(null)} />
+      )}
     </div>
   );
 }
