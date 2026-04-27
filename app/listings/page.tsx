@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
@@ -151,6 +151,7 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
 
 export default function ListingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
@@ -178,6 +179,33 @@ export default function ListingsPage() {
     }
     load();
   }, [router]);
+
+  useEffect(() => {
+    if (!userId) return;
+    if (searchParams?.get('prefill') !== '1') return;
+    const draft = emptyDraft(userId);
+    const yearParam = searchParams.get('year');
+    if (yearParam) draft.year = Number(yearParam) || null;
+    draft.brand = searchParams.get('brand') || '';
+    draft.card_number = searchParams.get('card') || '';
+    draft.player = searchParams.get('player') || '';
+    const ct = searchParams.get('condition_type');
+    if (ct === 'graded') {
+      draft.condition_type = 'graded';
+      draft.grading_company = searchParams.get('grading_company') || '';
+      draft.grade = searchParams.get('grade') || '';
+    } else if (ct === 'raw') {
+      draft.condition_type = 'raw';
+      draft.raw_grade = searchParams.get('raw_grade') || '';
+    }
+    const costParam = searchParams.get('cost');
+    if (costParam) {
+      const c = Number(costParam);
+      if (!Number.isNaN(c)) draft.cost = c;
+    }
+    setEditing(draft);
+    router.replace('/listings');
+  }, [userId, searchParams, router]);
 
   const counts = {
     draft: listings.filter(l => l.status === 'draft').length,
