@@ -806,7 +806,6 @@ function ListingEditor({
               rows={3} placeholder="Additional details — centering, surface, any flaws, sale terms…"
               style={{ ...fieldStyle, resize: 'vertical' }} />
           </div>
-
           <div>
             <div className="eyebrow" style={labelStyle}>Shipping Options</div>
             <ShippingOptionsEditor
@@ -814,14 +813,8 @@ function ListingEditor({
               onChange={(opts) => set('shipping_options', opts as Listing['shipping_options'])}
             />
           </div>
-
-          <div>
           <div>
             <div className="eyebrow" style={labelStyle}>Photos ({photos.length} / {MAX_PHOTOS})</div>
-            {!draft.id ? (
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, fontStyle: 'italic' }}>
-                Save the listing first, then re-open to add photos.
-              </div>
             ) : (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {photos.map((url, i) => (
