@@ -303,6 +303,10 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     }
     const cost = String(row['Cost'] || '').replace(/[^0-9.]/g, '');
     if (cost) params.set('cost', cost);
+    const img1 = String(row['Image 1'] || '');
+    const img2 = String(row['Image 2'] || '');
+    if (img1) params.append('photo', img1);
+    if (img2) params.append('photo', img2);
     router.push(`/listings?${params.toString()}`);
   }
 
