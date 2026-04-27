@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
@@ -236,9 +237,10 @@ function ListingsPageContent() {
    const [importOpen, setImportOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
-  const [defaultShipping, setDefaultShipping] = useState<ShippingOption[]>([]);
+    const [defaultShipping, setDefaultShipping] = useState<ShippingOption[]>([]);
   const [defaultsOpen, setDefaultsOpen] = useState(false);
-
+  const [purchasesByListing, setPurchasesByListing] = useState<Record<string, PurchaseDetail & { buyer_name: string; buyer_email: string }>>({});
+  const [openPurchaseId, setOpenPurchaseId] = useState<string | null>(null);
   useEffect(() => {
     const supabase = createClient();
     async function load() {
@@ -252,13 +254,35 @@ function ListingsPageContent() {
         .maybeSingle();
       const defaults = (profile?.default_shipping_options as ShippingOption[] | null) || [];
       setDefaultShipping(defaults);
-      const { data } = await supabase
+        const { data } = await supabase
         .from('listings')
         .select('*')
         .eq('user_id', user.id)
         .neq('status', 'removed')
         .order('created_at', { ascending: false });
       setListings((data || []) as Listing[]);
+
+      const { data: purchaseRows } = await supabase
+        .from('purchases')
+        .select('*, listing:listings(title, photos)')
+        .eq('seller_id', user.id);
+      const buyerIds = Array.from(new Set((purchaseRows || []).map(p => p.buyer_id)));
+      const { data: buyerProfiles } = buyerIds.length > 0
+        ? await supabase.from('user_profiles').select('user_id, display_name, handle, email').in('user_id', buyerIds)
+        : { data: [] as { user_id: string; display_name: string | null; handle: string | null; email: string | null }[] };
+      const buyerMap = new Map((buyerProfiles || []).map(p => [p.user_id, p]));
+      const map: Record<string, PurchaseDetail & { buyer_name: string; buyer_email: string }> = {};
+      for (const p of (purchaseRows || [])) {
+        const profile = buyerMap.get(p.buyer_id);
+        const email = profile?.email || '';
+        map[p.listing_id] = {
+          ...(p as PurchaseDetail),
+          buyer_name: profile?.display_name || profile?.handle || (email ? email.split('@')[0] : '—'),
+          buyer_email: email,
+        };
+      }
+      setPurchasesByListing(map);
+
       setLoading(false);
     }
     load();
@@ -563,10 +587,11 @@ function ListingsPageContent() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {filtered.map(l => {
+                       {filtered.map(l => {
               const profit = l.status === 'sold' && l.sold_price !== null && l.cost !== null ? l.sold_price - l.cost : null;
               const statusBg = l.status === 'active' ? 'var(--teal)' : l.status === 'sold' ? 'var(--plum)' : 'var(--mustard)';
               const statusFg = l.status === 'draft' ? 'var(--plum)' : 'var(--cream)';
+              const purchase = purchasesByListing[l.id];
               return (
                 <div key={l.id} className="panel-bordered" style={{ padding: '18px 22px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
@@ -608,6 +633,36 @@ function ListingsPageContent() {
                           </>
                         )}
                       </div>
+                      {l.status === 'sold' && purchase && (
+                        <div style={{
+                          marginTop: 10, padding: '8px 12px',
+                          background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8,
+                          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                        }}>
+                          <span style={{
+                            fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
+                            background: purchase.status === 'paid' ? 'var(--mustard)' : purchase.status === 'shipped' ? 'var(--orange)' : purchase.status === 'completed' ? 'var(--teal)' : purchase.status === 'cancelled' ? 'var(--ink-mute)' : 'var(--rust)',
+                            color: purchase.status === 'paid' ? 'var(--plum)' : 'var(--cream)',
+                          }}>
+                            {purchase.status.toUpperCase()}
+                          </span>
+                          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
+                            Buyer:{' '}
+                            {purchase.buyer_email ? (
+                              <a href={`mailto:${purchase.buyer_email}?subject=${encodeURIComponent(`Sports Collective: ${l.title}`)}`}
+                                style={{ color: 'var(--orange)' }}>
+                                {purchase.buyer_name}
+                              </a>
+                            ) : (
+                              purchase.buyer_name
+                            )}
+                          </span>
+                          <button type="button" onClick={() => setOpenPurchaseId(purchase.id)}
+                            className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                            View Details →
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, minWidth: 130 }}>
                       <button onClick={() => openEdit(l)} className="btn btn-ghost btn-sm" style={{ justifyContent: 'center' }}>Edit</button>
@@ -674,6 +729,28 @@ function ListingsPageContent() {
           onSaved={(opts) => { setDefaultShipping(opts); setDefaultsOpen(false); }}
         />
       )}
+
+      {openPurchaseId && (() => {
+        const purchase = Object.values(purchasesByListing).find(p => p.id === openPurchaseId);
+        if (!purchase) return null;
+        return (
+          <PurchaseDetailModal
+            purchase={purchase}
+            mode="seller"
+            counterparty={{ name: purchase.buyer_name, email: purchase.buyer_email }}
+            onClose={() => setOpenPurchaseId(null)}
+            onUpdated={(updated) => {
+              setPurchasesByListing(prev => ({
+                ...prev,
+                [updated.listing_id]: { ...prev[updated.listing_id], ...updated },
+              }));
+              if (updated.status === 'cancelled') {
+                setListings(prev => prev.map(x => x.id === updated.listing_id ? { ...x, status: 'active' } : x));
+              }
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
