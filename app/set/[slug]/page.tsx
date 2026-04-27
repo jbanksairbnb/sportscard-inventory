@@ -83,10 +83,14 @@ function computeFinancials(rows: any[]) {
 }
 function migrateRows(rows: Array<Record<string, any>>) {
   return rows.map((r) => {
-    if (r['Target Condition'] !== undefined && r['Target Condition - Low'] === undefined) {
-      return { ...r, 'Target Condition - Low': r['Target Condition'] };
+    let next = r;
+    if (next['Target Condition'] !== undefined && next['Target Condition - Low'] === undefined) {
+      next = { ...next, 'Target Condition - Low': next['Target Condition'] };
     }
-    return r;
+    if (next['Description'] !== undefined && next['Player'] === undefined) {
+      next = { ...next, 'Player': next['Description'] };
+    }
+    return next;
   });
 }
 function downloadCSV(filename: string, rows: Array<Record<string, any>>) {
@@ -467,7 +471,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                 <thead>
                   <tr>
                     <SortableHeader label="Card #" />
-                    <SortableHeader label="Description" />
+                    <SortableHeader label="Player" />
                     <SortableHeader label="Owned" />
                     <SortableHeader label="Raw Grade" />
                     <SortableHeader label="Graded" />
@@ -495,7 +499,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         <input value={v(row["Card #"])} readOnly style={{ ...CELL_INPUT, width: 72, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <input value={v(row["Description"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
+<input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Owned"])} onChange={(e) => onChangeCell(origIndex, "Owned", e.target.value)} style={CELL_SELECT}>
