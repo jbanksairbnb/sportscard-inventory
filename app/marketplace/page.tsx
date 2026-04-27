@@ -183,7 +183,7 @@ export default function MarketplacePage() {
                 }}>
                   {l.photos && l.photos.length > 0 ? (
                     <img src={l.photos[0]} alt={l.title}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)' }}>No photo</span>
                   )}
@@ -226,7 +226,7 @@ export default function MarketplacePage() {
                 }}>
                   {l.photos && l.photos.length > 0 ? (
                     <img src={l.photos[0]} alt={l.title}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>
                   )}
@@ -250,7 +250,7 @@ export default function MarketplacePage() {
                   alignItems: 'flex-end', justifyContent: 'space-between',
                   minWidth: 140, borderLeft: '1.5px solid var(--rule)',
                 }}>
-                  <span className="display" style={{ fontSize: 22, color: 'var(--plum)', fontWeight: 700 }}>
+                  <span className="display" style={{ fontSize: 16, color: 'var(--plum)', fontWeight: 700 }}>
                     {fmtMoney(l.asking_price)}
                   </span>
                   <button type="button" disabled
