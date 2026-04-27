@@ -282,12 +282,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   if (error) { alert("Image upload failed: " + error.message); return; }
   const { data } = supabase.storage.from("card-images").getPublicUrl(path);
   const field = slot === 1 ? "Image 1" : "Image 2";
-  const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
-    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: '' } : r);
-    setRows(nextRows);
-    scheduleAutoSave(nextRows);
-  }
-
+    const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
+  const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: publicUrl } : r);
+  setRows(nextRows);
+  scheduleAutoSave(nextRows);
+}
   function handleListForSale(row: Record<string, any>) {
     const params = new URLSearchParams({ prefill: '1' });
     if (year) params.set('year', String(year));
@@ -306,9 +305,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     if (cost) params.set('cost', cost);
     router.push(`/listings?${params.toString()}`);
   }
-
-  scheduleAutoSave(nextRows);
-}
 
   function onChangeCell(index: number, field: string, value: any) {
     const copy = [...rows];
