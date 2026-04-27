@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
@@ -150,6 +150,18 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
 }
 
 export default function ListingsPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        <SCLogo size={80} />
+      </div>
+    }>
+      <ListingsPageContent />
+    </Suspense>
+  );
+}
+
+function ListingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [userId, setUserId] = useState<string>('');
