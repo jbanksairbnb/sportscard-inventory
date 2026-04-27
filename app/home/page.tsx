@@ -1245,10 +1245,17 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
               cursor: 'pointer',
               textDecoration: 'none',
             };
-            return active
+                return active
               ? <Link key={label} href="/" style={style}>{label}</Link>
               : <span key={label} style={style}>{label}</span>;
           })}
+          <Link href="/listings" style={{
+            color: 'inherit',
+            cursor: 'pointer',
+            textDecoration: 'none',
+          }}>
+            My Listings
+          </Link>
           {isAdmin && (
             <Link href="/admin" style={{
               color: 'var(--orange)',
