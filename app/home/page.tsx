@@ -300,7 +300,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             unowned.push({
               year: s.year || 0,
               brand: s.brand || '',
-              description: String(row['Description'] || ''),
+              description: String(row['Player'] || row['Description'] || ''),
               targetPrice: String(row['Target Price'] || ''),
                             targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || ''),
               targetConditionHigh: String(row['Target Condition - High'] || ''),
@@ -376,7 +376,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                                    {['Year', 'Brand', 'Description', 'Target Price', 'Target Condition - Low', 'Target Condition - High'].map((h) => (
+                                    {['Year', 'Brand', 'Player', 'Target Price', 'Target Condition - Low', 'Target Condition - High'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 14px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
