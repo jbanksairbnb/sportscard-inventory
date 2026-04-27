@@ -34,7 +34,13 @@ type Listing = {
 const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
 const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
 const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
-
+const GRADE_LABELS: Record<string, string> = {
+  '10': 'GEM MT', '9.5': 'GEM MT', '9': 'MINT',
+  '8.5': 'NM-MT+', '8': 'NM-MT', '7.5': 'NM+', '7': 'NM',
+  '6.5': 'EX-MT+', '6': 'EX-MT', '5.5': 'EX+', '5': 'EX',
+  '4.5': 'VG-EX+', '4': 'VG-EX', '3.5': 'VG+', '3': 'VG',
+  '2.5': 'GOOD+', '2': 'GOOD', '1.5': 'FAIR', '1': 'POOR',
+};
 function emptyDraft(userId: string): Partial<Listing> {
   return {
     user_id: userId,
@@ -55,11 +61,19 @@ function emptyDraft(userId: string): Partial<Listing> {
   };
 }
 function buildTitle(d: Partial<Listing>): string {
+  let condition = '';
+  if (d.condition_type === 'graded' && d.grading_company && d.grade) {
+    const label = GRADE_LABELS[String(d.grade)] || '';
+    condition = label ? `${d.grading_company} ${d.grade} ${label}` : `${d.grading_company} ${d.grade}`;
+  } else if (d.condition_type === 'raw' && d.raw_grade) {
+    condition = d.raw_grade;
+  }
   const parts = [
     d.year ? String(d.year) : '',
     d.brand || '',
     d.card_number ? `#${d.card_number}` : '',
     d.player || '',
+    condition,
   ].filter(Boolean);
   return parts.join(' ').trim();
 }
@@ -275,14 +289,7 @@ export default function ListingsPage() {
                           {l.status.toUpperCase()}
                         </span>
                       </div>
-                      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 10 }}>
-                        {[l.year, l.brand, l.card_number ? `#${l.card_number}` : null].filter(Boolean).join(' · ')}
-                        {' · '}{conditionLabel(l)}
-                      </div>
-                      {l.description && (
-                        <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>{l.description}</p>
-                      )}
-                      <div style={{ display: 'flex', gap: 22, fontSize: 13, marginTop: 6, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 22, fontSize: 13, marginTop: 10, flexWrap: 'wrap' }}>
                         <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Asking</span><strong>{fmtMoney(l.asking_price)}</strong></span>
                         <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Cost</span>{fmtMoney(l.cost)}</span>
                         {l.status === 'sold' && (
