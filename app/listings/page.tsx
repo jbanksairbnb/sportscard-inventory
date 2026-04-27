@@ -440,12 +440,23 @@ function ListingsPageContent() {
     if (!confirm(`Delete listing "${l.title}"? This cannot be undone.`)) return;
     setWorking(l.id);
     const supabase = createClient();
-    const { error } = await supabase.from('listings').delete().eq('id', l.id);
-    setWorking(null);
-    if (error) { alert('Delete failed: ' + error.message); return; }
+    const { data: linked } = await supabase.from('purchases').select('id').eq('listing_id', l.id).limit(1);
+    const hasPurchases = (linked || []).length > 0;
+    if (hasPurchases) {
+      const { error } = await supabase.from('listings').update({ status: 'removed' }).eq('id', l.id);
+      setWorking(null);
+      if (error) { alert('Delete failed: ' + error.message); return; }
+    } else {
+      for (const url of l.photos || []) {
+        const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
+        if (m?.[1]) await supabase.storage.from('card-images').remove([decodeURIComponent(m[1])]);
+      }
+      const { error } = await supabase.from('listings').delete().eq('id', l.id);
+      setWorking(null);
+      if (error) { alert('Delete failed: ' + error.message); return; }
+    }
     setListings(prev => prev.filter(x => x.id !== l.id));
   }
-
   function toggleSelected(id: string) {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -475,22 +486,35 @@ function ListingsPageContent() {
   async function bulkDelete() {
     if (selectedIds.size === 0) return;
     const n = selectedIds.size;
-    if (!confirm(`Delete ${n} listing${n === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${n} listing${n === 1 ? '' : 's'}? Listings with purchase history will be hidden (kept for records); the rest will be permanently deleted.`)) return;
     setBulkWorking(true);
     const supabase = createClient();
     const ids = Array.from(selectedIds);
-    const toDelete = listings.filter(l => selectedIds.has(l.id));
+
+    const { data: linked } = await supabase.from('purchases').select('listing_id').in('listing_id', ids);
+    const blockedIds = new Set((linked || []).map(p => p.listing_id));
+    const softIds = ids.filter(id => blockedIds.has(id));
+    const hardIds = ids.filter(id => !blockedIds.has(id));
+
     const paths: string[] = [];
-    for (const l of toDelete) {
+    for (const l of listings.filter(x => hardIds.includes(x.id))) {
       for (const url of l.photos || []) {
         const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
         if (m?.[1]) paths.push(decodeURIComponent(m[1]));
       }
     }
     if (paths.length > 0) await supabase.storage.from('card-images').remove(paths);
-    const { error } = await supabase.from('listings').delete().in('id', ids);
+
+    if (softIds.length > 0) {
+      const { error } = await supabase.from('listings').update({ status: 'removed' }).in('id', softIds);
+      if (error) { setBulkWorking(false); alert('Bulk delete failed (hide): ' + error.message); return; }
+    }
+    if (hardIds.length > 0) {
+      const { error } = await supabase.from('listings').delete().in('id', hardIds);
+      if (error) { setBulkWorking(false); alert('Bulk delete failed (remove): ' + error.message); return; }
+    }
+
     setBulkWorking(false);
-    if (error) { alert('Bulk delete failed: ' + error.message); return; }
     setListings(prev => prev.filter(l => !selectedIds.has(l.id)));
     setSelectedIds(new Set());
   }
