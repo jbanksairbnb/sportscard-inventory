@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
@@ -158,6 +159,7 @@ export default function ListingsPage() {
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -332,6 +334,7 @@ export default function ListingsPage() {
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ My Listings ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={openNew} className="btn btn-primary btn-sm">+ New Listing</button>
+            <button onClick={() => setImportOpen(true)} className="btn btn-ghost btn-sm">📁 Bulk Upload</button>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>
           </div>
         </div>
@@ -443,6 +446,17 @@ export default function ListingsPage() {
           error={formError}
           onUploadPhoto={uploadPhoto}
           onDeletePhoto={deletePhoto}
+        />
+      )}
+
+      {importOpen && (
+        <ImportListingsModal
+          userId={userId}
+          onClose={() => setImportOpen(false)}
+          onComplete={(newListings) => {
+            setListings(prev => [...newListings, ...prev]);
+            setImportOpen(false);
+          }}
         />
       )}
     </div>
@@ -657,8 +671,225 @@ function ListingEditor({
         </div>
       </div>
       {lbStart !== null && photos.length > 0 && (
-        <PhotoLightbox urls={photos} startIdx={lbStart} onClose={() => setLbStart(null)} />
+                <PhotoLightbox urls={photos} startIdx={lbStart} onClose={() => setLbStart(null)} />
       )}
+    </div>
+  );
+}
+
+const REQUIRED_HEADERS = ['Year', 'Brand', 'Card #', 'Player', 'Condition Type', 'Asking Price'];
+const ALL_HEADERS = [...REQUIRED_HEADERS, 'Raw Grade', 'Grading Company', 'Grade', 'Cost'];
+
+type ParsedRow = {
+  rowIndex: number;
+  data?: Partial<Listing>;
+  error?: string;
+};
+
+function normalizeNumeric(s: string): string {
+  const n = Number(s.trim());
+  if (Number.isNaN(n)) return '';
+  return NUMERIC_GRADES.includes(n.toString()) ? n.toString() : '';
+}
+
+function ImportListingsModal({
+  userId, onClose, onComplete,
+}: {
+  userId: string;
+  onClose: () => void;
+  onComplete: (newListings: Listing[]) => void;
+}) {
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [parsing, setParsing] = useState(false);
+  const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
+  const [headerError, setHeaderError] = useState('');
+  const [importing, setImporting] = useState(false);
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setParsing(true);
+    setHeaderError('');
+    setParsed(null);
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true, transformHeader: (h) => h.trim(),
+      complete: (result) => {
+        setParsing(false);
+        const fields = result.meta.fields || [];
+        const missing = REQUIRED_HEADERS.filter(h => !fields.includes(h));
+        if (missing.length > 0) {
+          setHeaderError(`CSV is missing required columns: ${missing.join(', ')}`);
+          return;
+        }
+        const rows: ParsedRow[] = (result.data as Record<string, string>[]).map((r, i) => {
+          const rowIndex = i + 2;
+          const yearStr = String(r['Year'] || '').trim();
+          const brand = String(r['Brand'] || '').trim();
+          const cardNum = String(r['Card #'] || '').trim();
+          const player = String(r['Player'] || '').trim();
+          const condTypeRaw = String(r['Condition Type'] || '').trim().toLowerCase();
+          const askingStr = String(r['Asking Price'] || '').replace(/[^0-9.]/g, '');
+          const costStr = String(r['Cost'] || '').replace(/[^0-9.]/g, '');
+          const rawGrade = String(r['Raw Grade'] || '').trim();
+          const gradingCo = String(r['Grading Company'] || '').trim().toUpperCase();
+          const numGrade = String(r['Grade'] || '').trim();
+
+          if (!yearStr || !brand || !cardNum || !player) return { rowIndex, error: 'Missing required field (Year, Brand, Card #, or Player).' };
+          const year = Number(yearStr);
+          if (Number.isNaN(year)) return { rowIndex, error: `Year is not a number: "${yearStr}".` };
+
+          let condition_type: ConditionType;
+          if (condTypeRaw === 'raw') condition_type = 'raw';
+          else if (condTypeRaw === 'graded') condition_type = 'graded';
+          else return { rowIndex, error: `Condition Type must be "Raw" or "Graded" (got "${r['Condition Type']}").` };
+
+          if (!askingStr) return { rowIndex, error: 'Asking Price is required.' };
+          const asking = Number(askingStr);
+          if (Number.isNaN(asking) || asking < 0) return { rowIndex, error: `Asking Price invalid: "${r['Asking Price']}".` };
+
+          let cost: number | null = null;
+          if (costStr) { const c = Number(costStr); if (!Number.isNaN(c) && c >= 0) cost = c; }
+
+          let chosenRaw = '';
+          let chosenCo = '';
+          let chosenGrade = '';
+          if (condition_type === 'raw') {
+            chosenRaw = RAW_GRADES.includes(rawGrade) ? rawGrade : '';
+            if (!chosenRaw) return { rowIndex, error: `Raw Grade required for Raw cards. Allowed: ${RAW_GRADES.join(', ')}.` };
+          } else {
+            chosenCo = COMPANIES.includes(gradingCo) ? gradingCo : '';
+            chosenGrade = normalizeNumeric(numGrade);
+            if (!chosenCo) return { rowIndex, error: `Grading Company required for Graded cards. Allowed: ${COMPANIES.join(', ')}.` };
+            if (!chosenGrade) return { rowIndex, error: `Grade required (1–10, half-points OK) for Graded cards.` };
+          }
+
+          const data: Partial<Listing> = {
+            user_id: userId,
+            year,
+            brand,
+            card_number: cardNum,
+            player,
+            condition_type,
+            raw_grade: chosenRaw || null,
+            grading_company: chosenCo || null,
+            grade: chosenGrade || null,
+            asking_price: asking,
+            cost,
+            photos: [],
+            status: 'draft',
+            description: null,
+          };
+          data.title = buildTitle(data);
+          return { rowIndex, data };
+        });
+        setParsed(rows);
+      },
+      error: () => {
+        setParsing(false);
+        setHeaderError('Could not parse CSV file.');
+      },
+    });
+  }
+
+  async function handleImport() {
+    if (!parsed) return;
+    const valid = parsed.filter(r => r.data).map(r => r.data!);
+    if (valid.length === 0) return;
+    setImporting(true);
+    const supabase = createClient();
+    const { data, error } = await supabase.from('listings').insert(valid).select();
+    setImporting(false);
+    if (error) { alert('Import failed: ' + error.message); return; }
+    onComplete((data || []) as Listing[]);
+  }
+
+  const validCount = parsed?.filter(r => r.data).length || 0;
+  const invalidCount = parsed?.filter(r => r.error).length || 0;
+
+  return (
+    <div onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(42,20,52,0.82)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '40px 20px', overflowY: 'auto',
+      }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 760, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div className="display" style={{ fontSize: 24, color: 'var(--plum)', flex: 1 }}>Bulk Upload Listings</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+
+        <div style={{ marginBottom: 18, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+          Upload a CSV with these columns: <strong>{ALL_HEADERS.join(', ')}</strong>.<br/>
+          Required: <strong>{REQUIRED_HEADERS.join(', ')}</strong> (and Raw Grade if Raw, Grading Company + Grade if Graded).
+          All imported rows land as <strong>drafts</strong> for review.
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={parsing}
+            className="btn btn-primary btn-sm">
+            {parsing ? 'Parsing…' : 'Choose CSV file…'}
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} style={{ display: 'none' }} />
+        </div>
+
+        {headerError && (
+          <div style={{
+            background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--rust)', fontWeight: 600, marginBottom: 16,
+          }}>
+            {headerError}
+          </div>
+        )}
+
+        {parsed && (
+          <>
+            <div style={{ display: 'flex', gap: 14, marginBottom: 14, fontSize: 13 }}>
+              <span style={{ color: 'var(--teal)', fontWeight: 700 }}>✓ {validCount} valid</span>
+              {invalidCount > 0 && <span style={{ color: 'var(--rust)', fontWeight: 700 }}>✕ {invalidCount} invalid</span>}
+            </div>
+
+            <div style={{ maxHeight: 320, overflowY: 'auto', border: '1.5px solid var(--plum)', borderRadius: 8, marginBottom: 16 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)' }}>
+                  <tr>
+                    <th style={{ padding: '8px 10px', textAlign: 'left' }}>Row</th>
+                    <th style={{ padding: '8px 10px', textAlign: 'left' }}>Title / Error</th>
+                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Asking</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsed.map((r, i) => (
+                    <tr key={i} style={{ borderTop: '1px solid var(--cream-warm)', background: r.error ? 'rgba(197,74,44,0.08)' : (i % 2 ? 'var(--paper)' : 'var(--cream)') }}>
+                      <td className="mono" style={{ padding: '6px 10px', color: 'var(--ink-mute)' }}>{r.rowIndex}</td>
+                      <td style={{ padding: '6px 10px' }}>
+                        {r.data ? (
+                          <span style={{ color: 'var(--plum)' }}>{r.data.title}</span>
+                        ) : (
+                          <span style={{ color: 'var(--rust)' }}>{r.error}</span>
+                        )}
+                      </td>
+                      <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--ink-soft)' }}>
+                        {r.data ? fmtMoney(r.data.asking_price ?? null) : ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" onClick={handleImport} disabled={importing || validCount === 0}
+                className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+                {importing ? 'Importing…' : `Import ${validCount} ${validCount === 1 ? 'Listing' : 'Listings'} as Drafts`}
+              </button>
+              <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
