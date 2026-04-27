@@ -75,6 +75,12 @@ export default function MarketplacePage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
+  const [buyTarget, setBuyTarget] = useState<MarketplaceListing | null>(null);
+
+  function onPurchaseComplete(listingId: string) {
+    setListings(prev => prev.filter(l => l.id !== listingId));
+    setBuyTarget(null);
+  }
 
   useEffect(() => {
     const supabase = createClient();
@@ -237,9 +243,8 @@ export default function MarketplacePage() {
                     <span className="display" style={{ fontSize: 18, color: 'var(--plum)', fontWeight: 700 }}>
                       {fmtMoney(l.asking_price)}
                     </span>
-                    <button type="button" disabled
-                      title="Buy flow lands in Phase 2B"
-                      className="btn btn-primary btn-sm" style={{ opacity: 0.6, cursor: 'not-allowed' }}>
+                    <button type="button" onClick={() => setBuyTarget(l)}
+                      className="btn btn-primary btn-sm">
                       Buy →
                     </button>
                   </div>
@@ -289,9 +294,8 @@ export default function MarketplacePage() {
                   <span className="display" style={{ fontSize: 16, color: 'var(--plum)', fontWeight: 700 }}>
                     {fmtMoney(l.asking_price)}
                   </span>
-                  <button type="button" disabled
-                    title="Buy flow lands in Phase 2B"
-                    className="btn btn-primary btn-sm" style={{ opacity: 0.6, cursor: 'not-allowed', whiteSpace: 'nowrap' }}>
+                  <button type="button" onClick={() => setBuyTarget(l)}
+                    className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }}>
                     Buy →
                   </button>
                 </div>
@@ -301,8 +305,12 @@ export default function MarketplacePage() {
         )}
       </div>
 
-      {lightboxPhotos && (
+            {lightboxPhotos && (
         <PhotoLightbox urls={lightboxPhotos} startIdx={0} onClose={() => setLightboxPhotos(null)} />
+      )}
+
+      {buyTarget && (
+        <BuyModal listing={buyTarget} onClose={() => setBuyTarget(null)} onComplete={onPurchaseComplete} />
       )}
     </div>
   );
