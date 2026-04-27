@@ -480,32 +480,14 @@ function ListingEditor({
   const [lbStart, setLbStart] = useState<number | null>(null);
   const photos = draft.photos || [];
   const canUpload = !!draft.id && photos.length < MAX_PHOTOS;
-
-  async f  function downloadTemplate() {
-    const lines = [
-      'Enter cards in this format - delete this row before submitting',
-      'Year,Brand,Card #,Player,Condition Type,Asking Price,Raw Grade,Grading Company,Grade,Cost',
-      '1954,Topps,1,TED WILLIAMS,Graded,850,,PSA,5,600',
-      '1955,Topps,3,MONTE IRVIN,Graded,100,,SGC,5,50',
-      '1956,Topps,10,JACKIE ROBINSON,Graded,750,,PSA,4.5,600',
-      '1970,Topps,128,HANK AARON,Raw,2500,VG,,,2000',
-    ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'sports-collective-listings-template.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-   const file = e.target.files?.[0];
+   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     await onUploadPhoto(file);
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }
-  const fieldStyle: React.CSSProperties = {
+  }  const fieldStyle: React.CSSProperties = {
     border: '2px solid var(--plum)', borderRadius: 8, padding: '8px 12px',
     fontFamily: 'var(--font-body)', fontSize: 13.5, color: 'var(--plum)',
     background: 'var(--cream)', width: '100%', boxSizing: 'border-box', outline: 'none',
@@ -720,6 +702,23 @@ function ImportListingsModal({
   const [parsed, setParsed] = useState<ParsedRow[] | null>(null);
   const [headerError, setHeaderError] = useState('');
   const [importing, setImporting] = useState(false);
+  function downloadTemplate() {
+    const lines = [
+      'Enter cards in this format - delete this row before submitting',
+      'Year,Brand,Card #,Player,Condition Type,Asking Price,Raw Grade,Grading Company,Grade,Cost',
+      '1954,Topps,1,TED WILLIAMS,Graded,850,,PSA,5,600',
+      '1955,Topps,3,MONTE IRVIN,Graded,100,,SGC,5,50',
+      '1956,Topps,10,JACKIE ROBINSON,Graded,750,,PSA,4.5,600',
+      '1970,Topps,128,HANK AARON,Raw,2500,VG,,,2000',
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sports-collective-listings-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
