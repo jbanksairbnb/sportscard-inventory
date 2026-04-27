@@ -283,8 +283,30 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   const { data } = supabase.storage.from("card-images").getPublicUrl(path);
   const field = slot === 1 ? "Image 1" : "Image 2";
   const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
-  const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: publicUrl } : r);
-  setRows(nextRows);
+    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: '' } : r);
+    setRows(nextRows);
+    scheduleAutoSave(nextRows);
+  }
+
+  function handleListForSale(row: Record<string, any>) {
+    const params = new URLSearchParams({ prefill: '1' });
+    if (year) params.set('year', String(year));
+    if (brand) params.set('brand', String(brand));
+    if (row['Card #']) params.set('card', String(row['Card #']));
+    if (row['Player']) params.set('player', String(row['Player']));
+    if (String(row['Graded'] || '') === 'Yes') {
+      params.set('condition_type', 'graded');
+      if (row['Grading Company']) params.set('grading_company', String(row['Grading Company']));
+      if (row['Grade']) params.set('grade', String(row['Grade']));
+    } else if (row['Raw Grade']) {
+      params.set('condition_type', 'raw');
+      params.set('raw_grade', String(row['Raw Grade']));
+    }
+    const cost = String(row['Cost'] || '').replace(/[^0-9.]/g, '');
+    if (cost) params.set('cost', cost);
+    router.push(`/listings?${params.toString()}`);
+  }
+
   scheduleAutoSave(nextRows);
 }
 
@@ -485,8 +507,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                     <SortableHeader label="Sale Price" />
                     <SortableHeader label="Date Purchased" />
                     <SortableHeader label="Purchased From" />
-                    <th style={TH_STYLE}>Image 1</th>
+                                       <th style={TH_STYLE}>Image 1</th>
                     <th style={TH_STYLE}>Image 2</th>
+                    <th style={TH_STYLE}>Sell</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -574,11 +597,21 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
                           onDelete={() => handleImageDelete(origIndex, 1)} />
                       </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
+                                            <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 2"])} label="Img 2"
                           otherUrl={v(row["Image 1"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
                           onDelete={() => handleImageDelete(origIndex, 2)} />
+                      </td>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'middle', textAlign: 'center' }}>
+                        {String(row["Owned"] || '') === 'Yes' ? (
+                          <button type="button" onClick={() => handleListForSale(row)}
+                            className="btn btn-ghost btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                            $ List
+                          </button>
+                        ) : (
+                          <span style={{ color: 'var(--ink-mute)', fontSize: 11 }}>—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
