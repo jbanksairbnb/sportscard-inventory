@@ -380,6 +380,9 @@ export default function ListingsPage() {
                           {l.status.toUpperCase()}
                         </span>
                       </div>
+                      {l.description && (
+                        <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>{l.description}</p>
+                      )}
                       <div style={{ display: 'flex', gap: 22, fontSize: 13, marginTop: 10, flexWrap: 'wrap' }}>
                         <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Asking</span><strong>{fmtMoney(l.asking_price)}</strong></span>
                         <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Cost</span>{fmtMoney(l.cost)}</span>
@@ -586,7 +589,14 @@ function ListingEditor({
               <div className="eyebrow" style={labelStyle}>Cost ($) — private</div>
               <input type="number" step="0.01" value={draft.cost ?? ''} onChange={e => set('cost', e.target.value ? Number(e.target.value) : null)}
                 placeholder="0.00" style={fieldStyle} />
-                       </div>
+                                   </div>
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Description (optional)</div>
+            <textarea value={draft.description || ''} onChange={e => set('description', e.target.value)}
+              rows={3} placeholder="Additional details — centering, surface, any flaws, sale terms…"
+              style={{ ...fieldStyle, resize: 'vertical' }} />
           </div>
 
           <div>
