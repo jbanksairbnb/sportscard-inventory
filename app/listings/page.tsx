@@ -215,6 +215,8 @@ function ListingsPageContent() {
       const c = Number(costParam);
       if (!Number.isNaN(c)) draft.cost = c;
     }
+    const photos = searchParams.getAll('photo').filter(Boolean).slice(0, MAX_PHOTOS);
+    if (photos.length > 0) draft.photos = photos;
     setEditing(draft);
     router.replace('/listings');
   }, [userId, searchParams, router]);
