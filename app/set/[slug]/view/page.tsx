@@ -44,7 +44,7 @@ function ImageLightbox({ urls, onClose }: { urls: string[]; onClose: () => void 
 function CardTile({ row, year, brand }: { row: Record<string, any>; year: string; brand: string }) {
   const [lightboxUrls, setLightboxUrls] = useState<string[]>([]);
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
-  const description = row['Description'] || '';
+  const description = row['Player'] || row['Description'] || '';
   const gradingCo = row['Grading Company'] || '';
   const grade = row['Grade'] || '';
   const salePrice = row['Sale Price'] || '';
@@ -111,7 +111,7 @@ function CardTableRow({ row, year, brand }: { row: Record<string, any>; year: st
           {cardNum}
         </td>
         <td className="display" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--plum)' }}>
-          {row['Description'] || ''}
+          {row['Player'] || row['Description'] || ''}
         </td>
         <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 11, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
           {row['Grading Company'] || ''}
@@ -247,7 +247,7 @@ export default function InventoryViewPage() {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                  {['Year · Brand', 'Card #', 'Description', 'Grading Co.', 'Grade', 'Sale Price', 'Images'].map((h) => (
+                 {['Year · Brand', 'Card #', 'Player', 'Grading Co.', 'Grade', 'Sale Price', 'Images'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 14px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
