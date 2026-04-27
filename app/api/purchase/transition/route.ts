@@ -160,7 +160,8 @@ export async function POST(req: NextRequest) {
       <p style="font-size: 14px; line-height: 1.6;">The seller is preparing your card for shipment. You'll get another email when it ships.</p>
       <p style="font-size: 13px; color: ${INK_MUTE}; line-height: 1.6;">Track this order at <a href="https://sports-collective.com/purchases" style="color: ${ORANGE};">sports-collective.com/purchases</a>.</p>
     `)
-    sendEmail(buyerEmail, `Payment confirmed: ${listingTitle}`, html).then(r => console.log('Transition email — paid:', JSON.stringify(r)))
+      const r = await sendEmail(buyerEmail, `Payment confirmed: ${listingTitle}`, html)
+    console.log('Transition email — paid:', JSON.stringify(r))
   } else if (action === 'shipped' && buyerEmail) {
     const html = shellHtml('Your Order is on the Way', `
       <p style="font-size: 15px; line-height: 1.6;">${escapeHtml(sellerName)} just shipped <strong>${escapeHtml(listingTitle)}</strong>.</p>
@@ -172,7 +173,8 @@ export async function POST(req: NextRequest) {
       ` : `<p style="font-size: 13px; color: ${INK_MUTE};">No tracking number provided — likely shipped via PWE.</p>`}
       <p style="font-size: 13px; color: ${INK_MUTE}; line-height: 1.6;">Once it arrives, mark it as received at <a href="https://sports-collective.com/purchases" style="color: ${ORANGE};">sports-collective.com/purchases</a>.</p>
     `)
-    sendEmail(buyerEmail, `Shipped: ${listingTitle}`, html).then(r => console.log('Transition email — shipped:', JSON.stringify(r)))
+        const r = await sendEmail(buyerEmail, `Shipped: ${listingTitle}`, html)
+    console.log('Transition email — shipped:', JSON.stringify(r))
   } else if (action === 'cancelled') {
     const recipient = isBuyer ? sellerEmail : buyerEmail
     const recipientName = isBuyer ? sellerName : buyerName
@@ -185,7 +187,8 @@ export async function POST(req: NextRequest) {
           : `<p style="font-size: 14px; line-height: 1.6;">No charge was processed. The listing is now available again on the marketplace.</p>`
         }
       `)
-      sendEmail(recipient, `Cancelled: ${listingTitle}`, html).then(r => console.log('Transition email — cancelled:', JSON.stringify(r)))
+            const r = await sendEmail(recipient, `Cancelled: ${listingTitle}`, html)
+      console.log('Transition email — cancelled:', JSON.stringify(r))
     }
   }
 
