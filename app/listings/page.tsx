@@ -816,8 +816,6 @@ function ListingEditor({
           </div>
 
           <div>
-            <div className="eyebrow" style={labelStyle}>Photos ({photos.length} / {MAX_PHOTOS})</div>
-
           <div>
             <div className="eyebrow" style={labelStyle}>Photos ({photos.length} / {MAX_PHOTOS})</div>
             {!draft.id ? (
