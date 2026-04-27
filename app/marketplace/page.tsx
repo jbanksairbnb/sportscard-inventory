@@ -40,9 +40,10 @@ export default function MarketplacePage() {
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [search, setSearch] = useState('');
-  const [conditionFilter, setConditionFilter] = useState<'all' | 'raw' | 'graded'>('all');
+    const [conditionFilter, setConditionFilter] = useState<'all' | 'raw' | 'graded'>('all');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
   const [currentUserId, setCurrentUserId] = useState<string>('');
 
   useEffect(() => {
@@ -153,6 +154,14 @@ export default function MarketplacePage() {
           <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>
             {filtered.length} {filtered.length === 1 ? 'listing' : 'listings'}
           </span>
+          <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+            {(['grid', 'list'] as const).map(v => (
+              <button key={v} onClick={() => setView(v)}
+                className={`btn btn-sm ${view === v ? 'btn-primary' : 'btn-ghost'}`}>
+                {v === 'grid' ? '▦ Grid' : '☰ List'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {filtered.length === 0 ? (
@@ -160,7 +169,7 @@ export default function MarketplacePage() {
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No listings match</div>
             <p style={{ color: 'var(--ink-mute)', fontSize: 13 }}>Try a different search or clear the filters.</p>
           </div>
-        ) : (
+               ) : view === 'grid' ? (
           <div style={{
             display: 'grid', gap: 16,
             gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
@@ -201,6 +210,54 @@ export default function MarketplacePage() {
                       Buy →
                     </button>
                   </div>
+                                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {filtered.map(l => (
+              <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', alignItems: 'stretch' }}>
+                <div style={{
+                  width: 140, height: 140, flexShrink: 0,
+                  background: 'var(--paper)',
+                  display: 'grid', placeItems: 'center', overflow: 'hidden',
+                  borderRight: '2px solid var(--plum)',
+                }}>
+                  {l.photos && l.photos.length > 0 ? (
+                    <img src={l.photos[0]} alt={l.title}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>
+                  )}
+                </div>
+                <div style={{ flex: 1, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+                  <div className="display" style={{ fontSize: 16, color: 'var(--plum)', lineHeight: 1.3 }}>
+                    {l.title}
+                  </div>
+                  {l.description && (
+                    <p style={{ margin: 0, fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
+                      {l.description.length > 200 ? l.description.slice(0, 200) + '…' : l.description}
+                    </p>
+                  )}
+                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 'auto' }}>
+                    Seller: {l.seller_display_name || l.seller_handle || '—'}
+                  </div>
+                </div>
+                <div style={{
+                  padding: '14px 20px',
+                  display: 'flex', flexDirection: 'column', gap: 10,
+                  alignItems: 'flex-end', justifyContent: 'space-between',
+                  minWidth: 140, borderLeft: '1.5px solid var(--rule)',
+                }}>
+                  <span className="display" style={{ fontSize: 22, color: 'var(--plum)', fontWeight: 700 }}>
+                    {fmtMoney(l.asking_price)}
+                  </span>
+                  <button type="button" disabled
+                    title="Buy flow lands in Phase 2B"
+                    className="btn btn-primary btn-sm" style={{ opacity: 0.6, cursor: 'not-allowed', whiteSpace: 'nowrap' }}>
+                    Buy →
+                  </button>
                 </div>
               </div>
             ))}
