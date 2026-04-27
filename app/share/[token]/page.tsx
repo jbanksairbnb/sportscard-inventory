@@ -47,7 +47,7 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
 function CardTile({ row }: { row: CardRow }) {
   const [lightboxUrl, setLightboxUrl] = useState('');
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
-  const description = String(row['Description'] || '');
+  const description = String(row['Player'] || row['Description'] || '');
   const gradingCo = String(row['Grading Company'] || '');
   const grade = row['Grade'] ? `Grade ${row['Grade']}` : '';
   const owned = String(row['Owned'] || '') === 'Yes';
@@ -119,7 +119,7 @@ function ListRow({ row, even }: { row: CardRow; even: boolean }) {
           {row['Card #'] ? `#${row['Card #']}` : '—'}
         </td>
         <td style={{ padding: '10px 16px' }}>
-          <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>{String(row['Description'] || '—')}</span>
+          <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>{String(row['Player'] || row['Description'] || '—')}</span>
         </td>
         <td className="eyebrow" style={{ padding: '10px 16px', fontSize: 9, color: 'var(--orange)' }}>
           {[gradingCo, grade].filter(Boolean).join(' · ') || '—'}
@@ -211,7 +211,7 @@ export default function SharePage() {
       const q = search.toLowerCase();
       return (
         String(row['Card #'] || '').toLowerCase().includes(q) ||
-        String(row['Description'] || '').toLowerCase().includes(q)
+        String(row['Player'] || row['Description'] || '').toLowerCase().includes(q)
       );
     }
     return true;
@@ -321,7 +321,7 @@ export default function SharePage() {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                  {['Card #', 'Description', 'Grading', 'Owned', 'Images'].map((h) => (
+                  {['Card #', 'Player', 'Grading', 'Owned', 'Images'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 16px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
