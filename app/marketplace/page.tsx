@@ -315,3 +315,164 @@ export default function MarketplacePage() {
     </div>
   );
 }
+function BuyModal({
+  listing, onClose, onComplete,
+}: {
+  listing: MarketplaceListing;
+  onClose: () => void;
+  onComplete: (listingId: string) => void;
+}) {
+  const opts = listing.shipping_options || [];
+  const [shipIdx, setShipIdx] = useState<number>(opts.length > 0 ? 0 : -1);
+  const [name, setName] = useState('');
+  const [addr1, setAddr1] = useState('');
+  const [addr2, setAddr2] = useState('');
+  const [city, setCity] = useState('');
+  const [stateReg, setStateReg] = useState('');
+  const [zip, setZip] = useState('');
+  const [country, setCountry] = useState('US');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const ship = shipIdx >= 0 ? opts[shipIdx] : null;
+  const itemPrice = listing.asking_price || 0;
+  const shippingCost = ship?.cost || 0;
+  const total = itemPrice + shippingCost;
+
+  async function confirm() {
+    setError('');
+    if (!ship) { setError('Pick a shipping option.'); return; }
+    if (!name.trim() || !addr1.trim() || !city.trim() || !stateReg.trim() || !zip.trim() || !country.trim()) {
+      setError('All shipping address fields except line 2 are required.');
+      return;
+    }
+    setSubmitting(true);
+    const supabase = createClient();
+    const { data: purchaseId, error: rpcErr } = await supabase.rpc('purchase_listing', {
+      p_listing_id: listing.id,
+      p_shipping_label: ship.label,
+      p_shipping_cost: ship.cost,
+      p_ship_to_name: name.trim(),
+      p_ship_to_address1: addr1.trim(),
+      p_ship_to_address2: addr2.trim() || null,
+      p_ship_to_city: city.trim(),
+      p_ship_to_state: stateReg.trim(),
+      p_ship_to_zip: zip.trim(),
+      p_ship_to_country: country.trim(),
+    });
+    if (rpcErr) {
+      setSubmitting(false);
+      setError(rpcErr.message);
+      return;
+    }
+    const res = await fetch('/api/purchase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchaseId }),
+    });
+    if (!res.ok) {
+      console.error('Email send failed:', await res.text());
+    }
+    setSubmitting(false);
+    alert('Purchase confirmed! Check your email for details. The seller will reach out about payment.');
+    onComplete(listing.id);
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    border: '2px solid var(--plum)', borderRadius: 8, padding: '8px 12px',
+    fontFamily: 'var(--font-body)', fontSize: 13.5, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box', outline: 'none',
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '40px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 560, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Buy: {listing.title}</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
+          <div>
+            <div className="eyebrow" style={labelStyle}>Shipping</div>
+            {opts.length === 0 ? (
+              <div className="mono" style={{ fontSize: 12, color: 'var(--rust)', fontWeight: 700, fontStyle: 'italic' }}>
+                Seller has not set any shipping options. You cannot buy this listing yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {opts.map((o, i) => (
+                  <label key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', borderRadius: 8,
+                    border: shipIdx === i ? '2px solid var(--plum)' : '1.5px solid var(--rule)',
+                    background: shipIdx === i ? 'var(--paper)' : 'transparent',
+                    cursor: 'pointer',
+                  }}>
+                    <input type="radio" checked={shipIdx === i} onChange={() => setShipIdx(i)} />
+                    <span style={{ flex: 1, fontSize: 13.5, color: 'var(--plum)' }}>{o.label}</span>
+                    <span className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', fontWeight: 700 }}>${o.cost.toFixed(2)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Ship to *</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" style={fieldStyle} />
+              <input value={addr1} onChange={e => setAddr1(e.target.value)} placeholder="Address line 1" style={fieldStyle} />
+              <input value={addr2} onChange={e => setAddr2(e.target.value)} placeholder="Address line 2 (optional)" style={fieldStyle} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px', gap: 8 }}>
+                <input value={city} onChange={e => setCity(e.target.value)} placeholder="City" style={fieldStyle} />
+                <input value={stateReg} onChange={e => setStateReg(e.target.value.toUpperCase().slice(0, 3))} placeholder="State" style={fieldStyle} />
+                <input value={zip} onChange={e => setZip(e.target.value)} placeholder="ZIP" style={fieldStyle} />
+              </div>
+              <input value={country} onChange={e => setCountry(e.target.value.toUpperCase())} placeholder="Country (e.g. US)" style={fieldStyle} />
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: '12px 16px', background: 'var(--paper)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--ink-soft)', marginBottom: 4 }}>
+              <span>Item</span><span>${itemPrice.toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
+              <span>Shipping{ship ? ` · ${ship.label}` : ''}</span><span>${shippingCost.toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: 'var(--plum)', borderTop: '2px solid var(--plum)', paddingTop: 8 }}>
+              <span>Total</span><span style={{ color: 'var(--teal)' }}>${total.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {error && (
+            <div style={{
+              background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+              borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--rust)', fontWeight: 600,
+            }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="button" onClick={confirm} disabled={submitting || opts.length === 0}
+              className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+              {submitting ? 'Confirming…' : `Confirm Purchase · $${total.toFixed(2)}`}
+            </button>
+            <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+          </div>
+          <p className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, textAlign: 'center', margin: 0 }}>
+            By confirming, the listing will be marked sold and the seller will be emailed your shipping info.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
