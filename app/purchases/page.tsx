@@ -5,33 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 
-type Purchase = {
-  id: string;
-  listing_id: string;
-  buyer_id: string;
-  seller_id: string;
-  item_price: number;
-  shipping_label: string;
-  shipping_cost: number;
-  total: number;
-  ship_to_name: string;
-  ship_to_address1: string;
-  ship_to_address2: string | null;
-  ship_to_city: string;
-  ship_to_state: string;
-  ship_to_zip: string;
-  ship_to_country: string;
-  status: string;
-  cancelled_by: string | null;
-  cancelled_at: string | null;
-  paid_at: string | null;
-  shipped_at: string | null;
-  tracking_number: string | null;
-  created_at: string;
-  listing?: { title: string; photos: string[] } | null;
-  seller_name?: string;
-  seller_email?: string;
+type Purchase = PurchaseDetail & {
+  seller_name: string;
+  seller_email: string;
 };
 
 const STATUS_FILTERS = ['all', 'unpaid', 'paid', 'shipped', 'completed', 'cancelled'] as const;
@@ -52,7 +30,7 @@ function statusBg(s: string) {
   if (s === 'shipped') return 'var(--orange)';
   if (s === 'completed') return 'var(--teal)';
   if (s === 'cancelled') return 'var(--ink-mute)';
-  return 'var(--rust)'; // unpaid
+  return 'var(--rust)';
 }
 function statusFg(s: string) {
   if (s === 'paid') return 'var(--plum)';
@@ -64,7 +42,7 @@ export default function PurchasesPage() {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
-  const [working, setWorking] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -111,26 +89,10 @@ export default function PurchasesPage() {
     return purchases.filter(p => p.status === filter);
   }, [purchases, filter]);
 
-  async function markReceived(p: Purchase) {
-    if (!confirm('Mark this item as received? This finalizes the transaction.')) return;
-    setWorking(p.id);
-    const supabase = createClient();
-    const { error } = await supabase.from('purchases').update({ status: 'completed' }).eq('id', p.id);
-    setWorking(null);
-    if (error) { alert('Update failed: ' + error.message); return; }
-    setPurchases(prev => prev.map(x => x.id === p.id ? { ...x, status: 'completed' } : x));
-  }
+  const openPurchase = openId ? purchases.find(p => p.id === openId) : null;
 
-  async function cancel(p: Purchase) {
-    if (!confirm('Cancel this purchase? The listing will go back on the marketplace and the seller will be notified.')) return;
-    setWorking(p.id);
-    const supabase = createClient();
-    const { error } = await supabase.rpc('cancel_purchase', { p_purchase_id: p.id });
-    setWorking(null);
-    if (error) { alert('Cancel failed: ' + error.message); return; }
-    setPurchases(prev => prev.map(x => x.id === p.id
-      ? { ...x, status: 'cancelled', cancelled_by: 'buyer', cancelled_at: new Date().toISOString() }
-      : x));
+  function handleUpdated(updated: PurchaseDetail) {
+    setPurchases(prev => prev.map(x => x.id === updated.id ? { ...x, ...updated } : x));
   }
 
   if (loading) {
@@ -190,7 +152,12 @@ export default function PurchasesPage() {
             {filtered.map(p => {
               const photo = p.listing?.photos?.[0];
               return (
-                <div key={p.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', alignItems: 'stretch' }}>
+                <div key={p.id} onClick={() => setOpenId(p.id)} className="panel-bordered" style={{
+                  padding: 0, overflow: 'hidden', display: 'flex', alignItems: 'stretch',
+                  cursor: 'pointer', transition: 'transform 0.05s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}>
                   <div style={{
                     width: 130, height: 130, flexShrink: 0,
                     background: 'var(--paper)',
@@ -217,7 +184,9 @@ export default function PurchasesPage() {
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
                       Ordered {fmtDate(p.created_at)} · Seller:{' '}
                       {p.seller_email ? (
-                        <a href={`mailto:${p.seller_email}?subject=${encodeURIComponent(`Sports Collective purchase: ${p.listing?.title || 'order'}`)}`} style={{ color: 'var(--orange)' }}>
+                        <a href={`mailto:${p.seller_email}?subject=${encodeURIComponent(`Sports Collective purchase: ${p.listing?.title || 'order'}`)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: 'var(--orange)' }}>
                           {p.seller_name}
                         </a>
                       ) : (
@@ -254,23 +223,8 @@ export default function PurchasesPage() {
                       </div>
                       <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)' }}>{p.shipping_label}</div>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch', width: '100%' }}>
-                      {p.status === 'shipped' && (
-                        <button type="button" onClick={() => markReceived(p)} disabled={working === p.id}
-                          className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }}>
-                          {working === p.id ? '…' : '✓ Mark Received'}
-                        </button>
-                      )}
-                      {p.status === 'unpaid' && (
-                        <button type="button" onClick={() => cancel(p)} disabled={working === p.id}
-                          className="btn btn-sm" style={{
-                            justifyContent: 'center',
-                            background: 'transparent', color: 'var(--rust)',
-                            border: '1.5px solid var(--rust)',
-                          }}>
-                          {working === p.id ? '…' : '✕ Cancel'}
-                        </button>
-                      )}
+                    <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)' }}>
+                      View Details →
                     </div>
                   </div>
                 </div>
@@ -279,6 +233,16 @@ export default function PurchasesPage() {
           </div>
         )}
       </div>
+
+      {openPurchase && (
+        <PurchaseDetailModal
+          purchase={openPurchase}
+          mode="buyer"
+          counterparty={{ name: openPurchase.seller_name, email: openPurchase.seller_email }}
+          onClose={() => setOpenId(null)}
+          onUpdated={handleUpdated}
+        />
+      )}
     </div>
   );
 }
