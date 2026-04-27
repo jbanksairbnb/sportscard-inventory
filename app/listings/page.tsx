@@ -49,7 +49,8 @@ const DEFAULT_SHIPPING_OPTIONS: ShippingOption[] = [
   { label: 'PWE (Plain White Envelope)', cost: 1.00 },
   { label: 'Bubble Mailer with Tracking', cost: 5.00 },
 ];
-function emptyDraft(userId: string): Partial<Listing> {
+function emptyDraft(userId: string, defaults?: ShippingOption[]): Partial<Listing> {
+  const ship = (defaults && defaults.length > 0) ? [...defaults] : [...DEFAULT_SHIPPING_OPTIONS];
   return {
     user_id: userId,
     title: '',
@@ -65,7 +66,7 @@ function emptyDraft(userId: string): Partial<Listing> {
     asking_price: null,
     cost: null,
     photos: [],
-    shipping_options: [...DEFAULT_SHIPPING_OPTIONS],
+    shipping_options: ship,
     status: 'draft',
   };
 }
@@ -235,6 +236,8 @@ function ListingsPageContent() {
    const [importOpen, setImportOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [defaultShipping, setDefaultShipping] = useState<ShippingOption[]>([]);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -242,6 +245,13 @@ function ListingsPageContent() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('default_shipping_options')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const defaults = (profile?.default_shipping_options as ShippingOption[] | null) || [];
+      setDefaultShipping(defaults);
       const { data } = await supabase
         .from('listings')
         .select('*')
@@ -257,7 +267,7 @@ function ListingsPageContent() {
   useEffect(() => {
     if (!userId) return;
     if (searchParams?.get('prefill') !== '1') return;
-    const draft = emptyDraft(userId);
+    const draft = emptyDraft(userId, defaultShipping);
     const yearParam = searchParams.get('year');
     if (yearParam) draft.year = Number(yearParam) || null;
     draft.brand = searchParams.get('brand') || '';
@@ -281,7 +291,7 @@ function ListingsPageContent() {
     if (photos.length > 0) draft.photos = photos;
     setEditing(draft);
     router.replace('/listings');
-  }, [userId, searchParams, router]);
+  }, [userId, searchParams, router, defaultShipping]);
 
   const counts = {
     draft: listings.filter(l => l.status === 'draft').length,
@@ -295,7 +305,7 @@ function ListingsPageContent() {
 
   function openNew() {
     setFormError('');
-    setEditing(emptyDraft(userId));
+    setEditing(emptyDraft(userId, defaultShipping));
   }
   function openEdit(l: Listing) {
     setFormError('');
@@ -489,6 +499,7 @@ function ListingsPageContent() {
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={openNew} className="btn btn-primary btn-sm">+ New Listing</button>
             <button onClick={() => setImportOpen(true)} className="btn btn-ghost btn-sm">📁 Bulk Upload</button>
+            <button onClick={() => setDefaultsOpen(true)} className="btn btn-ghost btn-sm">⚙ Default Shipping</button>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>
           </div>
         </div>
@@ -646,6 +657,7 @@ function ListingsPageContent() {
       )}
 
       {importOpen && (
+      {importOpen && (
         <ImportListingsModal
           userId={userId}
           onClose={() => setImportOpen(false)}
@@ -653,6 +665,15 @@ function ListingsPageContent() {
             setListings(prev => [...newListings, ...prev]);
             setImportOpen(false);
           }}
+        />
+      )}
+
+      {defaultsOpen && (
+        <DefaultShippingModal
+          userId={userId}
+          initial={defaultShipping}
+          onClose={() => setDefaultsOpen(false)}
+          onSaved={(opts) => { setDefaultShipping(opts); setDefaultsOpen(false); }}
         />
       )}
     </div>
@@ -1109,6 +1130,73 @@ function ImportListingsModal({
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function DefaultShippingModal({
+  userId, initial, onClose, onSaved,
+}: {
+  userId: string;
+  initial: ShippingOption[];
+  onClose: () => void;
+  onSaved: (opts: ShippingOption[]) => void;
+}) {
+  const [opts, setOpts] = useState<ShippingOption[]>(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function save() {
+    setError('');
+    setSaving(true);
+    const supabase = createClient();
+    const cleaned = opts.filter(o => o.label.trim() && (o.cost === 0 || o.cost > 0));
+    const { error: err } = await supabase
+      .from('user_profiles')
+      .update({ default_shipping_options: cleaned })
+      .eq('user_id', userId);
+    setSaving(false);
+    if (err) { setError(err.message); return; }
+    onSaved(cleaned);
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '40px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Default Shipping Options</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+          These will be pre-filled on every <strong>new</strong> listing you create. You can still customize per-listing in the editor. Existing listings are not affected.
+        </p>
+
+        <ShippingOptionsEditor options={opts} onChange={setOpts} />
+
+        {error && (
+          <div style={{
+            background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--rust)', fontWeight: 600, marginTop: 14,
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+          <button type="button" onClick={save} disabled={saving}
+            className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+            {saving ? 'Saving…' : 'Save Defaults'}
+          </button>
+          <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+        </div>
       </div>
     </div>
   );
