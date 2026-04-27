@@ -1263,6 +1263,13 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
           }}>
             My Listings
           </Link>
+          <Link href="/purchases" style={{
+            color: 'inherit',
+            cursor: 'pointer',
+            textDecoration: 'none',
+          }}>
+            My Purchases
+          </Link>
           {isAdmin && (
             <Link href="/admin" style={{
               color: 'var(--orange)',
