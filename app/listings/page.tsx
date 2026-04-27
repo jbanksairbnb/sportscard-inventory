@@ -481,8 +481,24 @@ function ListingEditor({
   const photos = draft.photos || [];
   const canUpload = !!draft.id && photos.length < MAX_PHOTOS;
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  async f  function downloadTemplate() {
+    const lines = [
+      'Enter cards in this format - delete this row before submitting',
+      'Year,Brand,Card #,Player,Condition Type,Asking Price,Raw Grade,Grading Company,Grade,Cost',
+      '1954,Topps,1,TED WILLIAMS,Graded,850,,PSA,5,600',
+      '1955,Topps,3,MONTE IRVIN,Graded,100,,SGC,5,50',
+      '1956,Topps,10,JACKIE ROBINSON,Graded,750,,PSA,4.5,600',
+      '1970,Topps,128,HANK AARON,Raw,2500,VG,,,2000',
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sports-collective-listings-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+   const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     await onUploadPhoto(file);
@@ -827,10 +843,13 @@ function ImportListingsModal({
           All imported rows land as <strong>drafts</strong> for review.
         </div>
 
-        <div style={{ marginBottom: 18 }}>
+                <div style={{ marginBottom: 18, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => fileRef.current?.click()} disabled={parsing}
             className="btn btn-primary btn-sm">
             {parsing ? 'Parsing…' : 'Choose CSV file…'}
+          </button>
+          <button type="button" onClick={downloadTemplate} className="btn btn-ghost btn-sm">
+            ⬇ Download Template
           </button>
           <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} style={{ display: 'none' }} />
         </div>
