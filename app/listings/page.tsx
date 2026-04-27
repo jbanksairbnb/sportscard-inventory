@@ -261,7 +261,7 @@ export default function ListingsPage() {
     if ((editing.photos?.length || 0) >= MAX_PHOTOS) { alert(`Max ${MAX_PHOTOS} photos.`); return; }
     const supabase = createClient();
     const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-    const path = `listings/${userId}/${editing.id}/${Date.now()}.${ext}`;
+        const path = `${userId}/listings/${editing.id}/${Date.now()}.${ext}`;
     const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
     if (upErr) { alert('Upload failed: ' + upErr.message); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(path);
