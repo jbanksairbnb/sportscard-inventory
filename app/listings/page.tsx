@@ -655,8 +655,6 @@ function ListingsPageContent() {
           onDeletePhoto={deletePhoto}
         />
       )}
-
-      {importOpen && (
       {importOpen && (
         <ImportListingsModal
           userId={userId}
