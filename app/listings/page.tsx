@@ -9,6 +9,8 @@ import SCLogo from '@/components/SCLogo';
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
 
+type ShippingOption = { label: string; cost: number };
+
 type Listing = {
   id: string;
   user_id: string;
@@ -26,6 +28,7 @@ type Listing = {
   asking_price: number | null;
   cost: number | null;
   photos: string[];
+  shipping_options: ShippingOption[];
   status: Status;
   sold_at: string | null;
   sold_price: number | null;
@@ -42,6 +45,10 @@ const GRADE_LABELS: Record<string, string> = {
   '4.5': 'VG-EX+', '4': 'VG-EX', '3.5': 'VG+', '3': 'VG',
   '2.5': 'GOOD+', '2': 'GOOD', '1.5': 'FAIR', '1': 'POOR',
 };
+const DEFAULT_SHIPPING_OPTIONS: ShippingOption[] = [
+  { label: 'PWE (Plain White Envelope)', cost: 1.00 },
+  { label: 'Bubble Mailer with Tracking', cost: 5.00 },
+];
 function emptyDraft(userId: string): Partial<Listing> {
   return {
     user_id: userId,
@@ -58,6 +65,7 @@ function emptyDraft(userId: string): Partial<Listing> {
     asking_price: null,
     cost: null,
     photos: [],
+    shipping_options: [...DEFAULT_SHIPPING_OPTIONS],
     status: 'draft',
   };
 }
@@ -93,6 +101,58 @@ function conditionLabel(l: Listing | Partial<Listing>) {
 }
 
 const MAX_PHOTOS = 5;
+
+function ShippingOptionsEditor({
+  options, onChange,
+}: { options: ShippingOption[]; onChange: (next: ShippingOption[]) => void }) {
+  function update(idx: number, patch: Partial<ShippingOption>) {
+    onChange(options.map((o, i) => i === idx ? { ...o, ...patch } : o));
+  }
+  function remove(idx: number) {
+    onChange(options.filter((_, i) => i !== idx));
+  }
+  function add() {
+    onChange([...options, { label: '', cost: 0 }]);
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {options.length === 0 && (
+        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
+          No shipping options. Click + Add to require one.
+        </div>
+      )}
+      {options.map((opt, idx) => (
+        <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input value={opt.label} onChange={e => update(idx, { label: e.target.value })}
+            placeholder="Label (e.g. PWE)"
+            style={{
+              flex: 1, border: '1.5px solid var(--plum)', borderRadius: 6,
+              padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
+              color: 'var(--plum)', background: 'var(--cream)',
+            }} />
+          <span style={{ fontSize: 13, color: 'var(--ink-mute)' }}>$</span>
+          <input type="number" step="0.01" value={opt.cost ?? ''} onChange={e => update(idx, { cost: e.target.value ? Number(e.target.value) : 0 })}
+            placeholder="0.00"
+            style={{
+              width: 80, border: '1.5px solid var(--plum)', borderRadius: 6,
+              padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
+              color: 'var(--plum)', background: 'var(--cream)',
+            }} />
+          <button type="button" onClick={() => remove(idx)}
+            className="btn btn-sm" style={{
+              background: 'transparent', color: 'var(--ink-mute)',
+              border: '1.5px solid var(--rule)', padding: '4px 8px',
+            }}>
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={add} className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }}>
+        + Add option
+      </button>
+    </div>
+  );
+}
 
 function ListingPhotoStrip({ photos }: { photos: string[] }) {
   const [lbStart, setLbStart] = useState<number | null>(null);
@@ -746,6 +806,17 @@ function ListingEditor({
               rows={3} placeholder="Additional details — centering, surface, any flaws, sale terms…"
               style={{ ...fieldStyle, resize: 'vertical' }} />
           </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Shipping Options</div>
+            <ShippingOptionsEditor
+              options={draft.shipping_options || []}
+              onChange={(opts) => set('shipping_options', opts as Listing['shipping_options'])}
+            />
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Photos ({photos.length} / {MAX_PHOTOS})</div>
 
           <div>
             <div className="eyebrow" style={labelStyle}>Photos ({photos.length} / {MAX_PHOTOS})</div>
