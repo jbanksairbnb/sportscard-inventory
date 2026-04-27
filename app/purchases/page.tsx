@@ -86,10 +86,11 @@ export default function PurchasesPage() {
 
       setPurchases((rows || []).map(r => {
         const profile = profileMap.get(r.seller_id);
+        const email = profile?.email || '';
         return {
           ...r,
-          seller_name: profile?.display_name || profile?.handle || '—',
-          seller_email: profile?.email || '',
+          seller_name: profile?.display_name || profile?.handle || (email ? email.split('@')[0] : '—'),
+          seller_email: email,
         };
       }) as Purchase[]);
       setLoading(false);
@@ -214,9 +215,13 @@ export default function PurchasesPage() {
                       </span>
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
-                      Ordered {fmtDate(p.created_at)} · Seller: {p.seller_name}
-                      {p.seller_email && (
-                        <> · <a href={`mailto:${p.seller_email}`} style={{ color: 'var(--orange)' }}>{p.seller_email}</a></>
+                      Ordered {fmtDate(p.created_at)} · Seller:{' '}
+                      {p.seller_email ? (
+                        <a href={`mailto:${p.seller_email}?subject=${encodeURIComponent(`Sports Collective purchase: ${p.listing?.title || 'order'}`)}`} style={{ color: 'var(--orange)' }}>
+                          {p.seller_name}
+                        </a>
+                      ) : (
+                        p.seller_name
                       )}
                     </div>
                     <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
