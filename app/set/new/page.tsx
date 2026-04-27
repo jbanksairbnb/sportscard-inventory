@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
 const EXPECTED_HEADERS = [
-  'Card #', 'Description', 'Owned', 'Raw Grade', 'Graded',
+  'Card #', 'Player', 'Owned', 'Raw Grade', 'Graded',
   'Grading Company', 'Grade', 'Cost', 'Value', 'Target Price',
   'Sale Price', 'Date Purchased', 'Purchased From', 'Upload Image(s)',
 ];
@@ -127,7 +127,7 @@ export default function NewSetPage() {
             EXPECTED_HEADERS.forEach((h) => { norm[h] = ''; });
             const isOwned = String(r['Cert #'] ?? '').trim() !== '';
             norm['Card #'] = String(r['Card #'] ?? '').trim();
-            norm['Description'] = String(r['Item'] ?? '').trim();
+            norm['Player'] = String(r['Item'] ?? '').trim();
             norm['Owned'] = isOwned ? 'Yes' : 'No';
             if (isOwned) {
               norm['Grade'] = normalizeNumericGrade(r['Grade']);
