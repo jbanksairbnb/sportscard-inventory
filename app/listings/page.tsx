@@ -172,7 +172,9 @@ function ListingsPageContent() {
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
-  const [importOpen, setImportOpen] = useState(false);
+   const [importOpen, setImportOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkWorking, setBulkWorking] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -350,6 +352,56 @@ function ListingsPageContent() {
     setListings(prev => prev.filter(x => x.id !== l.id));
   }
 
+  function toggleSelected(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAllVisible() {
+    setSelectedIds(new Set(filtered.map(l => l.id)));
+  }
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+  async function bulkSetStatus(status: 'active' | 'draft') {
+    if (selectedIds.size === 0) return;
+    setBulkWorking(true);
+    const supabase = createClient();
+    const ids = Array.from(selectedIds);
+    const { error } = await supabase.from('listings').update({ status }).in('id', ids);
+    setBulkWorking(false);
+    if (error) { alert('Bulk update failed: ' + error.message); return; }
+    setListings(prev => prev.map(l => selectedIds.has(l.id) ? { ...l, status } : l));
+    setSelectedIds(new Set());
+  }
+
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    const n = selectedIds.size;
+    if (!confirm(`Delete ${n} listing${n === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    setBulkWorking(true);
+    const supabase = createClient();
+    const ids = Array.from(selectedIds);
+    const toDelete = listings.filter(l => selectedIds.has(l.id));
+    const paths: string[] = [];
+    for (const l of toDelete) {
+      for (const url of l.photos || []) {
+        const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
+        if (m?.[1]) paths.push(decodeURIComponent(m[1]));
+      }
+    }
+    if (paths.length > 0) await supabase.storage.from('card-images').remove(paths);
+    const { error } = await supabase.from('listings').delete().in('id', ids);
+    setBulkWorking(false);
+    if (error) { alert('Bulk delete failed: ' + error.message); return; }
+    setListings(prev => prev.filter(l => !selectedIds.has(l.id)));
+    setSelectedIds(new Set());
+  }
+
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -398,6 +450,41 @@ function ListingsPageContent() {
           ))}
         </div>
 
+        {selectedIds.size > 0 && (
+          <div style={{
+            position: 'sticky', top: 64, zIndex: 40,
+            background: 'var(--plum)', color: 'var(--mustard)',
+            padding: '10px 18px', marginBottom: 14,
+            borderRadius: 12, border: '2px solid var(--plum)',
+            boxShadow: '0 4px 0 var(--plum-deep, rgba(0,0,0,0.2))',
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span className="eyebrow" style={{ color: 'var(--mustard)', fontSize: 11 }}>
+              {selectedIds.size} selected
+            </span>
+            <button type="button" onClick={selectAllVisible}
+              className="btn btn-sm" style={{ background: 'transparent', color: 'var(--mustard)', border: '1.5px solid var(--mustard)' }}>
+              Select all visible ({filtered.length})
+            </button>
+            <button type="button" onClick={() => bulkSetStatus('active')} disabled={bulkWorking}
+              className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
+              ✓ Activate
+            </button>
+            <button type="button" onClick={() => bulkSetStatus('draft')} disabled={bulkWorking}
+              className="btn btn-sm" style={{ background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--mustard)' }}>
+              ⏸ Pause
+            </button>
+            <button type="button" onClick={bulkDelete} disabled={bulkWorking}
+              className="btn btn-sm" style={{ background: 'var(--rust)', color: 'var(--cream)', border: '1.5px solid var(--rust)' }}>
+              🗑 Delete
+            </button>
+            <button type="button" onClick={clearSelection}
+              className="btn btn-sm" style={{ background: 'transparent', color: 'var(--mustard)', border: '1.5px solid var(--mustard)', marginLeft: 'auto' }}>
+              Clear
+            </button>
+          </div>
+        )}
+
         {filtered.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No {filter === 'all' ? '' : filter} listings</div>
@@ -412,6 +499,13 @@ function ListingsPageContent() {
               return (
                 <div key={l.id} className="panel-bordered" style={{ padding: '18px 22px' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(l.id)}
+                      onChange={() => toggleSelected(l.id)}
+                      style={{ width: 18, height: 18, marginTop: 4, accentColor: 'var(--plum)', cursor: 'pointer', flexShrink: 0 }}
+                      aria-label="Select listing"
+                    />
                     {l.photos && l.photos.length > 0 && (
                       <ListingPhotoStrip photos={l.photos} />
                     )}
