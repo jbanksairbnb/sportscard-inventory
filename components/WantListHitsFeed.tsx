@@ -269,8 +269,6 @@ export default function WantListHitsFeed() {
           }
         }
       }
-      console.log('[WantListHits] wants:', wants.length, 'candidates:', candidates.length, 'matched:', matched.length);
-
       const sellerIds = Array.from(new Set(matched.map(m => m.listing.user_id)));
       const { data: profiles } = sellerIds.length > 0
         ? await supabase.from('user_profiles').select('user_id, display_name, handle, email').in('user_id', sellerIds)
