@@ -223,7 +223,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
     ? name.split(' ').map((s) => s[0]).slice(0, 2).join('')
     : 'YN';
 
-    return (
+  return (
     <section>
       <div ref={coverContainerRef} className="halftone"
         onPointerDown={onCoverPointerDown}
@@ -303,7 +303,6 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
           </div>
         )}
       </div>
-      </div>
 
       <div style={{
         maxWidth: 1280, margin: '0 auto', padding: '0 28px',
@@ -348,33 +347,6 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
               <button className="btn btn-primary"><PlusIcon size={13} /> Follow</button>
             </div>
           </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-type StatItem = { label: string; value: string; sub: string; onClick?: () => void };
-
-function StatsStrip({ stats }: { stats: StatItem[] }) {
-  return (
-    <section style={{ maxWidth: 1280, margin: '0 auto', padding: '0 28px', marginBottom: 28 }}>
-      <div className="panel-bordered" style={{ padding: '24px 28px', position: 'relative' }}>
-        <div style={{
-          position: 'absolute', top: -13, left: 24, background: 'var(--orange)', color: 'var(--cream)',
-          padding: '3px 14px', border: '2px solid var(--plum)', borderRadius: 100,
-          fontFamily: 'var(--font-body)', fontSize: 10.5, fontWeight: 700,
-          letterSpacing: '0.18em', textTransform: 'uppercase', boxShadow: '0 2px 0 var(--plum)',
-        }}>★ The Record ★</div>
-        <div style={{ display: 'flex', alignItems: 'stretch' }}>
-          {stats.flatMap((s, i) => [
-            i > 0 ? <div key={`div-${i}`} style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} /> : null,
-            <div key={s.label} style={{ flex: 1, cursor: s.onClick ? 'pointer' : undefined }} onClick={s.onClick}>
-              <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6 }}>{s.label}</div>
-              <div className="stat-num" style={{ fontSize: 38, color: s.onClick ? 'var(--orange)' : undefined }}>{s.value}</div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-mute)', marginTop: 3, fontWeight: 600 }}>{s.sub}</div>
-            </div>,
-          ])}
         </div>
       </div>
     </section>
