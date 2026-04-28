@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import WantListHitsFeed from '@/components/WantListHitsFeed';
 
 function SearchIcon({ size = 16 }: { size?: number }) {
   return (
@@ -601,7 +602,9 @@ function FeedItem({ item }: { item: FeedEntry }) {
 const FEED_FILTERS = ['All activity', 'Want-list hits', 'Comments', 'Following', 'Auctions'];
 
 function FeedSection() {
-  const [activeFilter, setActiveFilter] = useState('All activity');
+  const [activeFilter, setActiveFilter] = useState('Want-list hits');
+  const showWantListHits = activeFilter === 'Want-list hits' || activeFilter === 'All activity';
+  const mockNonWantList = MOCK_FEED.filter(i => i.kind !== 'wantlist-hit');
   return (
     <section>
       <div className="section-head">
@@ -619,12 +622,17 @@ function FeedSection() {
         ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {MOCK_FEED.map((item) => <FeedItem key={item.id} item={item} />)}
+        {showWantListHits && <WantListHitsFeed />}
+        {activeFilter === 'All activity' && mockNonWantList.map((item) => <FeedItem key={item.id} item={item} />)}
+        {activeFilter !== 'All activity' && activeFilter !== 'Want-list hits' && (
+          <div className="panel" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+            <strong style={{ color: 'var(--plum)' }}>{activeFilter}</strong> is coming soon.
+          </div>
+        )}
       </div>
     </section>
   );
 }
-
 const FAVORITE_CARDS = [
   { id: 'f1', year: 1955, player: 'Sandy Koufax',     team: 'BKN', num: '#123',   grade: 'PSA 5',   colors: ['#c2342a', '#f4d06f'] },
   { id: 'f2', year: 1972, player: 'Roberto Clemente', team: 'PIT', num: '#309',   grade: 'SGC 7',   colors: ['#1b2a49', '#d9b668'] },
