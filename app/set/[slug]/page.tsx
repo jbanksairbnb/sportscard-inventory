@@ -388,6 +388,8 @@ export default function SetEditorPage() {
   const [isShared, setIsShared] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [targetEditIndex, setTargetEditIndex] = useState<number | null>(null);
+  const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
+  const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -397,7 +399,7 @@ export default function SetEditorPage() {
       if (!user) { router.push("/login"); return; }
       setUserId(user.id);
       setUserEmail(user.email || '');
-      if (paramSlug !== "new") {
+           if (paramSlug !== "new") {
         const { data } = await supabase.from("sets").select("*").eq("slug", paramSlug).single();
         if (data) {
           setSlug(paramSlug);
@@ -408,6 +410,15 @@ export default function SetEditorPage() {
           setRows(migrateRows(data.rows ?? []));
           setShareToken(data.share_token ?? null);
           setIsShared(!!data.share_token);
+          const dt = data.default_target as { type?: string; low?: string; high?: string; companies?: string } | null;
+          if (dt) {
+            setDefaultTarget({
+              type: dt.type || '',
+              low: dt.low || '',
+              high: dt.high || '',
+              companies: dt.companies || '',
+            });
+          }
         }
       }
     }
@@ -449,6 +460,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   setRows(nextRows);
   scheduleAutoSave(nextRows);
 }
+   async function saveDefaultTarget(patch: { type: string; low: string; high: string; companies: string }) {
+    if (!userId || !slug || slug === 'new') return;
+    const supabase = createClient();
+    await supabase.from('sets').update({ default_target: patch }).eq('user_id', userId).eq('slug', slug);
+    setDefaultTarget(patch);
+  }
+
   function handleListForSale(row: Record<string, any>) {
     const params = new URLSearchParams({ prefill: '1' });
     if (year) params.set('year', String(year));
@@ -614,6 +632,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             {saveStatus && (
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>{saveStatus}</span>
             )}
+                        <button type="button" onClick={() => setDefaultTargetOpen(true)}
+              disabled={!datasetTitle || !rows.length}
+              className="btn btn-sm btn-ghost">
+              ⚙ Default Target
+            </button>
             <button type="button"
               onClick={handleToggleShare}
               disabled={!datasetTitle || !rows.length}
@@ -721,23 +744,38 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Target Price"])} onChange={(e) => onChangeCell(origIndex, "Target Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Target Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
                       </td>
-                                            <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         {String(row["Owned"] || '') === 'Yes' ? (
                           <span style={{ color: 'var(--ink-mute)', fontSize: 11, fontStyle: 'italic' }}>—</span>
                         ) : (() => {
-                          const summary = summarizeTarget(row);
+                          const explicit = summarizeTarget(row);
+                          const hasDefault = !!(defaultTarget.type || defaultTarget.low || defaultTarget.high);
+                          const inherited = !explicit.isSet && hasDefault;
+                          let text: string;
+                          if (explicit.isSet) text = explicit.text;
+                          else if (inherited) {
+                            const defSummary = summarizeTarget({
+                              'Target Type': defaultTarget.type,
+                              'Target Condition - Low': defaultTarget.low,
+                              'Target Condition - High': defaultTarget.high,
+                              'Target Grading Companies': defaultTarget.companies,
+                            });
+                            text = `↳ ${defSummary.text}`;
+                          } else text = '— set target —';
                           return (
                             <button type="button" onClick={() => setTargetEditIndex(origIndex)}
                               style={{
-                                background: summary.isSet ? 'var(--paper)' : 'transparent',
-                                color: summary.isSet ? 'var(--plum)' : 'var(--orange)',
-                                border: `1.5px ${summary.isSet ? 'solid' : 'dashed'} ${summary.isSet ? 'var(--plum)' : 'var(--orange)'}`,
-                                borderRadius: 6, padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                                background: explicit.isSet ? 'var(--paper)' : 'transparent',
+                                color: inherited ? 'var(--ink-mute)' : (explicit.isSet ? 'var(--plum)' : 'var(--orange)'),
+                                border: `1.5px ${explicit.isSet ? 'solid var(--plum)' : 'dashed ' + (inherited ? 'var(--rule)' : 'var(--orange)')}`,
+                                borderRadius: 6, padding: '5px 10px', fontSize: 11,
+                                fontWeight: inherited ? 500 : 600,
+                                fontStyle: inherited ? 'italic' : 'normal',
                                 fontFamily: 'var(--font-body)', cursor: 'pointer',
                                 width: '100%', textAlign: 'left', whiteSpace: 'nowrap',
                                 overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 240,
                               }}>
-                              {summary.text}
+                              {text}
                             </button>
                           );
                         })()}
@@ -789,7 +827,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
         )}
       </div>
 
-            {targetEditIndex !== null && rows[targetEditIndex] && (
+      {targetEditIndex !== null && rows[targetEditIndex] && (
         <TargetEditorModal
           row={rows[targetEditIndex]}
           cardLabel={`${year ? year + ' ' : ''}${brand ? brand + ' ' : ''}#${rows[targetEditIndex]['Card #'] || ''} ${rows[targetEditIndex]['Player'] || rows[targetEditIndex]['Description'] || ''}`.trim()}
@@ -808,6 +846,23 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             setRows(copy);
             scheduleAutoSave(copy);
             setTargetEditIndex(null);
+          }}
+        />
+      )}
+
+      {defaultTargetOpen && (
+        <TargetEditorModal
+          row={{
+            'Target Type': defaultTarget.type,
+            'Target Condition - Low': defaultTarget.low,
+            'Target Condition - High': defaultTarget.high,
+            'Target Grading Companies': defaultTarget.companies,
+          }}
+          cardLabel={`Default for ${datasetTitle || 'this set'}`}
+          onClose={() => setDefaultTargetOpen(false)}
+          onSave={(patch) => {
+            saveDefaultTarget(patch);
+            setDefaultTargetOpen(false);
           }}
         />
       )}
