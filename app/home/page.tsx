@@ -87,10 +87,10 @@ type SetRow = {
 
 function LogoShowcase() {
   return (
-    <section style={{ maxWidth: 1280, margin: '28px auto 0', padding: '0 28px' }}>
+    <section style={{ margin: '28px 0 0', padding: 0 }}>
       <div style={{
         position: 'relative', background: 'var(--cream)', border: '2px solid var(--plum)',
-        borderRadius: 16, boxShadow: '0 4px 0 var(--plum)', padding: '24px 28px',
+        borderRadius: 0, boxShadow: '0 4px 0 var(--plum)', padding: '24px 28px',
         display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 28, alignItems: 'center', overflow: 'hidden',
       }}>
         <svg viewBox="0 0 800 200" preserveAspectRatio="xMidYMid slice"
@@ -991,8 +991,8 @@ const MOCK_ACTIVITY = [
   { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
 ];
 
-type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; };
-const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '' };
+type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; };
+const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false };
 
 function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
   const [editing, setEditing] = useState(false);
@@ -1148,64 +1148,11 @@ function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: 
           </div>
         )}
       </div>
-      <div className="panel" style={{ padding: 18 }}>
-        <div className="section-head" style={{ marginBottom: 12 }}>
-          <span className="eyebrow">★ Activity ★</span>
-        </div>
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 11 }}>
-          {MOCK_ACTIVITY.map((a) => (
-            <li key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: a.dot, marginTop: 6, flexShrink: 0, outline: '1.5px solid var(--plum)' }} />
-              <span style={{ flex: 1, color: 'var(--ink-soft)' }}>{a.text}</span>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600 }}>{a.time}</span>
-            </li>
-          ))}
-        </ul>
-        <button className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}>
-          View all
-        </button>
-      </div>
-
-      <div style={{
-        padding: 22,
-        background: 'var(--plum)', color: 'var(--cream)',
-        borderRadius: 16, position: 'relative',
-        border: '2px solid var(--plum)',
-        boxShadow: '0 4px 0 var(--plum-deep)',
-        overflow: 'hidden',
-      }}>
-        <svg viewBox="0 0 280 200" preserveAspectRatio="none"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.3 }}>
-          <g transform="translate(140 200)">
-            {Array.from({ length: 10 }).map((_, i) => {
-              const a = -Math.PI + (i / 9) * Math.PI;
-              return <polygon key={i} points="-15,0 15,0 0,-300" fill="#e5b53d"
-                transform={`rotate(${(a * 180) / Math.PI})`} />;
-            })}
-          </g>
-        </svg>
-        <div style={{ position: 'relative' }}>
-          <div className="eyebrow" style={{ color: 'var(--mustard)', marginBottom: 10 }}>★ Open for Trade ★</div>
-          <div className="display" style={{ fontSize: 30, color: 'var(--orange)', marginBottom: 8, textShadow: '2px 2px 0 var(--mustard)' }}>
-            47 doubles
-          </div>
-          <p style={{ margin: '0 0 16px', fontSize: 13, lineHeight: 1.5, color: 'rgba(245,233,208,0.85)' }}>
-            Chasing '53 hi-numbers and any Koufax.
-          </p>
-          <button className="btn" style={{
-            background: 'var(--mustard)', color: 'var(--plum)',
-            width: '100%', justifyContent: 'center', fontWeight: 700,
-            border: '2px solid var(--cream)', boxShadow: '0 2px 0 var(--cream)',
-          }}>
-            See trade binder →
-          </button>
-        </div>
-      </div>
     </aside>
   );
 }
 
-const PROFILE_TABS = ['Home', 'Collection', 'Want List', 'Trades', 'Activity'];
+const PROFILE_TABS = ['Home', 'Collection', 'Want List', 'Activity'];
 
 function SubNav({ active, setActive }: { active: string; setActive: (t: string) => void }) {
   return (
@@ -1226,7 +1173,7 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
   );
 }
 
-const NAV_LINKS = ['My Shelf', 'Feed', 'Discover', 'Sets', 'Trades'];
+const NAV_LINKS = ['My Shelf', 'Discover', 'Sets'];
 
 function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void }) {
   return (
@@ -1331,7 +1278,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
       const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, value_private')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1339,6 +1286,7 @@ export default function HomePage() {
           bio: profileData.bio || '', city: profileData.city || '',
           team: profileData.team || '', favorite_players: profileData.favorite_players || '',
           chasing: profileData.chasing || '',
+          value_private: !!profileData.value_private,
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
@@ -1384,7 +1332,21 @@ export default function HomePage() {
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
         { label: 'Sets tracked', value: sets.length.toString() || '—', sub: 'in progress' },
         { label: 'Want list', value: sets.reduce((n, s) => n + Math.max(0, (s.row_count || 0) - (s.owned_count || 0)), 0).toLocaleString() || '—', sub: 'chasing', onClick: () => setShowWantList(true) },
-        { label: 'Est. value', value: '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k', sub: 'book price' },
+        {
+          label: 'Est. value',
+          value: profile.value_private
+            ? '🔒 Private'
+            : '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k',
+          sub: profile.value_private ? 'click to reveal' : 'book price · click to hide',
+          onClick: async () => {
+            const next = !profile.value_private;
+            setProfile({ ...profile, value_private: next });
+            if (userId) {
+              const supabase = createClient();
+              await supabase.from('user_profiles').upsert({ user_id: userId, value_private: next });
+            }
+          },
+        },
       ]} />
       {showWantList && <WantListModal onClose={() => setShowWantList(false)} />}
       <div className="home-grid">
