@@ -16,6 +16,8 @@ type WantRow = {
   player: string;
   targetConditionLow: string;
   targetConditionHigh: string;
+  targetType: string; // "Raw" | "Graded" | ""
+  targetGradingCompanies: string[]; // empty array = any company
 };
 
 type Listing = {
@@ -74,33 +76,49 @@ function classifyTarget(target: string): 'raw' | 'graded' | 'blank' {
 }
 
 function matchesCondition(listing: Listing, want: WantRow): boolean {
-  const lowType = classifyTarget(want.targetConditionLow);
-  const highType = classifyTarget(want.targetConditionHigh);
+  let targetType: 'raw' | 'graded' | 'blank';
+  if (want.targetType === 'Raw') targetType = 'raw';
+  else if (want.targetType === 'Graded') targetType = 'graded';
+  else {
+    const lowT = classifyTarget(want.targetConditionLow);
+    const highT = classifyTarget(want.targetConditionHigh);
+    if (lowT === 'blank' && highT === 'blank') return true;
+    targetType = lowT !== 'blank' ? lowT : highT;
+  }
 
-  if (lowType === 'blank' && highType === 'blank') return true;
-
-  const targetType = lowType !== 'blank' ? lowType : highType;
+  const lowBlank = !want.targetConditionLow.trim();
+  const highBlank = !want.targetConditionHigh.trim();
+  if (lowBlank && highBlank && want.targetType) {
+    if (targetType === 'raw') return listing.condition_type === 'raw';
+    if (targetType === 'graded') {
+      if (listing.condition_type !== 'graded') return false;
+      if (want.targetGradingCompanies.length > 0 && !want.targetGradingCompanies.includes(listing.grading_company || '')) return false;
+      return true;
+    }
+  }
 
   if (targetType === 'raw') {
-    if (listing.condition_type !== 'raw' || !listing.raw_grade) return false;
-    const listingIdx = RAW_GRADES.indexOf(listing.raw_grade);
-    if (listingIdx === -1) return false;
-    const bestIdx = highType === 'blank' ? 0 : RAW_GRADES.indexOf(want.targetConditionHigh);
-    const worstIdx = lowType === 'blank' ? RAW_GRADES.length - 1 : RAW_GRADES.indexOf(want.targetConditionLow);
-    if (bestIdx === -1 || worstIdx === -1) return false;
-    return listingIdx >= bestIdx && listingIdx <= worstIdx;
+    if (listing.condition_type !== 'raw') return false;
+    const listingRank = rawRank(listing.raw_grade);
+    if (listingRank === null) return false;
+    const lowRank = lowBlank ? 0 : rawRank(want.targetConditionLow);
+    const highRank = highBlank ? 999 : rawRank(want.targetConditionHigh);
+    if (lowRank === null || highRank === null) return false;
+    return listingRank >= lowRank && listingRank <= highRank;
   }
 
   if (targetType === 'graded') {
     if (listing.condition_type !== 'graded' || !listing.grade) return false;
+    if (want.targetGradingCompanies.length > 0 && !want.targetGradingCompanies.includes(listing.grading_company || '')) return false;
     const grade = parseFloat(listing.grade);
     if (Number.isNaN(grade)) return false;
-    const low = lowType === 'blank' ? 1 : parseFloat(want.targetConditionLow);
-    const high = highType === 'blank' ? 10 : parseFloat(want.targetConditionHigh);
-    if (Number.isNaN(low) || Number.isNaN(high)) return false;
+    const low = lowBlank ? 1 : gradedNumeric(want.targetConditionLow);
+    const high = highBlank ? 10 : gradedNumeric(want.targetConditionHigh);
+    if (low === null || high === null) return false;
     return grade >= low && grade <= high;
   }
   return false;
+}
 }
 
 function matchesListing(listing: Listing, want: WantRow): boolean {
@@ -134,6 +152,11 @@ export default function WantListHitsFeed() {
           const player = String(row['Player'] || row['Description'] || '').trim();
           const cardNumber = String(row['Card #'] || '').trim();
           if (!player || !cardNumber) continue;
+                    const targetType = String(row['Target Type'] || '').trim();
+          const companiesRaw = String(row['Target Grading Companies'] || '').trim();
+          const targetGradingCompanies = companiesRaw
+            ? companiesRaw.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
           wants.push({
             setSlug: s.slug,
             setTitle: s.title || `${s.year} ${s.brand}`,
@@ -143,6 +166,8 @@ export default function WantListHitsFeed() {
             player,
             targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || '').trim(),
             targetConditionHigh: String(row['Target Condition - High'] || '').trim(),
+            targetType,
+            targetGradingCompanies,
           });
         }
       }
