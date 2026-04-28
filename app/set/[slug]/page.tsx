@@ -367,10 +367,6 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
     </div>
   );
 }
-const CELL_SELECT: React.CSSProperties = {
-  ...CELL_INPUT, cursor: 'pointer',
-};
-
 /* =====================  Component  ===================== */
 export default function SetEditorPage() {
   const router = useRouter();
