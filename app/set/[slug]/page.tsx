@@ -367,6 +367,91 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
     </div>
   );
 }
+
+function SetInfoModal({ initial, onClose, onSave }: {
+  initial: { title: string; year: string; brand: string; description: string };
+  onClose: () => void;
+  onSave: (patch: { title: string; year: string; brand: string; description: string }) => void;
+}) {
+  const [title, setTitle] = useState(initial.title);
+  const [year, setYear] = useState(initial.year);
+  const [brand, setBrand] = useState(initial.brand);
+  const [description, setDescription] = useState(initial.description);
+  const [error, setError] = useState('');
+
+  function handleSave() {
+    if (!title.trim()) { setError('Title is required.'); return; }
+    onSave({ title: title.trim(), year: year.trim(), brand: brand.trim(), description: description.trim() });
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 6, padding: '7px 10px',
+    fontFamily: 'var(--font-body)', fontSize: 13.5, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '40px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 520, padding: 26, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Edit Set Info</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <div className="eyebrow" style={labelStyle}>Title *</div>
+            <input value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. 1956 Topps — Base Set" style={fieldStyle} autoFocus />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 12 }}>
+            <div>
+              <div className="eyebrow" style={labelStyle}>Year</div>
+              <input type="number" value={year} onChange={(e) => setYear(e.target.value)}
+                placeholder="1956" style={fieldStyle} />
+            </div>
+            <div>
+              <div className="eyebrow" style={labelStyle}>Brand</div>
+              <input value={brand} onChange={(e) => setBrand(e.target.value)}
+                placeholder="Topps" style={fieldStyle} />
+            </div>
+          </div>
+          <div>
+            <div className="eyebrow" style={labelStyle}>Description</div>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+              rows={3} placeholder="Optional notes about the set"
+              style={{ ...fieldStyle, resize: 'vertical' }} />
+          </div>
+
+          {error && (
+            <div style={{
+              background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+              borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--rust)', fontWeight: 600,
+            }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+            <button type="button" onClick={handleSave} className="btn btn-primary"
+              style={{ flex: 1, justifyContent: 'center' }}>
+              Save Changes
+            </button>
+            <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* =====================  Component  ===================== */
 export default function SetEditorPage() {
   const router = useRouter();
@@ -390,6 +475,7 @@ export default function SetEditorPage() {
   const [targetEditIndex, setTargetEditIndex] = useState<number | null>(null);
   const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
+  const [infoEditOpen, setInfoEditOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -656,7 +742,12 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
         {/* Controls */}
         {datasetTitle && (
           <div className="panel-bordered" style={{ padding: '14px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-            <div className="display" style={{ fontSize: 16, color: 'var(--plum)' }}>{datasetTitle}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{datasetTitle}</div>
+              <button type="button" onClick={() => setInfoEditOpen(true)} className="btn btn-ghost btn-sm" title="Edit set info">
+                ✎ Edit info
+              </button>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700 }}>{rows.length} rows</span>
               <button type="button" onClick={() => setShowNeededOnly(s => !s)}
@@ -863,9 +954,43 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           onSave={(patch) => {
             saveDefaultTarget(patch);
             setDefaultTargetOpen(false);
+             }}
+        />
+      )}
+
+      {infoEditOpen && (
+        <SetInfoModal
+          initial={{ title: datasetTitle, year, brand, description: desc }}
+          onClose={() => setInfoEditOpen(false)}
+          onSave={async (patch) => {
+            setDatasetTitle(patch.title);
+            setYear(patch.year);
+            setBrand(patch.brand);
+            setDesc(patch.description);
+            setInfoEditOpen(false);
+            if (userId && slug && slug !== 'new') {
+              const supabase = createClient();
+              const { ownedCount, ownedPct } = computeOwnedStats(rows);
+              const { totalCost, totalValue, gainLoss } = computeFinancials(rows);
+              await supabase.from('sets').upsert({
+                user_id: userId, slug,
+                title: patch.title,
+                year: Number(patch.year) || null,
+                brand: patch.brand,
+                description: patch.description,
+                owner_email: userEmail,
+                rows, row_count: rows.length,
+                owned_count: ownedCount, owned_pct: ownedPct,
+                total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss,
+                updated_at: Date.now(),
+              }, { onConflict: 'user_id,slug' });
+              setSaveStatus(`Saved at ${new Date().toLocaleTimeString()}`);
+            }
           }}
         />
       )}
+
+      {/* Footer */}
 
       {/* Footer */}
       <footer style={{
