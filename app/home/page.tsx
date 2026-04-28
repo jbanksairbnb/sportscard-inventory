@@ -171,8 +171,9 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
     setAdjustingCover(false);
   }
 
-  function onCoverPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+   function onCoverPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (!adjustingCover) return;
+    if ((e.target as HTMLElement).closest('button')) return;
     e.preventDefault();
     const target = e.currentTarget;
     target.setPointerCapture(e.pointerId);
