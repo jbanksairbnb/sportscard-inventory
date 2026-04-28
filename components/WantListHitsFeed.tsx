@@ -119,8 +119,6 @@ function matchesCondition(listing: Listing, want: WantRow): boolean {
   }
   return false;
 }
-}
-
 function matchesListing(listing: Listing, want: WantRow): boolean {
   if (listing.year !== want.year) return false;
   if ((listing.brand || '').trim().toLowerCase() !== want.brand.trim().toLowerCase()) return false;
