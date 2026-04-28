@@ -7,6 +7,38 @@ import { createClient } from '@/lib/supabase/client';
 const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
 const GRADING_COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
 
+const RAW_GRADE_RANKS: Record<string, number> = {
+  'P': 0,
+  'G': 1,
+  'VG': 2,
+  'VG-EX': 3,
+  'EX': 4,
+  'EX+': 5,
+  'EXMT': 6, 'EX-MT': 6,
+  'NM': 7,
+  'NM+': 8,
+  'NM-MT': 9,
+  'Mint': 10, 'MINT': 10,
+  'Gem Mint': 11, 'GEM MINT': 11,
+};
+
+function rawRank(label: string | null | undefined): number | null {
+  if (!label) return null;
+  const trimmed = label.trim();
+  if (trimmed in RAW_GRADE_RANKS) return RAW_GRADE_RANKS[trimmed];
+  const upper = trimmed.toUpperCase();
+  for (const k of Object.keys(RAW_GRADE_RANKS)) {
+    if (k.toUpperCase() === upper) return RAW_GRADE_RANKS[k];
+  }
+  return null;
+}
+
+function gradedNumeric(label: string | null | undefined): number | null {
+  if (!label) return null;
+  const m = label.match(/(\d+(\.\d+)?)/);
+  return m ? parseFloat(m[1]) : null;
+}
+
 type WantRow = {
   setSlug: string;
   setTitle: string;
