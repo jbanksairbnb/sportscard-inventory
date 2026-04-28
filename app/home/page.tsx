@@ -1063,7 +1063,7 @@ function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: 
             ] as { key: keyof CollectorProfile; label: string }[]).map(({ key, label }) => (
               <div key={key}>
                 <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>{label}</div>
-                <input value={draft[key]} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} style={fieldStyle} />
+                <input value={draft[key] as string} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} style={fieldStyle} />
               </div>
             ))}
             <div>
