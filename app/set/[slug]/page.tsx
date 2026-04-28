@@ -10,7 +10,7 @@ import SCLogo from "@/components/SCLogo";
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
   "Card #", "Description", "Owned", "Raw Grade", "Graded",
-    "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Condition - Low", "Target Condition - High",
+    "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Type", "Target Condition - Low", "Target Condition - High", "Target Grading Companies",
   "Sale Price", "Date Purchased", "Purchased From", "Upload Image(s)",
 ];
 
@@ -18,8 +18,11 @@ const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i)
 const BRANDS = ["Topps", "Bowman", "Play Ball"];
 const YES_NO = ["Yes", "No"] as const;
 const COMPANIES = ["", "PSA", "SGC", "BGS", "CGC", "TAG"] as const;
+const GRADING_COMPANIES_LIST = ["PSA", "SGC", "BGS", "CGC", "TAG"] as const;
 const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
+const RAW_TARGET_GRADES = ["Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
 const GRADES_NUMERIC = ["", ...Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""))];
+const TARGET_GRADES_NUMERIC = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""));
 
 type SortKey = typeof EXPECTED_HEADERS[number];
 type SortDir = 'asc' | 'desc';
@@ -28,8 +31,6 @@ const DEFAULT_DIR: Partial<Record<SortKey, SortDir>> = {
   "Grade": "desc", "Cost": "desc", "Value": "desc", "Target Price": "desc",
 };
 const CURRENCY_FIELDS = ["Cost", "Value", "Target Price", "Sale Price"] as const;
-const TARGET_CONDITIONS_RAW = ["G", "VG", "VG-EX", "EX", "EX+", "EX-MT", "NM", "NM+", "NM-MT", "MINT"] as const;
-const TARGET_CONDITIONS_GRADED = ["PSA/SGC 3", "PSA/SGC 4", "PSA/SGC 5", "PSA/SGC 6", "PSA/SGC 7", "PSA/SGC 8", "PSA/SGC 9", "PSA/SGC 10"] as const;
 
 /* =====================  Helpers  ===================== */
 const v = (x: any) => (x === undefined || x === null ? "" : String(x));
@@ -206,6 +207,170 @@ const CELL_SELECT: React.CSSProperties = {
   ...CELL_INPUT, cursor: 'pointer',
 };
 
+/* =====================  Target Editor  ===================== */
+function summarizeTarget(row: Record<string, any>): { text: string; isSet: boolean } {
+  const type = String(row['Target Type'] || '').trim();
+  const low = String(row['Target Condition - Low'] || '').trim();
+  const high = String(row['Target Condition - High'] || '').trim();
+  const companies = String(row['Target Grading Companies'] || '').trim();
+  if (!type && !low && !high) return { text: '— set target —', isSet: false };
+  const range = low && high ? `${low}–${high}` : (low || high || 'any');
+  if (type === 'Raw') return { text: `Raw · ${range}`, isSet: true };
+  if (type === 'Graded') {
+    const companyLabel = companies ? companies.replace(/,/g, ', ') : 'any company';
+    return { text: `Graded · ${companyLabel} · ${range}`, isSet: true };
+  }
+  return { text: `${range}`, isSet: true };
+}
+
+function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
+  row: Record<string, any>;
+  cardLabel: string;
+  onClose: () => void;
+  onSave: (patch: { type: string; low: string; high: string; companies: string }) => void;
+}) {
+  const initialType = (() => {
+    const t = String(row['Target Type'] || '').trim();
+    if (t === 'Raw' || t === 'Graded') return t;
+    const low = String(row['Target Condition - Low'] || '').trim();
+    if ((RAW_TARGET_GRADES as readonly string[]).includes(low)) return 'Raw';
+    if (/^\d/.test(low) || low.startsWith('PSA')) return 'Graded';
+    return 'Graded';
+  })();
+  const [type, setType] = useState<'Raw' | 'Graded'>(initialType as 'Raw' | 'Graded');
+  const stripCompanyPrefix = (s: string) => s.replace(/^PSA\/SGC\s+/i, '').trim();
+  const [low, setLow] = useState(stripCompanyPrefix(String(row['Target Condition - Low'] || '')));
+  const [high, setHigh] = useState(stripCompanyPrefix(String(row['Target Condition - High'] || '')));
+  const initialCompanies = String(row['Target Grading Companies'] || '').split(',').map(s => s.trim()).filter(Boolean);
+  const [companies, setCompanies] = useState<string[]>(initialCompanies);
+
+  function toggleCompany(c: string) {
+    setCompanies(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
+  }
+
+  function changeType(t: 'Raw' | 'Graded') {
+    setType(t);
+    setLow('');
+    setHigh('');
+    if (t === 'Raw') setCompanies([]);
+  }
+
+  function handleSave() {
+    onSave({
+      type,
+      low,
+      high,
+      companies: type === 'Graded' ? companies.join(',') : '',
+    });
+  }
+
+  function handleClear() {
+    onSave({ type: '', low: '', high: '', companies: '' });
+  }
+
+  const gradeOptions = type === 'Raw' ? RAW_TARGET_GRADES : TARGET_GRADES_NUMERIC;
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '40px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 480, padding: 26, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+          <div className="display" style={{ fontSize: 20, color: 'var(--plum)', flex: 1 }}>Set Target</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginBottom: 18 }}>{cardLabel}</div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 6 }}>TYPE</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['Raw', 'Graded'] as const).map(t => (
+              <button key={t} type="button" onClick={() => changeType(t)}
+                className={`btn btn-sm ${type === t ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ flex: 1, justifyContent: 'center' }}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {type === 'Graded' && (
+          <div style={{ marginBottom: 16 }}>
+            <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 6 }}>
+              ACCEPTABLE GRADING COMPANIES
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {GRADING_COMPANIES_LIST.map(c => {
+                const checked = companies.includes(c);
+                return (
+                  <button key={c} type="button" onClick={() => toggleCompany(c)}
+                    style={{
+                      fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 100,
+                      background: checked ? 'var(--plum)' : 'transparent',
+                      color: checked ? 'var(--mustard)' : 'var(--plum)',
+                      border: `1.5px solid ${checked ? 'var(--plum)' : 'var(--rule)'}`,
+                      cursor: 'pointer',
+                    }}>
+                    {checked ? '✓ ' : ''}{c}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 6, fontStyle: 'italic' }}>
+              Leave all unselected for "any company"
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginBottom: 18 }}>
+          <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 6 }}>
+            GRADE RANGE
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: 'var(--ink-mute)', marginBottom: 3 }}>Low</div>
+              <select value={low} onChange={(e) => setLow(e.target.value)} style={{ ...CELL_SELECT, padding: '6px 10px', fontSize: 13 }}>
+                <option value="">— any —</option>
+                {gradeOptions.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: 'var(--ink-mute)', marginBottom: 3 }}>High</div>
+              <select value={high} onChange={(e) => setHigh(e.target.value)} style={{ ...CELL_SELECT, padding: '6px 10px', fontSize: 13 }}>
+                <option value="">— any —</option>
+                {gradeOptions.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 6, fontStyle: 'italic' }}>
+            {type === 'Raw'
+              ? 'Low = worst acceptable, High = best acceptable. Leave both blank for "any condition".'
+              : 'Low = lowest grade, High = highest grade. Leave both blank for "any grade".'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" onClick={handleSave} className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+            Save Target
+          </button>
+          <button type="button" onClick={handleClear} className="btn btn-sm" style={{
+            background: 'transparent', color: 'var(--rust)', border: '1.5px solid var(--rust)', padding: '8px 14px',
+          }}>
+            Clear
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+const CELL_SELECT: React.CSSProperties = {
+  ...CELL_INPUT, cursor: 'pointer',
+};
+
 /* =====================  Component  ===================== */
 export default function SetEditorPage() {
   const router = useRouter();
@@ -226,6 +391,7 @@ export default function SetEditorPage() {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [isShared, setIsShared] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
+  const [targetEditIndex, setTargetEditIndex] = useState<number | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -502,8 +668,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                     <SortableHeader label="Cost" />
                     <SortableHeader label="Value" />
                     <SortableHeader label="Target Price" />
-                                        <SortableHeader label="Target Condition - Low" />
-                    <SortableHeader label="Target Condition - High" />
+                    <th style={TH_STYLE}>Target</th>
                     <SortableHeader label="Sale Price" />
                     <SortableHeader label="Date Purchased" />
                     <SortableHeader label="Purchased From" />
@@ -560,27 +725,26 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Target Price"])} onChange={(e) => onChangeCell(origIndex, "Target Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Target Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
                       </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <select value={v(row["Target Condition - Low"])} onChange={(e) => onChangeCell(origIndex, "Target Condition - Low", e.target.value)} style={{ ...CELL_SELECT, width: 130 }}>
-                          <option value="">—</option>
-                          <optgroup label="Raw">
-                            {TARGET_CONDITIONS_RAW.map(g => <option key={g} value={g}>{g}</option>)}
-                          </optgroup>
-                          <optgroup label="Graded">
-                            {TARGET_CONDITIONS_GRADED.map(g => <option key={g} value={g}>{g}</option>)}
-                          </optgroup>
-                        </select>
-                      </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <select value={v(row["Target Condition - High"])} onChange={(e) => onChangeCell(origIndex, "Target Condition - High", e.target.value)} style={{ ...CELL_SELECT, width: 130 }}>
-                          <option value="">—</option>
-                          <optgroup label="Raw">
-                            {TARGET_CONDITIONS_RAW.map(g => <option key={g} value={g}>{g}</option>)}
-                          </optgroup>
-                          <optgroup label="Graded">
-                            {TARGET_CONDITIONS_GRADED.map(g => <option key={g} value={g}>{g}</option>)}
-                          </optgroup>
-                        </select>
+                                            <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                        {String(row["Owned"] || '') === 'Yes' ? (
+                          <span style={{ color: 'var(--ink-mute)', fontSize: 11, fontStyle: 'italic' }}>—</span>
+                        ) : (() => {
+                          const summary = summarizeTarget(row);
+                          return (
+                            <button type="button" onClick={() => setTargetEditIndex(origIndex)}
+                              style={{
+                                background: summary.isSet ? 'var(--paper)' : 'transparent',
+                                color: summary.isSet ? 'var(--plum)' : 'var(--orange)',
+                                border: `1.5px ${summary.isSet ? 'solid' : 'dashed'} ${summary.isSet ? 'var(--plum)' : 'var(--orange)'}`,
+                                borderRadius: 6, padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                                fontFamily: 'var(--font-body)', cursor: 'pointer',
+                                width: '100%', textAlign: 'left', whiteSpace: 'nowrap',
+                                overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 240,
+                              }}>
+                              {summary.text}
+                            </button>
+                          );
+                        })()}
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Sale Price"])} onChange={(e) => onChangeCell(origIndex, "Sale Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Sale Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
@@ -628,6 +792,29 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           </div>
         )}
       </div>
+
+            {targetEditIndex !== null && rows[targetEditIndex] && (
+        <TargetEditorModal
+          row={rows[targetEditIndex]}
+          cardLabel={`${year ? year + ' ' : ''}${brand ? brand + ' ' : ''}#${rows[targetEditIndex]['Card #'] || ''} ${rows[targetEditIndex]['Player'] || rows[targetEditIndex]['Description'] || ''}`.trim()}
+          onClose={() => setTargetEditIndex(null)}
+          onSave={(patch) => {
+            const idx = targetEditIndex;
+            if (idx === null) return;
+            const copy = [...rows];
+            copy[idx] = {
+              ...copy[idx],
+              'Target Type': patch.type,
+              'Target Condition - Low': patch.low,
+              'Target Condition - High': patch.high,
+              'Target Grading Companies': patch.companies,
+            };
+            setRows(copy);
+            scheduleAutoSave(copy);
+            setTargetEditIndex(null);
+          }}
+        />
+      )}
 
       {/* Footer */}
       <footer style={{
