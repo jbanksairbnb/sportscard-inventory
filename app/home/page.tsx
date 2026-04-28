@@ -1386,8 +1386,8 @@ export default function HomePage() {
           team: profileData.team || '', favorite_players: profileData.favorite_players || '',
           chasing: profileData.chasing || '',
           value_private: !!profileData.value_private,
-          cover_position_x: typeof profileData.cover_position_x === 'number' ? profileData.cover_position_x : 50,
-          cover_position_y: typeof profileData.cover_position_y === 'number' ? profileData.cover_position_y : 50,
+          cover_position_x: profileData.cover_position_x != null ? Number(profileData.cover_position_x) : 50,
+          cover_position_y: profileData.cover_position_y != null ? Number(profileData.cover_position_y) : 50,
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
