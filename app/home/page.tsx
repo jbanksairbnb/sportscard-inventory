@@ -1413,7 +1413,7 @@ export default function HomePage() {
           label: 'Est. value',
           value: profile.value_private
             ? '🔒 Private'
-            : '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k',
+                        : '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k',
           sub: profile.value_private ? 'click to reveal' : 'book price · click to hide',
           onClick: async () => {
             const next = !profile.value_private;
