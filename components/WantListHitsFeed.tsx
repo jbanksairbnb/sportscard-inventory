@@ -216,11 +216,28 @@ export default function WantListHitsFeed() {
         return yearBrandKeys.has(key);
       }) as Listing[];
 
+      // Build (year|brand|card#|player) → wants index for O(1) lookup
+      const wantIndex = new Map<string, WantRow[]>();
+      for (const w of wants) {
+        const key = `${w.year}|${w.brand.trim().toLowerCase()}|${w.cardNumber.trim()}|${w.player.trim().toLowerCase()}`;
+        const arr = wantIndex.get(key) || [];
+        arr.push(w);
+        wantIndex.set(key, arr);
+      }
+
       const matched: { listing: Listing; want: WantRow }[] = [];
       for (const l of candidates) {
-        const w = wants.find(want => matchesListing(l, want));
-        if (w) matched.push({ listing: l, want: w });
+        const key = `${l.year}|${(l.brand || '').trim().toLowerCase()}|${(l.card_number || '').trim()}|${(l.player || '').trim().toLowerCase()}`;
+        const matchingWants = wantIndex.get(key);
+        if (!matchingWants) continue;
+        for (const w of matchingWants) {
+          if (matchesCondition(l, w)) {
+            matched.push({ listing: l, want: w });
+            break;
+          }
+        }
       }
+      console.log('[WantListHits] wants:', wants.length, 'candidates:', candidates.length, 'matched:', matched.length);
 
       const sellerIds = Array.from(new Set(matched.map(m => m.listing.user_id)));
       const { data: profiles } = sellerIds.length > 0
