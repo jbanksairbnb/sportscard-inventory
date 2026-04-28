@@ -109,7 +109,7 @@ function LogoShowcase() {
           <div className="wordmark" style={{ fontSize: 60, color: 'var(--orange)', lineHeight: 1, textShadow: '3px 3px 0 var(--mustard), 5px 5px 0 var(--plum)' }}>Sports</div>
           <div className="display" style={{ fontSize: 44, color: 'var(--plum)', letterSpacing: '0.04em', marginTop: -4 }}>COLLECTIVE</div>
           <p style={{ margin: '10px 0 0', fontSize: 13.5, color: 'var(--ink-soft)', maxWidth: 460, lineHeight: 1.5, fontWeight: 500 }}>
-            A home for collectors. Manage your binder, chase want lists, and swap doubles with the crew.
+            A home for collectors. Manage your binders, chase want lists, and sell your extras.
           </p>
         </div>
         <div style={{ position: 'relative', display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -122,16 +122,77 @@ function LogoShowcase() {
   );
 }
 
-function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange }: {
+function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, onCoverPositionChange }: {
   userId: string;
   avatar: string | null; cover: string | null;
   profile: CollectorProfile;
   onAvatarChange: (url: string) => void; onCoverChange: (url: string) => void;
+  onCoverPositionChange: (x: number, y: number) => void;
 }) {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const coverContainerRef = useRef<HTMLDivElement>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [adjustingCover, setAdjustingCover] = useState(false);
+  const [posX, setPosX] = useState<number>(profile.cover_position_x);
+  const [posY, setPosY] = useState<number>(profile.cover_position_y);
+  const dragStartRef = useRef<{ x: number; y: number; startPosX: number; startPosY: number } | null>(null);
+
+  useEffect(() => {
+    if (!adjustingCover) {
+      setPosX(profile.cover_position_x);
+      setPosY(profile.cover_position_y);
+    }
+  }, [profile.cover_position_x, profile.cover_position_y, adjustingCover]);
+
+  function startReposition() {
+    setPosX(profile.cover_position_x);
+    setPosY(profile.cover_position_y);
+    setAdjustingCover(true);
+  }
+
+  async function saveCoverPosition() {
+    onCoverPositionChange(posX, posY);
+    setAdjustingCover(false);
+    if (userId) {
+      const supabase = createClient();
+      await supabase.from('user_profiles').upsert({
+        user_id: userId,
+        cover_position_x: posX,
+        cover_position_y: posY,
+      });
+    }
+  }
+
+  function cancelReposition() {
+    setPosX(profile.cover_position_x);
+    setPosY(profile.cover_position_y);
+    setAdjustingCover(false);
+  }
+
+  function onCoverPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!adjustingCover) return;
+    e.preventDefault();
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    dragStartRef.current = { x: e.clientX, y: e.clientY, startPosX: posX, startPosY: posY };
+  }
+  function onCoverPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!adjustingCover || !dragStartRef.current) return;
+    const rect = coverContainerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    const deltaXPct = (dx / rect.width) * 100;
+    const deltaYPct = (dy / rect.height) * 100;
+    setPosX(Math.max(0, Math.min(100, dragStartRef.current.startPosX - deltaXPct)));
+    setPosY(Math.max(0, Math.min(100, dragStartRef.current.startPosY - deltaYPct)));
+  }
+  function onCoverPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    dragStartRef.current = null;
+  }
 
   async function handleUpload(
     e: React.ChangeEvent<HTMLInputElement>,
@@ -162,13 +223,21 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange }:
     ? name.split(' ').map((s) => s[0]).slice(0, 2).join('')
     : 'YN';
 
-  return (
+    return (
     <section>
-      <div className="halftone" style={{
-        position: 'relative', height: 360,
-        background: cover ? `url(${cover}) center/cover` : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
-        borderBottom: '3px solid var(--plum)', overflow: 'hidden',
-      }}>
+      <div ref={coverContainerRef} className="halftone"
+        onPointerDown={onCoverPointerDown}
+        onPointerMove={onCoverPointerMove}
+        onPointerUp={onCoverPointerUp}
+        style={{
+          position: 'relative', height: 360,
+          background: cover
+            ? `url(${cover}) ${posX}% ${posY}% / cover no-repeat`
+            : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
+          borderBottom: '3px solid var(--plum)', overflow: 'hidden',
+          cursor: adjustingCover ? (dragStartRef.current ? 'grabbing' : 'grab') : 'default',
+          touchAction: adjustingCover ? 'none' : 'auto',
+        }}>
         {!cover && (
           <svg viewBox="0 0 1280 360" preserveAspectRatio="xMidYMid slice"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
@@ -192,16 +261,48 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange }:
         <div style={{ position: 'absolute', top: 18, left: 22 }}>
           <span className="chip chip-gold"><DiamondIcon size={10} /> Charter Member · Est. 2023</span>
         </div>
-        <div style={{ position: 'absolute', top: 18, right: 22 }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => coverInputRef.current?.click()}
-            disabled={uploadingCover}
-            style={{ background: 'rgba(245,233,208,0.95)' }}>
-            <CameraIcon size={13} /> {uploadingCover ? 'Uploading…' : 'Change cover'}
-          </button>
-          <input ref={coverInputRef} type="file" accept="image/*"
-            onChange={(e) => handleUpload(e, `${userId}/cover`, 'cover_url', onCoverChange, setUploadingCover)}
-            style={{ display: 'none' }} />
+        <div style={{ position: 'absolute', top: 18, right: 22, display: 'flex', gap: 8 }}>
+          {adjustingCover ? (
+            <>
+              <button className="btn btn-primary btn-sm" onClick={saveCoverPosition}
+                style={{ background: 'var(--teal)', color: 'var(--cream)', borderColor: 'var(--teal)' }}>
+                ✓ Save position
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={cancelReposition}
+                style={{ background: 'rgba(245,233,208,0.95)' }}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              {cover && (
+                <button className="btn btn-ghost btn-sm" onClick={startReposition}
+                  style={{ background: 'rgba(245,233,208,0.95)' }}>
+                  ↕ Reposition
+                </button>
+              )}
+              <button className="btn btn-ghost btn-sm" onClick={() => coverInputRef.current?.click()}
+                disabled={uploadingCover}
+                style={{ background: 'rgba(245,233,208,0.95)' }}>
+                <CameraIcon size={13} /> {uploadingCover ? 'Uploading…' : 'Change cover'}
+              </button>
+              <input ref={coverInputRef} type="file" accept="image/*"
+                onChange={(e) => handleUpload(e, `${userId}/cover`, 'cover_url', onCoverChange, setUploadingCover)}
+                style={{ display: 'none' }} />
+            </>
+          )}
         </div>
+        {adjustingCover && (
+          <div style={{
+            position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+            background: 'rgba(42,20,52,0.85)', color: 'var(--cream)',
+            padding: '8px 16px', borderRadius: 100, fontSize: 12, fontWeight: 600,
+            letterSpacing: '0.05em', pointerEvents: 'none',
+          }}>
+            Drag the cover to reposition
+          </div>
+        )}
+      </div>
       </div>
 
       <div style={{
@@ -991,8 +1092,8 @@ const MOCK_ACTIVITY = [
   { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
 ];
 
-type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; };
-const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false };
+type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; cover_position_x: number; cover_position_y: number; };
+const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, cover_position_x: 50, cover_position_y: 50 };
 
 function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
   const [editing, setEditing] = useState(false);
@@ -1277,8 +1378,8 @@ export default function HomePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, value_private')
+            const { data: profileData } = await supabase.from('user_profiles')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, value_private, cover_position_x, cover_position_y')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1287,6 +1388,8 @@ export default function HomePage() {
           team: profileData.team || '', favorite_players: profileData.favorite_players || '',
           chasing: profileData.chasing || '',
           value_private: !!profileData.value_private,
+          cover_position_x: typeof profileData.cover_position_x === 'number' ? profileData.cover_position_x : 50,
+          cover_position_y: typeof profileData.cover_position_y === 'number' ? profileData.cover_position_y : 50,
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
@@ -1326,7 +1429,9 @@ export default function HomePage() {
     <div style={{ minHeight: '100vh' }}>
             <TopNav isAdmin={isAdmin} onLogout={handleLogout} />
       <LogoShowcase />
-      <Hero userId={userId} avatar={avatar} cover={cover} profile={profile} onAvatarChange={setAvatar} onCoverChange={setCover} />
+            <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
+        onAvatarChange={setAvatar} onCoverChange={setCover}
+        onCoverPositionChange={(x, y) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y }))} />
       <SubNav active={activeTab} setActive={setActiveTab} />
       <StatsStrip stats={[
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
