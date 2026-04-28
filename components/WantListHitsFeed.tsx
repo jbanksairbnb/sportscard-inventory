@@ -138,23 +138,46 @@ export default function WantListHitsFeed() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoading(false); return; }
 
-      const { data: setsData } = await supabase
+           const { data: setsData } = await supabase
         .from('sets')
-        .select('slug, title, year, brand, rows')
+        .select('slug, title, year, brand, rows, default_target')
         .eq('user_id', user.id);
 
       const wants: WantRow[] = [];
       for (const s of (setsData || [])) {
+        const setDefault = (s.default_target || {}) as { type?: string; low?: string; high?: string; companies?: string };
         for (const row of (s.rows || [])) {
           if (String(row['Owned'] || '') === 'Yes') continue;
           const player = String(row['Player'] || row['Description'] || '').trim();
           const cardNumber = String(row['Card #'] || '').trim();
           if (!player || !cardNumber) continue;
-                    const targetType = String(row['Target Type'] || '').trim();
-          const companiesRaw = String(row['Target Grading Companies'] || '').trim();
-          const targetGradingCompanies = companiesRaw
-            ? companiesRaw.split(',').map(s => s.trim()).filter(Boolean)
+
+          const explicitType = String(row['Target Type'] || '').trim();
+          const explicitLow = String(row['Target Condition - Low'] || row['Target Condition'] || '').trim();
+          const explicitHigh = String(row['Target Condition - High'] || '').trim();
+          const explicitCompaniesRaw = String(row['Target Grading Companies'] || '').trim();
+          const hasExplicit = !!(explicitType || explicitLow || explicitHigh || explicitCompaniesRaw);
+
+          let targetType: string;
+          let targetLow: string;
+          let targetHigh: string;
+          let targetCompaniesRaw: string;
+          if (hasExplicit) {
+            targetType = explicitType;
+            targetLow = explicitLow;
+            targetHigh = explicitHigh;
+            targetCompaniesRaw = explicitCompaniesRaw;
+          } else {
+            targetType = (setDefault.type || '').trim();
+            targetLow = (setDefault.low || '').trim();
+            targetHigh = (setDefault.high || '').trim();
+            targetCompaniesRaw = (setDefault.companies || '').trim();
+          }
+
+          const targetGradingCompanies = targetCompaniesRaw
+            ? targetCompaniesRaw.split(',').map(s => s.trim()).filter(Boolean)
             : [];
+
           wants.push({
             setSlug: s.slug,
             setTitle: s.title || `${s.year} ${s.brand}`,
@@ -162,8 +185,8 @@ export default function WantListHitsFeed() {
             brand: s.brand || '',
             cardNumber,
             player,
-            targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || '').trim(),
-            targetConditionHigh: String(row['Target Condition - High'] || '').trim(),
+            targetConditionLow: targetLow,
+            targetConditionHigh: targetHigh,
             targetType,
             targetGradingCompanies,
           });
