@@ -64,9 +64,12 @@ async function getEbayToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.token
   }
-  const appId = process.env.EBAY_APP_ID
-  const certId = process.env.EBAY_CERT_ID
-  if (!appId || !certId) throw new Error('Missing EBAY_APP_ID or EBAY_CERT_ID env vars')
+   const appId = process.env.EBAY_APP_ID?.trim()
+  const certId = process.env.EBAY_CERT_ID?.trim()
+  if (!appId || !certId) {
+    const missing = [!appId && 'EBAY_APP_ID', !certId && 'EBAY_CERT_ID'].filter(Boolean).join(', ')
+    throw new Error(`Missing eBay credentials (${missing}). After adding env vars in Vercel, redeploy for them to take effect.`)
+  }
   const auth = Buffer.from(`${appId}:${certId}`).toString('base64')
   const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
     method: 'POST',
