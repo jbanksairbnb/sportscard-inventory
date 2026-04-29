@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import WantListHitsFeed from '@/components/WantListHitsFeed';
+import EbayHitsFeed from '@/components/EbayHitsFeed';
 
 function SearchIcon({ size = 16 }: { size?: number }) {
   return (
@@ -699,11 +700,12 @@ function FeedItem({ item }: { item: FeedEntry }) {
   );
 }
 
-const FEED_FILTERS = ['All activity', 'Want-list hits', 'Comments', 'Following', 'Auctions'];
+const FEED_FILTERS = ['All activity', 'Want-list hits', 'eBay hits', 'Comments', 'Following', 'Auctions'];
 
 function FeedSection() {
   const [activeFilter, setActiveFilter] = useState('Want-list hits');
   const showWantListHits = activeFilter === 'Want-list hits' || activeFilter === 'All activity';
+  const showEbayHits = activeFilter === 'eBay hits' || activeFilter === 'All activity';
   const mockNonWantList = MOCK_FEED.filter(i => i.kind !== 'wantlist-hit');
   return (
     <section>
@@ -723,8 +725,9 @@ function FeedSection() {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {showWantListHits && <WantListHitsFeed />}
+        {showEbayHits && <EbayHitsFeed />}
         {activeFilter === 'All activity' && mockNonWantList.map((item) => <FeedItem key={item.id} item={item} />)}
-        {activeFilter !== 'All activity' && activeFilter !== 'Want-list hits' && (
+        {activeFilter !== 'All activity' && activeFilter !== 'Want-list hits' && activeFilter !== 'eBay hits' && (
           <div className="panel" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
             <strong style={{ color: 'var(--plum)' }}>{activeFilter}</strong> is coming soon.
           </div>
