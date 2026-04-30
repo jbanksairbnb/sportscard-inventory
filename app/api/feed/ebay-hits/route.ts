@@ -72,7 +72,7 @@ function aspectFilterForSport(sport: string): string | null {
   if (!sport) return null
   const value = SPORT_ASPECT_VALUES[sport.toLowerCase()]
   if (!value) return null
-  return `categoryId:64482,Sport:{${value}}`
+  return `categoryId:261324,Sport:{${value}}`
 }
 
 type WantRow = {
