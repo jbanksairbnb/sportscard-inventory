@@ -200,6 +200,25 @@ async function searchEbay(token: string, query: string, auctionsOnly: boolean): 
   return data.itemSummaries || []
 }
 
+const PRIORITY_SELLER_KEYWORDS = ['gmcards']
+
+function findWantForListing(item: EbayItem, wants: WantRow[]): WantRow | null {
+  const title = item.title.toLowerCase()
+  for (const want of wants) {
+    if (!title.includes(String(want.year))) continue
+    if (!title.includes(want.brand.toLowerCase())) continue
+    const lastName = lastNameOf(want.player).toLowerCase()
+    if (lastName.length >= 3 && !title.includes(lastName)) continue
+    const cardNum = want.cardNumber.trim()
+    if (cardNum) {
+      const cardRegex = new RegExp(`(^|\\s|#|no\\.?\\s*)${cardNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$|[^0-9])`, 'i')
+      if (!cardRegex.test(item.title)) continue
+    }
+    return want
+  }
+  return null
+}
+
 async function parallelMap<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length)
   let cursor = 0
@@ -319,7 +338,7 @@ export async function POST(req: NextRequest) {
     if (!uniqueWants.has(k)) uniqueWants.set(k, w)
   }
 
-  const MAX_QUERIES_PER_REQUEST = 50
+  const MAX_QUERIES_PER_REQUEST = 200
   const wantsToProcess = Array.from(uniqueWants.values()).slice(0, MAX_QUERIES_PER_REQUEST)
 
   const cacheKeys = wantsToProcess.map(w => cacheKey(w))
@@ -366,12 +385,58 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: String(e) }, { status: 500 })
   }
 
+  const allWants = Array.from(uniqueWants.values())
+  const setYear = allWants[0]?.year || 0
+  const setBrand = allWants[0]?.brand || ''
+
+  const prioritySellerStats: Record<string, { returned: number; matched: number }> = {}
+  const prioritySellerListings: { item: EbayItem; want: WantRow }[] = []
+  if (setYear && setBrand) {
+    for (const sellerKw of PRIORITY_SELLER_KEYWORDS) {
+      const psKey = `priority|${setYear}|${setBrand.toLowerCase()}|${sellerKw}|${auctionsOnly ? 'a' : 'all'}`
+      const { data: psCached } = await admin
+        .from('ebay_search_cache')
+        .select('cache_key, results, expires_at')
+        .eq('cache_key', psKey)
+        .maybeSingle()
+      const psFresh = psCached && new Date(psCached.expires_at).getTime() > Date.now()
+      let psItems: EbayItem[] = []
+      if (!forceRefresh && psFresh) {
+        psItems = (psCached.results as EbayItem[]) || []
+      } else {
+        try {
+          const tok = await ensureToken()
+          const psQuery = `${setYear} ${setBrand} ${sellerKw}`
+          psItems = await searchEbay(tok, psQuery, auctionsOnly)
+          cacheUpserts.push({
+            cache_key: psKey,
+            query: psQuery,
+            results: psItems,
+            fetched_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString(),
+          })
+        } catch (e) {
+          console.error('priority seller scan failed:', e)
+        }
+      }
+      prioritySellerStats[sellerKw] = { returned: psItems.length, matched: 0 }
+      for (const item of psItems) {
+        const matchedWant = findWantForListing(item, allWants)
+        if (matchedWant) {
+          prioritySellerListings.push({ item, want: matchedWant })
+          prioritySellerStats[sellerKw].matched++
+        }
+      }
+    }
+  }
+
   if (cacheUpserts.length > 0) {
     await admin.from('ebay_search_cache').upsert(cacheUpserts, { onConflict: 'cache_key' })
   }
 
   const allHits: Hit[] = []
-  for (const { want, items } of itemsPerWant) {
+  for (const result of (itemsPerWant as { want: WantRow; items: EbayItem[] }[])) {
+    const { want, items } = result
     for (const item of items) {
       if (!listingMatchesCard(item, want)) continue
       if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
@@ -395,17 +460,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const seen = new Set<string>()
-  const dedupedHits = allHits.filter(h => {
-    if (hiddenIds.has(h.itemId)) return false
-    if (seen.has(h.itemId)) return false
-    seen.add(h.itemId)
-    return true
-  })
-
-  return NextResponse.json({
-    hits: dedupedHits,
-    wantCount: uniqueWants.size,
-    queriedCount: wantsToProcess.length,
-  })
-}
+  for (const { item, want } of prioritySellerListings) {
+    if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
+    const detected = detectListingCondition(item.title, mappings)
+    if (!matchesCondition(detected, want)) continue
+    allHits.push({
+      ...item,
+      matched_set_slug: want.setSlug,
+      matched_set_title: want.setTitle,
+      matched_card: `${want.year} ${want.brand} #${want.cardNumber} ${want.player}`,
+      matched_card_number: want.cardNumber,
+      matched_player: want.player,
+      detected_grade: detected ? {
+        type: detected.type,
+        rank: detected.type === 'raw' ? detected.rawRanks[0] : undefined,
+        grade: detected.type === 'graded' ? detected.grade : undefined,
+        company: detected.type === 'graded' ? detected.company : undefined,
+        label: item.title,
+      } : undefined,
+    })
+  }
