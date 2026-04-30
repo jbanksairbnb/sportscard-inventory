@@ -196,6 +196,35 @@ async function searchEbay(token: string, query: string, auctionsOnly: boolean): 
     console.error('eBay search failed:', res.status, await res.text())
     return []
   }
+  async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number): Promise<EbayItem[]> {
+  const PAGE_SIZE = 200
+  const all: EbayItem[] = []
+  let offset = 0
+  while (all.length < maxResults) {
+    const url = new URL('https://api.ebay.com/buy/browse/v1/item_summary/search')
+    url.searchParams.set('q', query)
+    url.searchParams.set('limit', String(PAGE_SIZE))
+    url.searchParams.set('offset', String(offset))
+    url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
+    const res = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
+      },
+    })
+    if (!res.ok) {
+      console.error('eBay paginated search failed:', res.status, await res.text())
+      break
+    }
+    const data = await res.json() as { itemSummaries?: EbayItem[]; total?: number; next?: string }
+    const items = data.itemSummaries || []
+    all.push(...items)
+    if (items.length < PAGE_SIZE) break
+    if (data.total !== undefined && offset + items.length >= data.total) break
+    offset += PAGE_SIZE
+  }
+  return all
+}
   const data = await res.json() as { itemSummaries?: EbayItem[] }
   return data.itemSummaries || []
 }
