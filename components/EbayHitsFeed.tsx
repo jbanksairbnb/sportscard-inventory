@@ -48,6 +48,7 @@ export default function EbayHitsFeed() {
   const [setOptions, setSetOptions] = useState<SetOption[]>([]);
   const [setsLoading, setSetsLoading] = useState(true);
   const [selectedSlug, setSelectedSlug] = useState('');
+  const [auctionsOnly, setAuctionsOnly] = useState(false);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [hits, setHits] = useState<EbayHit[]>([]);
@@ -89,7 +90,7 @@ export default function EbayHitsFeed() {
       const res = await fetch('/api/feed/ebay-hits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ setSlug: selectedSlug, forceRefresh }),
+        body: JSON.stringify({ setSlug: selectedSlug, forceRefresh, auctionsOnly }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load eBay hits');
@@ -153,6 +154,16 @@ export default function EbayHitsFeed() {
             <option key={s.slug} value={s.slug}>{s.title} ({s.unownedCount} unowned)</option>
           ))}
         </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--plum)', fontWeight: 600, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={auctionsOnly}
+            onChange={e => setAuctionsOnly(e.target.checked)}
+            disabled={searching}
+            style={{ cursor: 'pointer' }}
+          />
+          Auctions only
+        </label>
         <button
           onClick={() => runSearch(false)}
           disabled={!selectedSlug || searching}
@@ -190,7 +201,7 @@ export default function EbayHitsFeed() {
       {hasSearched && !error && hits.length === 0 && (
         <div className="panel" style={{ padding: 28, textAlign: 'center' }}>
           <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-            Scanned {wantCount} unowned card{wantCount === 1 ? '' : 's'} from {selectedSet?.title || 'this set'} — no eBay matches right now.
+            Scanned {wantCount} unowned card{wantCount === 1 ? '' : 's'} from {selectedSet?.title || 'this set'} — no eBay matches{auctionsOnly ? ' from auctions' : ''} right now.
             Click <strong>Refresh</strong> to bypass the cache.
           </p>
         </div>
@@ -199,7 +210,7 @@ export default function EbayHitsFeed() {
       {hasSearched && hits.length > 0 && (
         <>
           <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 14 }}>
-            {hits.length} eBay match{hits.length === 1 ? '' : 'es'} from {wantCount} unowned card{wantCount === 1 ? '' : 's'} in {selectedSet?.title || 'this set'}.
+            {hits.length} eBay match{hits.length === 1 ? '' : 'es'}{auctionsOnly ? ' (auctions only)' : ''} from {wantCount} unowned card{wantCount === 1 ? '' : 's'} in {selectedSet?.title || 'this set'}.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {hits.map(h => (
