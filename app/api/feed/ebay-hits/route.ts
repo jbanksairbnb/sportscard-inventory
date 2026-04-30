@@ -196,7 +196,11 @@ async function searchEbay(token: string, query: string, auctionsOnly: boolean): 
     console.error('eBay search failed:', res.status, await res.text())
     return []
   }
-  async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number): Promise<EbayItem[]> {
+  const data = await res.json() as { itemSummaries?: EbayItem[] }
+  return data.itemSummaries || []
+}
+
+async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number): Promise<EbayItem[]> {
   const PAGE_SIZE = 200
   const all: EbayItem[] = []
   let offset = 0
@@ -224,9 +228,6 @@ async function searchEbay(token: string, query: string, auctionsOnly: boolean): 
     offset += PAGE_SIZE
   }
   return all
-}
-  const data = await res.json() as { itemSummaries?: EbayItem[] }
-  return data.itemSummaries || []
 }
 
 const PRIORITY_SELLER_KEYWORDS = ['gmcards']
@@ -442,7 +443,7 @@ export async function POST(req: NextRequest) {
         try {
           const tok = await ensureToken()
           const psQuery = `${setYear} ${setBrand} ${sellerKw}`
-          psItems = await searchEbay(tok, psQuery, auctionsOnly)
+          psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 2000)
           cacheUpserts.push({
             cache_key: psKey,
             query: psQuery,
