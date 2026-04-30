@@ -62,15 +62,17 @@ function listingMatchesSport(title: string, targetSport: string): boolean {
   return detected.has(targetSport.toLowerCase())
 }
 
-const SPORT_CATEGORY_IDS: Record<string, string> = {
-  baseball: '261328',
-  basketball: '261329',
-  football: '215',
-  hockey: '216',
+const SPORT_ASPECT_VALUES: Record<string, string> = {
+  baseball: 'Baseball',
+  basketball: 'Basketball',
+  football: 'Football',
+  hockey: 'Ice Hockey',
 }
-function categoryIdForSport(sport: string): string | null {
+function aspectFilterForSport(sport: string): string | null {
   if (!sport) return null
-  return SPORT_CATEGORY_IDS[sport.toLowerCase()] || null
+  const value = SPORT_ASPECT_VALUES[sport.toLowerCase()]
+  if (!value) return null
+  return `categoryId:64482,Sport:{${value}}`
 }
 
 type WantRow = {
@@ -224,12 +226,12 @@ function listingMatchesCard(item: EbayItem, want: WantRow): boolean {
   return true
 }
 
-async function searchEbay(token: string, query: string, auctionsOnly: boolean, categoryId: string | null = null): Promise<EbayItem[]> {
+async function searchEbay(token: string, query: string, auctionsOnly: boolean, aspectFilter: string | null = null): Promise<EbayItem[]> {
   const url = new URL('https://api.ebay.com/buy/browse/v1/item_summary/search')
   url.searchParams.set('q', query)
   url.searchParams.set('limit', '50')
   url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
-  if (categoryId) url.searchParams.set('category_ids', categoryId)
+  if (aspectFilter) url.searchParams.set('aspect_filter', aspectFilter)
   const res = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -244,7 +246,7 @@ async function searchEbay(token: string, query: string, auctionsOnly: boolean, c
   return data.itemSummaries || []
 }
 
-async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number, categoryId: string | null = null): Promise<EbayItem[]> {
+async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number, aspectFilter: string | null = null): Promise<EbayItem[]> {
   const PAGE_SIZE = 200
   const all: EbayItem[] = []
   let offset = 0
@@ -254,7 +256,7 @@ async function searchEbayPaginated(token: string, query: string, auctionsOnly: b
     url.searchParams.set('limit', String(PAGE_SIZE))
     url.searchParams.set('offset', String(offset))
     url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
-    if (categoryId) url.searchParams.set('category_ids', categoryId)
+    if (aspectFilter) url.searchParams.set('aspect_filter', aspectFilter)
     const res = await fetch(url.toString(), {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -451,8 +453,8 @@ export async function POST(req: NextRequest) {
       throw e
     }
     const query = buildQuery(want)
-    const catId = categoryIdForSport(want.setSport)
-    const items = await searchEbay(tok, query, auctionsOnly, catId)
+    const aspectFilter = aspectFilterForSport(want.setSport)
+    const items = await searchEbay(tok, query, auctionsOnly, aspectFilter)
     cacheUpserts.push({
       cache_key: key,
       query,
@@ -473,7 +475,7 @@ export async function POST(req: NextRequest) {
   const setYear = allWants[0]?.year || 0
   const setBrand = allWants[0]?.brand || ''
   const setSport = allWants[0]?.setSport || ''
-  const setCategoryId = categoryIdForSport(setSport)
+  const setAspectFilter = aspectFilterForSport(setSport)
 
   const prioritySellerStats: Record<string, { returned: number; matched: number }> = {}
   const prioritySellerListings: { item: EbayItem; want: WantRow }[] = []
@@ -493,7 +495,7 @@ export async function POST(req: NextRequest) {
         try {
           const tok = await ensureToken()
           const psQuery = `${setYear} ${setBrand} ${sellerKw}`
-          psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 2000, setCategoryId)
+          psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 2000, setAspectFilter)
           cacheUpserts.push({
             cache_key: psKey,
             query: psQuery,
