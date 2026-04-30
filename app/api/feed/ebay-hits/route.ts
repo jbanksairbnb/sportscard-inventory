@@ -35,6 +35,7 @@ function lastNameOf(player: string): string {
 type WantRow = {
   setSlug: string
   setTitle: string
+  setSport: string
   year: number
   brand: string
   cardNumber: string
@@ -178,7 +179,38 @@ function listingMatchesCard(item: EbayItem, want: WantRow): boolean {
   if (!title.includes(want.brand.toLowerCase())) return false
   const lastName = lastNameOf(want.player).toLowerCase()
   if (lastName.length >= 3 && !title.includes(lastName)) return false
+  if (!listingMatchesSport(item.title, want.setSport)) return false
   return true
+}
+  const SPORT_TEAMS: Record<string, string[]> = {
+  baseball: ['yankees','red sox','dodgers','mets','cubs','astros','braves','phillies','pirates','reds','orioles','tigers','royals','twins','white sox','indians','guardians','brewers','rockies','mariners','angels','athletics','padres','marlins','rays','blue jays','diamondbacks','nationals','expos','cardinals','giants','senators'],
+  football: ['cowboys','patriots','packers','steelers','49ers','jets','eagles','redskins','commanders','rams','chargers','broncos','chiefs','raiders','colts','titans','jaguars','texans','lions','bears','vikings','saints','falcons','buccaneers','seahawks','dolphins','browns','bills','bengals'],
+  basketball: ['lakers','celtics','bulls','warriors','heat','spurs','pistons','knicks','nets','sixers','76ers','bucks','cavaliers','mavericks','rockets','suns','jazz','nuggets','thunder','hawks','magic','pacers','wizards','bullets','raptors','grizzlies','pelicans','timberwolves','hornets','clippers','trail blazers'],
+  hockey: ['bruins','canadiens','maple leafs','blackhawks','red wings','penguins','flyers','capitals','islanders','devils','sabres','oilers','flames','canucks','sharks','ducks','avalanche','stars','predators','wild','blues','lightning','hurricanes','thrashers','coyotes','kraken','golden knights'],
+}
+
+function detectSport(title: string): Set<string> {
+  const sports = new Set<string>()
+  const lower = title.toLowerCase()
+  if (/\b(baseball|mlb)\b/.test(lower)) sports.add('baseball')
+  if (/\b(football|nfl)\b/.test(lower)) sports.add('football')
+  if (/\b(basketball|nba)\b/.test(lower)) sports.add('basketball')
+  if (/\b(hockey|nhl)\b/.test(lower)) sports.add('hockey')
+  if (sports.size > 0) return sports
+  for (const [sport, teams] of Object.entries(SPORT_TEAMS)) {
+    for (const team of teams) {
+      if (lower.includes(team)) { sports.add(sport); break }
+    }
+  }
+  return sports
+}
+
+function listingMatchesSport(title: string, targetSport: string): boolean {
+  if (!targetSport) return true
+  const detected = detectSport(title)
+  if (detected.size === 0) return true
+  return detected.has(targetSport.toLowerCase())
+}
 }
 
 async function searchEbay(token: string, query: string, auctionsOnly: boolean): Promise<EbayItem[]> {
@@ -239,6 +271,7 @@ function findWantForListing(item: EbayItem, wants: WantRow[]): WantRow | null {
     if (!title.includes(want.brand.toLowerCase())) continue
     const lastName = lastNameOf(want.player).toLowerCase()
     if (lastName.length >= 3 && !title.includes(lastName)) continue
+    if (!listingMatchesSport(item.title, want.setSport)) continue
     const cardNum = want.cardNumber.trim()
     if (cardNum) {
       const cardRegex = new RegExp(`(^|\\s|#|no\\.?\\s*)${cardNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$|[^0-9])`, 'i')
@@ -307,7 +340,7 @@ export async function POST(req: NextRequest) {
   )
 
   const [setsResult, mappingsResult, hiddenResult] = await Promise.all([
-    admin.from('sets').select('slug, title, year, brand, rows, default_target')
+    admin.from('sets').select('slug, title, year, brand, rows, default_target, sport')
       .eq('user_id', user.id).eq('slug', setSlug),
     admin.from('raw_grade_mappings').select('source_pattern, mapped_grades')
       .eq('user_id', user.id),
@@ -347,6 +380,7 @@ export async function POST(req: NextRequest) {
         setSlug: s.slug,
         setTitle: s.title || `${s.year} ${s.brand}`,
         year: s.year || 0,
+        setSport: String(s.sport || '').toLowerCase().trim(),
         brand: s.brand || '',
         cardNumber,
         player,
