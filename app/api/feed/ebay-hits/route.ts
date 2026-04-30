@@ -53,8 +53,11 @@ type EbayItem = {
 }
 
 type Hit = EbayItem & {
+  matched_set_slug: string
   matched_set_title: string
   matched_card: string
+  matched_card_number: string
+  matched_player: string
   detected_grade?: { type: 'raw' | 'graded'; rank?: number; grade?: number; company?: string; label?: string }
 }
 
@@ -64,12 +67,9 @@ async function getEbayToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.token
   }
-   const appId = process.env.EBAY_APP_ID?.trim()
-  const certId = process.env.EBAY_CERT_ID?.trim()
-  if (!appId || !certId) {
-    const missing = [!appId && 'EBAY_APP_ID', !certId && 'EBAY_CERT_ID'].filter(Boolean).join(', ')
-    throw new Error(`Missing eBay credentials (${missing}). After adding env vars in Vercel, redeploy for them to take effect.`)
-  }
+  const appId = process.env.EBAY_APP_ID
+  const certId = process.env.EBAY_CERT_ID
+  if (!appId || !certId) throw new Error('Missing EBAY_APP_ID or EBAY_CERT_ID env vars')
   const auth = Buffer.from(`${appId}:${certId}`).toString('base64')
   const res = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
     method: 'POST',
@@ -208,10 +208,16 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   let forceRefresh = false
+  let setSlug = ''
   try {
     const body = await req.json()
     forceRefresh = !!body?.forceRefresh
+    setSlug = String(body?.setSlug || '').trim()
   } catch {}
+
+  if (!setSlug) {
+    return NextResponse.json({ error: 'setSlug is required' }, { status: 400 })
+  }
 
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -223,6 +229,7 @@ export async function POST(req: NextRequest) {
     .from('sets')
     .select('slug, title, year, brand, rows, default_target')
     .eq('user_id', user.id)
+    .eq('slug', setSlug)
 
   const wants: WantRow[] = []
   for (const s of (setsData || [])) {
@@ -318,8 +325,11 @@ export async function POST(req: NextRequest) {
       if (!matchesCondition(detected, want)) continue
       allHits.push({
         ...item,
+        matched_set_slug: want.setSlug,
         matched_set_title: want.setTitle,
         matched_card: `${want.year} ${want.brand} #${want.cardNumber} ${want.player}`,
+        matched_card_number: want.cardNumber,
+        matched_player: want.player,
         detected_grade: detected ? {
           type: detected.type,
           rank: detected.rawRank,
@@ -331,8 +341,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const { data: hiddenRows } = await admin
+    .from('ebay_hidden_items')
+    .select('item_id')
+    .eq('user_id', user.id)
+  const hiddenIds = new Set((hiddenRows || []).map(r => r.item_id))
+
   const seen = new Set<string>()
   const dedupedHits = allHits.filter(h => {
+    if (hiddenIds.has(h.itemId)) return false
     if (seen.has(h.itemId)) return false
     seen.add(h.itemId)
     return true
