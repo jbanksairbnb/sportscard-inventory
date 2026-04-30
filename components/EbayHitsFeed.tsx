@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
 type EbayHit = {
   itemId: string;
@@ -14,10 +15,15 @@ type EbayHit = {
   buyingOptions?: string[];
   itemEndDate?: string;
   itemLocation?: { country?: string };
+  matched_set_slug: string;
   matched_set_title: string;
   matched_card: string;
+  matched_card_number: string;
+  matched_player: string;
   detected_grade?: { type: 'raw' | 'graded'; rank?: number; grade?: number; company?: string };
 };
+
+type SetOption = { slug: string; title: string; unownedCount: number };
 
 function fmtMoney(value: string | undefined, currency = 'USD'): string {
   if (!value) return '—';
@@ -39,85 +45,179 @@ function fmtTimeLeft(iso: string | undefined): string | null {
 }
 
 export default function EbayHitsFeed() {
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [setOptions, setSetOptions] = useState<SetOption[]>([]);
+  const [setsLoading, setSetsLoading] = useState(true);
+  const [selectedSlug, setSelectedSlug] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [hits, setHits] = useState<EbayHit[]>([]);
   const [error, setError] = useState('');
   const [wantCount, setWantCount] = useState(0);
 
-  async function load(forceRefresh = false) {
+  useEffect(() => {
+    const supabase = createClient();
+    async function loadSets() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setSetsLoading(false); return; }
+      const { data } = await supabase
+        .from('sets')
+        .select('slug, title, year, brand, rows')
+        .eq('user_id', user.id);
+      const opts: SetOption[] = [];
+      for (const s of (data || [])) {
+        const rows = (s.rows || []) as Record<string, unknown>[];
+        const unowned = rows.filter(r => String(r['Owned'] || '') !== 'Yes' && (r['Player'] || r['Description']) && r['Card #']).length;
+        if (unowned === 0) continue;
+        opts.push({
+          slug: s.slug,
+          title: s.title || `${s.year} ${s.brand}`,
+          unownedCount: unowned,
+        });
+      }
+      opts.sort((a, b) => a.title.localeCompare(b.title));
+      setSetOptions(opts);
+      setSetsLoading(false);
+    }
+    loadSets();
+  }, []);
+
+  async function runSearch(forceRefresh = false) {
+    if (!selectedSlug) return;
     setError('');
-    if (forceRefresh) setRefreshing(true);
-    else setLoading(true);
+    setSearching(true);
     try {
       const res = await fetch('/api/feed/ebay-hits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ forceRefresh }),
+        body: JSON.stringify({ setSlug: selectedSlug, forceRefresh }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load eBay hits');
       setHits(data.hits || []);
       setWantCount(data.wantCount || 0);
+      setHasSearched(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load eBay hits');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setSearching(false);
     }
   }
 
-  useEffect(() => {
-    load(false);
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="panel" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
-        Searching eBay for matches…
-      </div>
-    );
+  function handleHide(itemId: string) {
+    setHits(prev => prev.filter(h => h.itemId !== itemId));
+    fetch('/api/feed/ebay-hits/hide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId }),
+    }).catch(() => {});
   }
 
-  if (error) {
-    return (
-      <div className="panel" style={{ padding: 24, textAlign: 'center' }}>
-        <div style={{ fontSize: 13, color: 'var(--rust)', fontWeight: 600, marginBottom: 8 }}>{error}</div>
-        <button onClick={() => load(false)} className="btn btn-outline btn-sm">Try again</button>
-      </div>
-    );
+  function handleMarkBought(hit: EbayHit) {
+    setHits(prev => prev.filter(h =>
+      !(h.matched_set_slug === hit.matched_set_slug
+        && h.matched_card_number === hit.matched_card_number
+        && h.matched_player === hit.matched_player)
+    ));
+    fetch('/api/feed/ebay-hits/mark-bought', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        itemId: hit.itemId,
+        setSlug: hit.matched_set_slug,
+        cardNumber: hit.matched_card_number,
+        player: hit.matched_player,
+      }),
+    }).catch(() => {});
   }
+
+  const selectedSet = setOptions.find(s => s.slug === selectedSlug);
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 10, flexWrap: 'wrap' }}>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
-          {hits.length === 0
-            ? `Scanned ${wantCount} cards from your want list — no eBay matches right now.`
-            : `${hits.length} eBay match${hits.length === 1 ? '' : 'es'} from ${wantCount} cards on your want list.`}
-        </div>
-        <button onClick={() => load(true)} disabled={refreshing}
-          className="btn btn-ghost btn-sm">
-          {refreshing ? 'Refreshing…' : '↻ Refresh from eBay'}
+      <div className="panel" style={{ padding: 16, marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label className="eyebrow" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>
+          Search a set
+        </label>
+        <select
+          value={selectedSlug}
+          onChange={e => { setSelectedSlug(e.target.value); setHits([]); setHasSearched(false); setError(''); }}
+          disabled={setsLoading || searching}
+          style={{
+            flex: 1, minWidth: 220, padding: '8px 10px', fontSize: 13,
+            border: '1.5px solid var(--rule)', borderRadius: 6, background: 'var(--paper)',
+            color: 'var(--plum)', fontWeight: 500,
+          }}
+        >
+          <option value="">{setsLoading ? 'Loading sets…' : setOptions.length === 0 ? 'No sets with unowned cards' : 'Select a set…'}</option>
+          {setOptions.map(s => (
+            <option key={s.slug} value={s.slug}>{s.title} ({s.unownedCount} unowned)</option>
+          ))}
+        </select>
+        <button
+          onClick={() => runSearch(false)}
+          disabled={!selectedSlug || searching}
+          className="btn btn-primary btn-sm"
+        >
+          {searching ? 'Searching…' : 'Search eBay'}
         </button>
+        {hasSearched && selectedSlug && (
+          <button
+            onClick={() => runSearch(true)}
+            disabled={searching}
+            className="btn btn-ghost btn-sm"
+            title="Bypass cache and re-query eBay"
+          >
+            ↻ Refresh
+          </button>
+        )}
       </div>
 
-      {hits.length === 0 ? (
+      {error && (
+        <div className="panel" style={{ padding: 24, textAlign: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: 'var(--rust)', fontWeight: 600, marginBottom: 8 }}>{error}</div>
+          <button onClick={() => runSearch(false)} className="btn btn-outline btn-sm">Try again</button>
+        </div>
+      )}
+
+      {!hasSearched && !error && (
         <div className="panel" style={{ padding: 28, textAlign: 'center' }}>
           <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-            Nothing matching your conditions on eBay right now. Click <strong>Refresh from eBay</strong> to bypass the cache, or check back later — we re-scan every 6 hours.
+            Pick a set above and click <strong>Search eBay</strong> to find current listings that match your unowned cards and target conditions.
           </p>
         </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {hits.map(h => <HitItem key={h.itemId} hit={h} />)}
+      )}
+
+      {hasSearched && !error && hits.length === 0 && (
+        <div className="panel" style={{ padding: 28, textAlign: 'center' }}>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+            Scanned {wantCount} unowned card{wantCount === 1 ? '' : 's'} from {selectedSet?.title || 'this set'} — no eBay matches right now.
+            Click <strong>Refresh</strong> to bypass the cache.
+          </p>
         </div>
+      )}
+
+      {hasSearched && hits.length > 0 && (
+        <>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 14 }}>
+            {hits.length} eBay match{hits.length === 1 ? '' : 'es'} from {wantCount} unowned card{wantCount === 1 ? '' : 's'} in {selectedSet?.title || 'this set'}.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {hits.map(h => (
+              <HitItem
+                key={h.itemId}
+                hit={h}
+                onHide={() => handleHide(h.itemId)}
+                onMarkBought={() => handleMarkBought(h)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-function HitItem({ hit }: { hit: EbayHit }) {
+function HitItem({ hit, onHide, onMarkBought }: { hit: EbayHit; onHide: () => void; onMarkBought: () => void }) {
   const photo = hit.image?.imageUrl || hit.thumbnailImages?.[0]?.imageUrl;
   const isAuction = hit.buyingOptions?.includes('AUCTION');
   const timeLeft = fmtTimeLeft(hit.itemEndDate);
@@ -169,13 +269,19 @@ function HitItem({ hit }: { hit: EbayHit }) {
           )}
         </div>
 
-        <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div className="stat-num" style={{ fontSize: 26, color: 'var(--orange)' }}>
             {fmtMoney(hit.price?.value, hit.price?.currency)}
           </div>
           <a href={hit.itemWebUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm">
             View on eBay →
           </a>
+          <button onClick={onMarkBought} className="btn btn-outline btn-sm" title="Mark this card as owned and hide this listing">
+            ✓ Mark as Bought
+          </button>
+          <button onClick={onHide} className="btn btn-ghost btn-sm" title="Never show this listing again">
+            🚫 Hide
+          </button>
         </div>
       </div>
     </article>
