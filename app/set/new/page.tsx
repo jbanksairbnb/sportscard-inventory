@@ -70,6 +70,17 @@ function computeFinancials(rows: any[]) {
 }
 
 type Mode = 'library' | 'upload';
+type UploadSource = 'standard' | 'psa' | null;
+
+function stripPersonalData(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return rows.map(r => {
+    const clean: Record<string, unknown> = {};
+    EXPECTED_HEADERS.forEach(h => { clean[h] = ''; });
+    clean['Card #'] = r['Card #'] || '';
+    clean['Player'] = r['Player'] || '';
+    return clean;
+  });
+}
 
 export default function NewSetPage() {
   const router = useRouter();
@@ -83,6 +94,7 @@ export default function NewSetPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [addToLibrary, setAddToLibrary] = useState(false);
+  const [uploadSource, setUploadSource] = useState<UploadSource>(null);
 
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
@@ -169,6 +181,7 @@ export default function NewSetPage() {
           return norm;
         });
         setRows(cleaned);
+        setUploadSource('standard');
       },
       error: (err) => setErrors([`Parse error: ${err.message}`]),
     });
@@ -205,6 +218,7 @@ export default function NewSetPage() {
             return norm;
           });
         setRows(cleaned);
+        setUploadSource('psa');
       },
       error: (err) => setErrors([`Parse error: ${err.message}`]),
     });
@@ -230,13 +244,15 @@ export default function NewSetPage() {
       updated_at: Date.now(),
     }, { onConflict: 'user_id,slug' });
 
-    if (addToLibrary && mode === 'upload') {
+    const shouldShareToLibrary = mode === 'upload' && (addToLibrary || uploadSource === 'psa');
+    if (shouldShareToLibrary) {
       try {
+        const sharedRows = uploadSource === 'psa' ? stripPersonalData(rows) : rows;
         await fetch('/api/set-templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            year: Number(year), brand: brand.trim(), title: newTitle, sport, rows,
+            year: Number(year), brand: brand.trim(), title: newTitle, sport, rows: sharedRows,
           }),
         });
       } catch {}
@@ -268,14 +284,24 @@ export default function NewSetPage() {
 
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 28px 80px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
+        <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10 }}>
+          <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
+            <li><strong>From Library</strong> — pick a pre-loaded checklist from our library, filtered by sport. Fastest way to start a new set.</li>
+            <li><strong>Upload CSV</strong> — upload your own checklist using our standard template. Required columns: <span className="mono" style={{ fontSize: 12 }}>{EXPECTED_HEADERS.join(', ')}</span>. Tick the box at the bottom of the upload section to share your checklist with the community.</li>
+            <li><strong>PSA Export</strong> — download your collection from your PSA account and upload the CSV directly. Owned cards auto-fill with grades, costs, and dates. The checklist (Card # and Player only — no personal data) is automatically added to our public library if it isn&apos;t there yet.</li>
+            <li>Don&apos;t see a set you want?  Email <a href="mailto:info@sports-collective.com" style={{ color: 'var(--plum)', fontWeight: 700 }}>info@sports-collective.com</a> and we&apos;ll add it to the library.</li>
+          </ul>
+        </section>
+
         <section className="panel-bordered" style={{ padding: '24px 28px' }}>
           <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 12 }}>1. Choose a Source</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-            <button onClick={() => { setMode('library'); setRows([]); setErrors([]); }}
+            <button onClick={() => { setMode('library'); setRows([]); setErrors([]); setUploadSource(null); }}
               className={mode === 'library' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
               From Library
             </button>
-            <button onClick={() => { setMode('upload'); setRows([]); setErrors([]); setSelectedTemplateId(''); }}
+            <button onClick={() => { setMode('upload'); setRows([]); setErrors([]); setSelectedTemplateId(''); setUploadSource(null); }}
               className={mode === 'upload' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
               Upload CSV
             </button>
@@ -342,10 +368,16 @@ export default function NewSetPage() {
                   <span className="mono" style={{ fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>{rows.length} cards loaded</span>
                 </div>
               )}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 13, color: 'var(--plum)', fontWeight: 600, cursor: 'pointer' }}>
-                <input type="checkbox" checked={addToLibrary} onChange={e => setAddToLibrary(e.target.checked)} />
-                Add this checklist to the public library so others can use it
-              </label>
+              {uploadSource === 'psa' ? (
+                <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(56,142,142,0.08)', border: '1.5px solid var(--teal)', borderRadius: 8, fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+                  ✓ The clean checklist (Card # &amp; Player only — no personal data) will be added to the public library if it doesn&apos;t already exist.
+                </div>
+              ) : (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, fontSize: 13, color: 'var(--plum)', fontWeight: 600, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={addToLibrary} onChange={e => setAddToLibrary(e.target.checked)} />
+                  Add this checklist to the public library so others can use it
+                </label>
+              )}
             </div>
           )}
 
