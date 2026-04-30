@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 type EbayHit = {
   itemId: string;
   title: string;
   price?: { value: string; currency: string };
+  currentBidPrice?: { value: string; currency: string };
+  bidCount?: number;
   image?: { imageUrl: string };
   thumbnailImages?: { imageUrl: string }[];
   condition?: string;
@@ -24,6 +26,22 @@ type EbayHit = {
 };
 
 type SetOption = { slug: string; title: string; unownedCount: number };
+
+type SortKey = 'gmcards' | 'priceAsc' | 'priceDesc' | 'ending';
+
+const PRIORITY_SELLERS = ['gmcards'];
+
+function isPrioritySeller(username: string | undefined): boolean {
+  if (!username) return false;
+  const u = username.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return PRIORITY_SELLERS.some(p => u.includes(p));
+}
+
+function effectivePrice(hit: EbayHit): number {
+  const v = hit.currentBidPrice?.value || hit.price?.value;
+  const n = v ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
 
 function fmtMoney(value: string | undefined, currency = 'USD'): string {
   if (!value) return '—';
@@ -49,6 +67,7 @@ export default function EbayHitsFeed() {
   const [setsLoading, setSetsLoading] = useState(true);
   const [selectedSlug, setSelectedSlug] = useState('');
   const [auctionsOnly, setAuctionsOnly] = useState(false);
+  const [sortBy, setSortBy] = useState<SortKey>('gmcards');
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [hits, setHits] = useState<EbayHit[]>([]);
@@ -133,6 +152,27 @@ export default function EbayHitsFeed() {
 
   const selectedSet = setOptions.find(s => s.slug === selectedSlug);
 
+  const sortedHits = useMemo(() => {
+    const arr = [...hits];
+    arr.sort((a, b) => {
+      if (sortBy === 'gmcards') {
+        const aP = isPrioritySeller(a.seller?.username) ? 0 : 1;
+        const bP = isPrioritySeller(b.seller?.username) ? 0 : 1;
+        if (aP !== bP) return aP - bP;
+        return effectivePrice(a) - effectivePrice(b);
+      }
+      if (sortBy === 'priceAsc') return effectivePrice(a) - effectivePrice(b);
+      if (sortBy === 'priceDesc') return effectivePrice(b) - effectivePrice(a);
+      if (sortBy === 'ending') {
+        const aEnd = a.itemEndDate ? new Date(a.itemEndDate).getTime() : Number.POSITIVE_INFINITY;
+        const bEnd = b.itemEndDate ? new Date(b.itemEndDate).getTime() : Number.POSITIVE_INFINITY;
+        return aEnd - bEnd;
+      }
+      return 0;
+    });
+    return arr;
+  }, [hits, sortBy]);
+
   return (
     <div>
       <div className="panel" style={{ padding: 16, marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -164,6 +204,22 @@ export default function EbayHitsFeed() {
           />
           Auctions only
         </label>
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value as SortKey)}
+          disabled={searching}
+          title="Sort results"
+          style={{
+            padding: '6px 8px', fontSize: 12,
+            border: '1.5px solid var(--rule)', borderRadius: 6, background: 'var(--paper)',
+            color: 'var(--plum)', fontWeight: 600,
+          }}
+        >
+          <option value="gmcards">Sort: GMCards first</option>
+          <option value="priceAsc">Sort: Price low → high</option>
+          <option value="priceDesc">Sort: Price high → low</option>
+          <option value="ending">Sort: Ending soon</option>
+        </select>
         <button
           onClick={() => runSearch(false)}
           disabled={!selectedSlug || searching}
@@ -213,7 +269,7 @@ export default function EbayHitsFeed() {
             {hits.length} eBay match{hits.length === 1 ? '' : 'es'}{auctionsOnly ? ' (auctions only)' : ''} from {wantCount} unowned card{wantCount === 1 ? '' : 's'} in {selectedSet?.title || 'this set'}.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {hits.map(h => (
+            {sortedHits.map(h => (
               <HitItem
                 key={h.itemId}
                 hit={h}
@@ -232,6 +288,9 @@ function HitItem({ hit, onHide, onMarkBought }: { hit: EbayHit; onHide: () => vo
   const photo = hit.image?.imageUrl || hit.thumbnailImages?.[0]?.imageUrl;
   const isAuction = hit.buyingOptions?.includes('AUCTION');
   const timeLeft = fmtTimeLeft(hit.itemEndDate);
+  const priority = isPrioritySeller(hit.seller?.username);
+  const displayPrice = isAuction && hit.currentBidPrice ? hit.currentBidPrice : hit.price;
+  const priceLabel = isAuction ? (hit.bidCount && hit.bidCount > 0 ? `Current bid · ${hit.bidCount} bid${hit.bidCount === 1 ? '' : 's'}` : 'Starting bid') : null;
   const conditionBadge = hit.detected_grade
     ? hit.detected_grade.type === 'graded'
       ? `${hit.detected_grade.company || ''} ${hit.detected_grade.grade || ''}`.trim()
@@ -257,6 +316,11 @@ function HitItem({ hit, onHide, onMarkBought }: { hit: EbayHit; onHide: () => vo
           <span className="chip" style={{ fontSize: 10, background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)', fontWeight: 700 }}>
             ◆ eBay match
           </span>
+          {priority && (
+            <span className="chip" style={{ fontSize: 10, background: 'var(--plum)', color: 'var(--paper)', fontWeight: 700, border: '1.5px solid var(--plum)' }}>
+              ★ Priority seller
+            </span>
+          )}
           {isAuction && timeLeft && (
             <span className="chip chip-navy" style={{ fontSize: 10 }}>Auction · ends {timeLeft}</span>
           )}
@@ -281,8 +345,13 @@ function HitItem({ hit, onHide, onMarkBought }: { hit: EbayHit; onHide: () => vo
         </div>
 
         <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div className="stat-num" style={{ fontSize: 26, color: 'var(--orange)' }}>
-            {fmtMoney(hit.price?.value, hit.price?.currency)}
+          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+            {priceLabel && (
+              <span className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)', fontWeight: 700 }}>{priceLabel}</span>
+            )}
+            <span className="stat-num" style={{ fontSize: 26, color: 'var(--orange)' }}>
+              {fmtMoney(displayPrice?.value, displayPrice?.currency)}
+            </span>
           </div>
           <a href={hit.itemWebUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm">
             View on eBay →
