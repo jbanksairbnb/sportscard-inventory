@@ -360,29 +360,35 @@ export async function POST(req: NextRequest) {
 
   const cacheUpserts: Array<{ cache_key: string; query: string; results: EbayItem[]; fetched_at: string; expires_at: string }> = []
 
-  let itemsPerWant: { want: WantRow; items: EbayItem[] }[]
-  try {
-    itemsPerWant = await parallelMap(wantsToProcess, SEARCH_CONCURRENCY, async (want) => {
-      const key = cacheKey(want)
-      const cached = cacheMap.get(key)
-      const isFresh = cached && new Date(cached.expires_at).getTime() > Date.now()
-      if (!forceRefresh && isFresh) {
-        return { want, items: (cached.results as EbayItem[]) || [] }
-      }
-      const tok = await ensureToken()
-      const query = buildQuery(want)
-      const items = await searchEbay(tok, query, auctionsOnly)
-      cacheUpserts.push({
-        cache_key: key,
-        query,
-        results: items,
-        fetched_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString(),
-      })
-      return { want, items }
+  const itemsPerWant = await parallelMap(wantsToProcess, SEARCH_CONCURRENCY, async (want) => {
+    const key = cacheKey(want)
+    const cached = cacheMap.get(key)
+    const isFresh = cached && new Date(cached.expires_at).getTime() > Date.now()
+    if (!forceRefresh && isFresh) {
+      return { want, items: (cached.results as EbayItem[]) || [] }
+    }
+    let tok: string
+    try {
+      tok = await ensureToken()
+    } catch (e) {
+      throw e
+    }
+    const query = buildQuery(want)
+    const items = await searchEbay(tok, query, auctionsOnly)
+    cacheUpserts.push({
+      cache_key: key,
+      query,
+      results: items,
+      fetched_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString(),
     })
-  } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 })
+    return { want, items }
+  }).catch(e => {
+    return { error: String(e) }
+  })
+
+  if (!Array.isArray(itemsPerWant) && itemsPerWant && 'error' in itemsPerWant) {
+    return NextResponse.json({ error: itemsPerWant.error }, { status: 500 })
   }
 
   const allWants = Array.from(uniqueWants.values())
@@ -480,3 +486,19 @@ export async function POST(req: NextRequest) {
       } : undefined,
     })
   }
+
+  const seen = new Set<string>()
+  const dedupedHits = allHits.filter(h => {
+    if (hiddenIds.has(h.itemId)) return false
+    if (seen.has(h.itemId)) return false
+    seen.add(h.itemId)
+    return true
+  })
+
+  return NextResponse.json({
+    hits: dedupedHits,
+    wantCount: uniqueWants.size,
+    queriedCount: wantsToProcess.length,
+    prioritySellerStats,
+  })
+}
