@@ -71,10 +71,10 @@ export async function POST(req: NextRequest) {
       card_count: rows.length,
       uploaded_by: user.id,
       is_official: false,
-    }, { onConflict: 'year,brand,title' })
+    }, { onConflict: 'year,brand,title', ignoreDuplicates: true })
     .select('id')
-    .single()
+    .maybeSingle()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ id: data.id })
+  return NextResponse.json({ id: data?.id || null, skipped: !data })
 }
