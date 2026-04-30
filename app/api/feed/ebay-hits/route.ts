@@ -62,6 +62,17 @@ function listingMatchesSport(title: string, targetSport: string): boolean {
   return detected.has(targetSport.toLowerCase())
 }
 
+const SPORT_CATEGORY_IDS: Record<string, string> = {
+  baseball: '261328',
+  basketball: '261329',
+  football: '215',
+  hockey: '216',
+}
+function categoryIdForSport(sport: string): string | null {
+  if (!sport) return null
+  return SPORT_CATEGORY_IDS[sport.toLowerCase()] || null
+}
+
 type WantRow = {
   setSlug: string
   setTitle: string
@@ -148,7 +159,7 @@ function buildQuery(want: WantRow): string {
 }
 
 function cacheKey(want: WantRow): string {
-  return `${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${want.player.toLowerCase()}`
+  return `${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${want.player.toLowerCase()}|${want.setSport || 'any'}`
 }
 
 const GRADED_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA)\s*[:#]?\s*(\d+(?:\.\d)?)/i
@@ -213,11 +224,12 @@ function listingMatchesCard(item: EbayItem, want: WantRow): boolean {
   return true
 }
 
-async function searchEbay(token: string, query: string, auctionsOnly: boolean): Promise<EbayItem[]> {
+async function searchEbay(token: string, query: string, auctionsOnly: boolean, categoryId: string | null = null): Promise<EbayItem[]> {
   const url = new URL('https://api.ebay.com/buy/browse/v1/item_summary/search')
   url.searchParams.set('q', query)
   url.searchParams.set('limit', '50')
   url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
+  if (categoryId) url.searchParams.set('category_ids', categoryId)
   const res = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -232,7 +244,7 @@ async function searchEbay(token: string, query: string, auctionsOnly: boolean): 
   return data.itemSummaries || []
 }
 
-async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number): Promise<EbayItem[]> {
+async function searchEbayPaginated(token: string, query: string, auctionsOnly: boolean, maxResults: number, categoryId: string | null = null): Promise<EbayItem[]> {
   const PAGE_SIZE = 200
   const all: EbayItem[] = []
   let offset = 0
@@ -242,6 +254,7 @@ async function searchEbayPaginated(token: string, query: string, auctionsOnly: b
     url.searchParams.set('limit', String(PAGE_SIZE))
     url.searchParams.set('offset', String(offset))
     url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
+    if (categoryId) url.searchParams.set('category_ids', categoryId)
     const res = await fetch(url.toString(), {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -438,7 +451,8 @@ export async function POST(req: NextRequest) {
       throw e
     }
     const query = buildQuery(want)
-    const items = await searchEbay(tok, query, auctionsOnly)
+    const catId = categoryIdForSport(want.setSport)
+    const items = await searchEbay(tok, query, auctionsOnly, catId)
     cacheUpserts.push({
       cache_key: key,
       query,
@@ -458,12 +472,14 @@ export async function POST(req: NextRequest) {
   const allWants = Array.from(uniqueWants.values())
   const setYear = allWants[0]?.year || 0
   const setBrand = allWants[0]?.brand || ''
+  const setSport = allWants[0]?.setSport || ''
+  const setCategoryId = categoryIdForSport(setSport)
 
   const prioritySellerStats: Record<string, { returned: number; matched: number }> = {}
   const prioritySellerListings: { item: EbayItem; want: WantRow }[] = []
   if (setYear && setBrand) {
     for (const sellerKw of PRIORITY_SELLER_KEYWORDS) {
-      const psKey = `priority|${setYear}|${setBrand.toLowerCase()}|${sellerKw}|${auctionsOnly ? 'a' : 'all'}`
+      const psKey = `priority|${setYear}|${setBrand.toLowerCase()}|${sellerKw}|${auctionsOnly ? 'a' : 'all'}|${setSport || 'any'}`
       const { data: psCached } = await admin
         .from('ebay_search_cache')
         .select('cache_key, results, expires_at')
@@ -477,7 +493,7 @@ export async function POST(req: NextRequest) {
         try {
           const tok = await ensureToken()
           const psQuery = `${setYear} ${setBrand} ${sellerKw}`
-          psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 2000)
+          psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 2000, setCategoryId)
           cacheUpserts.push({
             cache_key: psKey,
             query: psQuery,
