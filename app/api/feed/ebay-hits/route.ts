@@ -112,7 +112,6 @@ function buildQuery(want: WantRow): string {
     String(want.year),
     want.brand,
     want.player,
-    want.cardNumber ? `#${want.cardNumber}` : '',
   ].filter(Boolean)
   return parts.join(' ').trim()
 }
