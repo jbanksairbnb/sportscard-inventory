@@ -49,6 +49,8 @@ type EbayItem = {
   itemId: string
   title: string
   price?: { value: string; currency: string }
+  currentBidPrice?: { value: string; currency: string }
+  bidCount?: number
   image?: { imageUrl: string }
   thumbnailImages?: { imageUrl: string }[]
   condition?: string
