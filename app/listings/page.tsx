@@ -229,7 +229,8 @@ function ListingsPageContent() {
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
-  const [filter, setFilter] = useState<'draft' | 'active' | 'sold' | 'all'>('active');
+   const [filter, setFilter] = useState<'draft' | 'active' | 'sold' | 'all'>('active');
+  const [searchQuery, setSearchQuery] = useState('');
   const [editing, setEditing] = useState<Partial<Listing> | null>(null);
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
@@ -322,10 +323,21 @@ function ListingsPageContent() {
     active: listings.filter(l => l.status === 'active').length,
     sold: listings.filter(l => l.status === 'sold').length,
   };
-  const filtered = useMemo(
-    () => filter === 'all' ? listings : listings.filter(l => l.status === filter),
-    [listings, filter]
-  );
+    const filtered = useMemo(() => {
+    let arr = filter === 'all' ? listings : listings.filter(l => l.status === filter);
+    const q = searchQuery.trim();
+    if (q) {
+      const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      arr = arr.filter(l => {
+        const hay = [
+          l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '',
+          l.description, l.raw_grade, l.grading_company, l.grade,
+        ].filter(Boolean).join(' ').toLowerCase();
+        return terms.every(t => hay.includes(t));
+      });
+    }
+    return arr;
+  }, [listings, filter, searchQuery]);
 
   function openNew() {
     setFormError('');
@@ -564,7 +576,7 @@ function ListingsPageContent() {
             <li>When a card sells, it moves to the <strong>Sold</strong> tab automatically and the buyer&apos;s order shows up in their Purchases.</li>
           </ol>
         </section>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 24 }}>
           {(['active', 'draft', 'sold', 'all'] as const).map(f => (
             <button
               key={f}
@@ -577,6 +589,31 @@ function ListingsPageContent() {
               </span>
             </button>
           ))}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+            border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
+            flex: 1, minWidth: 240, marginLeft: 'auto', maxWidth: 420,
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>🔍</span>
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search — multi-term (e.g. 1971 Topps Munson)"
+              style={{
+                border: 'none', outline: 'none', background: 'transparent',
+                fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)',
+              }}
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} title="Clear search"
+                style={{ background: 'transparent', border: 'none', color: 'var(--plum)', cursor: 'pointer', fontSize: 14, padding: 0 }}>×</button>
+            )}
+          </div>
+          {searchQuery && (
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
+              {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+            </span>
+          )}
         </div>
 
         {selectedIds.size > 0 && (
