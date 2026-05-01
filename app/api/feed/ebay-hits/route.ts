@@ -28,8 +28,14 @@ function rawRank(label: string | null | undefined): number | null {
 const NAME_SUFFIXES = new Set(['JR', 'JR.', 'SR', 'SR.', 'II', 'III', 'IV'])
 
 function lastNameOf(player: string): string {
-  const parts = player.trim().split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
+  // Strip team name / multi-player suffix after separators like " – ", " - ", " / ", ","
+  const namePart = player.split(/\s+[–\-\/]\s+|,/)[0].trim()
+  const parts = namePart.split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
   return parts[parts.length - 1] || ''
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 const SPORT_TEAMS: Record<string, string[]> = {
@@ -217,19 +223,30 @@ function matchesCondition(detected: ConditionDetection, want: WantRow): boolean 
 }
 
 function listingMatchesCard(item: EbayItem, want: WantRow): boolean {
-  const title = item.title.toLowerCase()
-  if (!title.includes(String(want.year))) return false
-  if (!title.includes(want.brand.toLowerCase())) return false
-  const lastName = lastNameOf(want.player).toLowerCase()
-  if (lastName.length >= 3 && !title.includes(lastName)) return false
-  if (!listingMatchesSport(item.title, want.setSport)) return false
+  const title = item.title
+  // Year: exact 4-digit word match
+  if (!new RegExp(`\\b${want.year}\\b`).test(title)) return false
+  // Brand: word match (case insensitive)
+  const brand = want.brand.trim()
+  if (brand && !new RegExp(`\\b${escapeRegex(brand)}\\b`, 'i').test(title)) return false
+  // Last name: word match (case insensitive)
+  const lastName = lastNameOf(want.player)
+  if (lastName.length >= 3 && !new RegExp(`\\b${escapeRegex(lastName)}\\b`, 'i').test(title)) return false
+  // Sport
+  if (!listingMatchesSport(title, want.setSport)) return false
+  // Card number: 1-4 digit exact match (word-boundary; allow #, no., or whitespace prefix)
+  const cardNum = want.cardNumber.trim()
+  if (cardNum && /^\d{1,4}$/.test(cardNum)) {
+    const cardRegex = new RegExp(`(^|\\s|#|no\\.?\\s*)${cardNum}(\\s|$|[^0-9])`, 'i')
+    if (!cardRegex.test(title)) return false
+  }
   return true
 }
 
 async function searchEbay(token: string, query: string, auctionsOnly: boolean, aspectFilter: string | null = null): Promise<EbayItem[]> {
   const url = new URL('https://api.ebay.com/buy/browse/v1/item_summary/search')
   url.searchParams.set('q', query)
-  url.searchParams.set('limit', '50')
+  url.searchParams.set('limit', '200')
   url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
   if (aspectFilter) url.searchParams.set('aspect_filter', aspectFilter)
   const res = await fetch(url.toString(), {
@@ -495,7 +512,7 @@ export async function POST(req: NextRequest) {
         try {
           const tok = await ensureToken()
           const psQuery = `${setYear} ${setBrand} ${sellerKw}`
-          psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 2000, setAspectFilter)
+              psItems = await searchEbayPaginated(tok, psQuery, auctionsOnly, 5000, setAspectFilter)
           cacheUpserts.push({
             cache_key: psKey,
             query: psQuery,
