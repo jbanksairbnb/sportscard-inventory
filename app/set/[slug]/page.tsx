@@ -473,6 +473,9 @@ export default function SetEditorPage() {
   const [isShared, setIsShared] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [targetEditIndex, setTargetEditIndex] = useState<number | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [bulkField, setBulkField] = useState<string>('Owned');
+  const [bulkValue, setBulkValue] = useState<string>('Yes');
   const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const [infoEditOpen, setInfoEditOpen] = useState(false);
@@ -586,6 +589,39 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     copy[index] = r;
     setRows(copy);
     scheduleAutoSave(copy);
+  }
+
+  function toggleRowSelected(origIndex: number) {
+    setSelectedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(origIndex)) next.delete(origIndex);
+      else next.add(origIndex);
+      return next;
+    });
+  }
+  function toggleSelectAllVisible() {
+    const visibleIndices = displayRows.map(r => r.origIndex);
+    const allVisibleSelected = visibleIndices.every(i => selectedRows.has(i));
+    setSelectedRows(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleIndices.forEach(i => next.delete(i));
+      else visibleIndices.forEach(i => next.add(i));
+      return next;
+    });
+  }
+  function clearSelection() { setSelectedRows(new Set()); }
+
+  function applyBulkEdit() {
+    if (selectedRows.size === 0) return;
+    let value: any = bulkValue;
+    if (bulkField === 'Grade') value = normalizeNumericGrade(bulkValue);
+    else if (CURRENCY_FIELDS.includes(bulkField as any)) {
+      const s = stripCurrency(String(bulkValue));
+      value = s === '' ? '' : toCurrency(s);
+    } else if (bulkField === 'Date Purchased') value = autoSlashDate(bulkValue);
+    const next = rows.map((r, i) => selectedRows.has(i) ? { ...r, [bulkField]: value } : r);
+    setRows(next);
+    scheduleAutoSave(next);
   }
   function onBlurCurrency(index: number, field: string) {
     const copy = [...rows];
@@ -761,6 +797,71 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           </div>
         )}
 
+        {/* Bulk edit toolbar */}
+        {selectedRows.size > 0 && (
+          <div style={{
+            position: 'sticky', top: 64, zIndex: 40,
+            background: 'var(--plum)', color: 'var(--mustard)',
+            padding: '10px 16px', marginBottom: 14,
+            borderRadius: 12, border: '2px solid var(--plum)',
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span className="eyebrow" style={{ color: 'var(--mustard)', fontSize: 11 }}>
+              {selectedRows.size} selected
+            </span>
+            <span style={{ color: 'var(--mustard)', fontSize: 12, fontWeight: 600 }}>Set</span>
+            <select value={bulkField} onChange={e => { setBulkField(e.target.value); setBulkValue(''); }}
+              style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
+              <option value="Owned">Owned</option>
+              <option value="Raw Grade">Raw Grade</option>
+              <option value="Graded">Graded</option>
+              <option value="Grading Company">Grading Company</option>
+              <option value="Grade">Grade</option>
+              <option value="Cost">Cost</option>
+              <option value="Value">Value</option>
+              <option value="Target Price">Target Price</option>
+              <option value="Sale Price">Sale Price</option>
+              <option value="Date Purchased">Date Purchased</option>
+              <option value="Purchased From">Purchased From</option>
+            </select>
+            <span style={{ color: 'var(--mustard)', fontSize: 12, fontWeight: 600 }}>to</span>
+            {bulkField === 'Owned' || bulkField === 'Graded' ? (
+              <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+                style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
+                <option value=""></option>
+                {YES_NO.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : bulkField === 'Raw Grade' ? (
+              <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+                style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
+                {RAW_GRADES.map(g => <option key={g} value={g}>{g || '(blank)'}</option>)}
+              </select>
+            ) : bulkField === 'Grading Company' ? (
+              <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+                style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
+                {COMPANIES.map(c => <option key={c} value={c}>{c || '(blank)'}</option>)}
+              </select>
+            ) : bulkField === 'Grade' ? (
+              <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+                style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
+                {GRADES_NUMERIC.map(g => <option key={g} value={g}>{g || '(blank)'}</option>)}
+              </select>
+            ) : (
+              <input value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+                placeholder={CURRENCY_FIELDS.includes(bulkField as any) ? '$0.00' : bulkField === 'Date Purchased' ? 'MM/DD/YYYY' : ''}
+                style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600, minWidth: 140 }} />
+            )}
+            <button type="button" onClick={applyBulkEdit}
+              className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
+              Apply to {selectedRows.size}
+            </button>
+            <button type="button" onClick={clearSelection}
+              className="btn btn-sm" style={{ background: 'transparent', color: 'var(--mustard)', border: '1.5px solid var(--mustard)', marginLeft: 'auto' }}>
+              Clear
+            </button>
+          </div>
+        )}
+
         {/* Table */}
         {rows.length > 0 ? (
           <section className="panel-bordered" style={{ overflow: 'hidden', padding: 0 }}>
@@ -768,6 +869,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
+                    <th style={{ ...TH_STYLE, width: 32 }}>
+                      <input type="checkbox"
+                        checked={displayRows.length > 0 && displayRows.every(r => selectedRows.has(r.origIndex))}
+                        onChange={toggleSelectAllVisible}
+                        title="Select all visible"
+                        style={{ cursor: 'pointer', accentColor: 'var(--plum)' }} />
+                    </th>
                     <SortableHeader label="Card #" />
                     <SortableHeader label="Player" />
                     <SortableHeader label="Owned" />
@@ -791,8 +899,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                   {displayRows.map(({ row, origIndex }, i) => (
                     <tr key={`${origIndex}-${i}`} style={{
                       borderTop: '1.5px solid var(--cream-warm)',
-                      background: i % 2 === 0 ? 'var(--cream)' : 'var(--paper)',
+                      background: selectedRows.has(origIndex) ? 'rgba(184, 146, 58, 0.18)' : (i % 2 === 0 ? 'var(--cream)' : 'var(--paper)'),
                     }}>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'middle', textAlign: 'center' }}>
+                        <input type="checkbox"
+                          checked={selectedRows.has(origIndex)}
+                          onChange={() => toggleRowSelected(origIndex)}
+                          style={{ cursor: 'pointer', accentColor: 'var(--plum)' }} />
+                      </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Card #"])} readOnly style={{ ...CELL_INPUT, width: 72, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
@@ -989,8 +1103,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           }}
         />
       )}
-
-      {/* Footer */}
 
       {/* Footer */}
       <footer style={{
