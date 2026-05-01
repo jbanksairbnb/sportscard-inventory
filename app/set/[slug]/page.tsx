@@ -369,19 +369,20 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
 }
 
 function SetInfoModal({ initial, onClose, onSave }: {
-  initial: { title: string; year: string; brand: string; description: string };
+  initial: { title: string; year: string; brand: string; description: string; sport: string };
   onClose: () => void;
-  onSave: (patch: { title: string; year: string; brand: string; description: string }) => void;
+  onSave: (patch: { title: string; year: string; brand: string; description: string; sport: string }) => void;
 }) {
   const [title, setTitle] = useState(initial.title);
   const [year, setYear] = useState(initial.year);
   const [brand, setBrand] = useState(initial.brand);
   const [description, setDescription] = useState(initial.description);
+  const [sport, setSport] = useState(initial.sport || 'baseball');
   const [error, setError] = useState('');
 
   function handleSave() {
     if (!title.trim()) { setError('Title is required.'); return; }
-    onSave({ title: title.trim(), year: year.trim(), brand: brand.trim(), description: description.trim() });
+    onSave({ title: title.trim(), year: year.trim(), brand: brand.trim(), description: description.trim(), sport });
   }
 
   const fieldStyle: React.CSSProperties = {
@@ -486,7 +487,7 @@ export default function SetEditorPage() {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
-    const [bulkMessage, setBulkMessage] = useState<string>('');
+  const [bulkMessage, setBulkMessage] = useState<string>('');
   const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const [infoEditOpen, setInfoEditOpen] = useState(false);
@@ -936,7 +937,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         <input value={v(row["Card #"])} readOnly style={{ ...CELL_INPUT, width: 72, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-<input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
+                        <input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Owned"])} onChange={(e) => onChangeCell(origIndex, "Owned", e.target.value)} style={CELL_SELECT}>
@@ -1025,7 +1026,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
                           onDelete={() => handleImageDelete(origIndex, 1)} />
                       </td>
-                                            <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 2"])} label="Img 2"
                           otherUrl={v(row["Image 1"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
