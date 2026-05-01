@@ -411,7 +411,7 @@ function SetInfoModal({ initial, onClose, onSave }: {
             <input value={title} onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. 1956 Topps — Base Set" style={fieldStyle} autoFocus />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr 130px', gap: 12 }}>
             <div>
               <div className="eyebrow" style={labelStyle}>Year</div>
               <input type="number" value={year} onChange={(e) => setYear(e.target.value)}
@@ -421,6 +421,15 @@ function SetInfoModal({ initial, onClose, onSave }: {
               <div className="eyebrow" style={labelStyle}>Brand</div>
               <input value={brand} onChange={(e) => setBrand(e.target.value)}
                 placeholder="Topps" style={fieldStyle} />
+            </div>
+            <div>
+              <div className="eyebrow" style={labelStyle}>Sport</div>
+              <select value={sport} onChange={(e) => setSport(e.target.value)} style={fieldStyle}>
+                <option value="baseball">Baseball</option>
+                <option value="football">Football</option>
+                <option value="basketball">Basketball</option>
+                <option value="hockey">Hockey</option>
+              </select>
             </div>
           </div>
           <div>
@@ -465,6 +474,7 @@ export default function SetEditorPage() {
   const [year, setYear] = useState<string>("");
   const [brand, setBrand] = useState<string>("");
   const [desc, setDesc] = useState<string>("");
+  const [sport, setSport] = useState<string>("baseball");
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
   const [saveStatus, setSaveStatus] = useState<string>("");
   const [showNeededOnly, setShowNeededOnly] = useState<boolean>(false);
@@ -497,6 +507,7 @@ export default function SetEditorPage() {
           setYear(data.year ? String(data.year) : "");
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
+          setSport(data.sport || "baseball");
           setRows(migrateRows(data.rows ?? []));
           setShareToken(data.share_token ?? null);
           setIsShared(!!data.share_token);
@@ -1088,13 +1099,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
 
       {infoEditOpen && (
         <SetInfoModal
-          initial={{ title: datasetTitle, year, brand, description: desc }}
+          initial={{ title: datasetTitle, year, brand, description: desc, sport }}
           onClose={() => setInfoEditOpen(false)}
           onSave={async (patch) => {
             setDatasetTitle(patch.title);
             setYear(patch.year);
             setBrand(patch.brand);
             setDesc(patch.description);
+            setSport(patch.sport);
             setInfoEditOpen(false);
             if (userId && slug && slug !== 'new') {
               const supabase = createClient();
@@ -1106,6 +1118,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                 year: Number(patch.year) || null,
                 brand: patch.brand,
                 description: patch.description,
+                sport: patch.sport,
                 owner_email: userEmail,
                 rows, row_count: rows.length,
                 owned_count: ownedCount, owned_pct: ownedPct,
