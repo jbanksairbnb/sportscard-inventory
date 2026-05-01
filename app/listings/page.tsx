@@ -554,6 +554,16 @@ function ListingsPageContent() {
       </header>
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+        <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, marginBottom: 24 }}>
+          <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
+          <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
+            <li>Click <strong>+ New Listing</strong> to add one card at a time, or <strong>📁 Bulk Upload</strong> to import a bunch at once from a CSV.</li>
+            <li>Hit <strong>⚙ Default Shipping</strong> to set the shipping options you offer — these get applied automatically to every new listing you create.</li>
+            <li>Listings start out as <strong>Draft</strong> while you finish details and add photos. When you&apos;re ready to sell, switch them to <strong>Active</strong> so they appear in the Marketplace.</li>
+            <li>Use the tabs below to filter by status. Tick the checkboxes on multiple listings and you can <strong>Activate</strong>, <strong>Pause</strong> (move back to Draft), or <strong>Delete</strong> them in bulk.</li>
+            <li>When a card sells, it moves to the <strong>Sold</strong> tab automatically and the buyer&apos;s order shows up in their Purchases.</li>
+          </ol>
+        </section>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
           {(['active', 'draft', 'sold', 'all'] as const).map(f => (
             <button
