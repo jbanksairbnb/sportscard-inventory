@@ -128,6 +128,15 @@ export default function PurchasesPage() {
       </header>
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+        <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, marginBottom: 24 }}>
+          <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
+          <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
+            <li>When you buy a card from the <Link href="/marketplace" style={{ color: 'var(--orange)', fontWeight: 700 }}>Marketplace</Link>, the order shows up here as <strong>Unpaid</strong>.</li>
+            <li>Click any order to open its details — pay the seller, message them with questions, or cancel it if it hasn&apos;t shipped yet.</li>
+            <li>As the order moves through the process, the status updates: <strong>Paid</strong> → <strong>Shipped</strong> → <strong>Completed</strong>. The seller will add tracking when they ship.</li>
+            <li>Use the tabs below to filter by status. The seller&apos;s name is clickable — it opens an email with your order info pre-filled.</li>
+          </ol>
+        </section>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
           {STATUS_FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)}
