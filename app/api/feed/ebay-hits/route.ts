@@ -29,9 +29,16 @@ const NAME_SUFFIXES = new Set(['JR', 'JR.', 'SR', 'SR.', 'II', 'III', 'IV'])
 
 function lastNameOf(player: string): string {
   // Strip team name / multi-player suffix after separators like " – ", " - ", " / ", ","
-  const namePart = player.split(/\s+[–\-\/]\s+|,/)[0].trim()
+  let namePart = player.split(/\s+[–\-\/]\s+|,/)[0].trim()
+  // Strip parentheticals like "(RC)", "(#1-132)"
+  namePart = namePart.replace(/\s*\([^)]*\)\s*/g, ' ').trim()
   const parts = namePart.split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
-  return parts[parts.length - 1] || ''
+  // Walk back from the end and pick the last alphabetic token of length >= 3
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const cleaned = parts[i].replace(/[^A-Za-z'-]/g, '')
+    if (cleaned.length >= 3) return cleaned
+  }
+  return ''
 }
 
 function escapeRegex(s: string): string {
