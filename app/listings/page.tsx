@@ -559,6 +559,7 @@ function ListingsPageContent() {
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={openNew} className="btn btn-primary btn-sm">+ New Listing</button>
             <button onClick={() => setImportOpen(true)} className="btn btn-ghost btn-sm">📁 Bulk Upload</button>
+            <button onClick={() => router.push('/fb-auctions/templates')} className="btn btn-ghost btn-sm">📣 FB Templates</button>
             <button onClick={() => setDefaultsOpen(true)} className="btn btn-ghost btn-sm">⚙ Default Shipping</button>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>
           </div>
