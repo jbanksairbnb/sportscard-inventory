@@ -37,6 +37,26 @@ type Template = {
 
 type Group = { id: string; name: string; url: string | null };
 
+type BidderRow = { id: string; name: string; fb_handle: string | null };
+
+type ActivityRow = {
+  bidder_id: string;
+  is_winner: boolean;
+  is_paid: boolean;
+  bid_amount: number | null;
+  listing_year: number | null;
+  listing_brand: string | null;
+  listing_player: string | null;
+};
+
+type BidderSuggestion = {
+  bidder: BidderRow;
+  matchCount: number;
+  wonCount: number;
+  totalSpend: number;
+  matchedListingIds: string[];
+};
+
 function substitute(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? `{${key}}`);
 }
@@ -150,6 +170,8 @@ export default function NewFbAuctionPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [bidders, setBidders] = useState<BidderRow[]>([]);
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [generated, setGenerated] = useState<{ auctionId: string; type: TemplateType; postBody: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyImage, setBusyImage] = useState<string | null>(null);
@@ -160,14 +182,20 @@ export default function NewFbAuctionPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [listingsRes, templatesRes, groupsRes] = await Promise.all([
+      const [listingsRes, templatesRes, groupsRes, biddersRes, activityRes] = await Promise.all([
         supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
         supabase.from('fb_auction_templates').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
+        supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
+        supabase.from('fb_bidder_activity').select('bidder_id, is_winner, is_paid, bid_amount, listing_year, listing_brand, listing_player').eq('user_id', user.id),
       ]);
       setListings((listingsRes.data || []) as Listing[]);
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
+      if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
+      if (activityRes.error) console.warn('fb_bidder_activity not available:', activityRes.error.message);
+      setBidders((biddersRes.data || []) as BidderRow[]);
+      setActivity((activityRes.data || []) as ActivityRow[]);
       setLoading(false);
     }
     load();
@@ -227,6 +255,43 @@ export default function NewFbAuctionPage() {
     () => selectedIds.map(id => listings.find(l => l.id === id)).filter(Boolean) as Listing[],
     [selectedIds, listings]
   );
+
+  const suggestionListings: Listing[] = useMemo(() => {
+    if (type === 'single') {
+      const l = listings.find(x => x.id === singleListingId);
+      return l ? [l] : [];
+    }
+    return selectedListings;
+  }, [type, listings, singleListingId, selectedListings]);
+
+  const bidderSuggestions: BidderSuggestion[] = useMemo(() => {
+    if (suggestionListings.length === 0 || activity.length === 0) return [];
+    const byBidder = new Map<string, BidderSuggestion>();
+    for (const l of suggestionListings) {
+      for (const a of activity) {
+        const playerMatch = !!l.player && !!a.listing_player && l.player.toLowerCase() === a.listing_player.toLowerCase();
+        const brandYearMatch = !!l.brand && !!a.listing_brand && l.brand.toLowerCase() === a.listing_brand.toLowerCase()
+          && l.year !== null && a.listing_year !== null && l.year === a.listing_year;
+        if (!playerMatch && !brandYearMatch) continue;
+        const bidder = bidders.find(b => b.id === a.bidder_id);
+        if (!bidder) continue;
+        let entry = byBidder.get(bidder.id);
+        if (!entry) {
+          entry = { bidder, matchCount: 0, wonCount: 0, totalSpend: 0, matchedListingIds: [] };
+          byBidder.set(bidder.id, entry);
+        }
+        entry.matchCount += 1;
+        if (a.is_winner) entry.wonCount += 1;
+        if (a.is_paid && a.bid_amount) entry.totalSpend += a.bid_amount;
+        if (!entry.matchedListingIds.includes(l.id)) entry.matchedListingIds.push(l.id);
+      }
+    }
+    return Array.from(byBidder.values()).sort((a, b) => {
+      if (b.wonCount !== a.wonCount) return b.wonCount - a.wonCount;
+      if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
+      return b.totalSpend - a.totalSpend;
+    }).slice(0, 12);
+  }, [suggestionListings, activity, bidders]);
 
   const canGenerate = type === 'single'
     ? !!templateId && !!singleListingId && singleAuctionTitle.trim().length > 0
@@ -431,6 +496,10 @@ export default function NewFbAuctionPage() {
                 selectedIds={selectedIds} toggleSelect={toggleSelect}
                 minBid={minBid} setMinBid={setMinBid}
               />
+            )}
+
+            {bidderSuggestions.length > 0 && (
+              <BidderSuggestionsPanel suggestions={bidderSuggestions} />
             )}
 
             <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
@@ -840,5 +909,46 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     }} className="btn btn-primary btn-sm">
       {copied ? '✓ Copied' : label}
     </button>
+  );
+}
+
+function BidderSuggestionsPanel({ suggestions }: { suggestions: BidderSuggestion[] }) {
+  const tagAllText = suggestions
+    .map(s => s.bidder.fb_handle ? `@${s.bidder.fb_handle}` : s.bidder.name)
+    .join(' ');
+  return (
+    <section className="panel-bordered" style={{
+      padding: '18px 22px', marginTop: 24,
+      background: 'rgba(56,142,142,0.06)', border: '1.5px solid var(--teal)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div className="eyebrow" style={{ fontSize: 11, color: 'var(--teal)', fontWeight: 700 }}>★ Suggested past bidders ★</div>
+        <span style={{ fontSize: 11.5, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+          Based on past bids on similar player / brand-year matches.
+        </span>
+        <div style={{ flex: 1 }} />
+        <CopyButton text={tagAllText} label={`📋 Copy all ${suggestions.length} tag${suggestions.length === 1 ? '' : 's'}`} />
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {suggestions.map(s => {
+          const tag = s.bidder.fb_handle ? `@${s.bidder.fb_handle}` : s.bidder.name;
+          return (
+            <div key={s.bidder.id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '6px 10px', background: 'var(--paper)',
+              border: '1.5px solid var(--teal)', borderRadius: 100,
+              fontSize: 12, color: 'var(--plum)',
+            }}>
+              <span style={{ fontWeight: 700 }}>{s.bidder.name}</span>
+              {s.bidder.fb_handle && <span className="mono" style={{ fontSize: 10.5, color: 'var(--teal)' }}>@{s.bidder.fb_handle}</span>}
+              <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
+                {s.matchCount} match{s.matchCount === 1 ? '' : 'es'}{s.wonCount > 0 ? ` · ${s.wonCount} won` : ''}
+              </span>
+              <CopyButton text={tag} label="📋" />
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
