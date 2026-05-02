@@ -498,10 +498,6 @@ export default function NewFbAuctionPage() {
               />
             )}
 
-            {bidderSuggestions.length > 0 && (
-              <BidderSuggestionsPanel suggestions={bidderSuggestions} />
-            )}
-
             <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button onClick={handleGenerate} disabled={!canGenerate || saving} className="btn btn-primary">
                 {saving ? 'Generating…' : type === 'single' ? 'Generate Auction' : `Generate Auction (${selectedIds.length} lot${selectedIds.length === 1 ? '' : 's'})`}
@@ -516,6 +512,10 @@ export default function NewFbAuctionPage() {
               ✓ Auction created. Copy the post and paste into your Facebook group.
               {generated.type === 'multi' && ` Then paste each lot as a comment with its image attached.`}
             </div>
+
+            {bidderSuggestions.length > 0 && (
+              <BidderSuggestionsPanel suggestions={bidderSuggestions} />
+            )}
 
             <CopyBlock label={generated.type === 'single' ? '📋 Facebook Post' : '📋 Parent Post (paste as the FB post)'} text={generated.postBody} />
 

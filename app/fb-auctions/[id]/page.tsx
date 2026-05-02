@@ -122,9 +122,22 @@ export default function ManageFbAuctionPage() {
 
       if (!aucRes.data) { router.push('/fb-auctions'); return; }
       setAuction(aucRes.data as Auction);
-      const lotsRaw = (lotsRes.data || []) as Lot[];
+      let lotsRaw = (lotsRes.data || []) as Lot[];
       // Backfill bidder_id null if the column doesn't exist yet (Phase A SQL not run).
-      setLots(lotsRaw.map(l => ({ ...l, bidder_id: l.bidder_id ?? null })));
+      lotsRaw = lotsRaw.map(l => ({ ...l, bidder_id: l.bidder_id ?? null }));
+      // If the listings join returned null on any lot, fetch them separately and merge.
+      const missing = lotsRaw.filter(l => !l.listing && l.listing_id).map(l => l.listing_id as string);
+      if (missing.length > 0) {
+        const { data: listingRows } = await supabase
+          .from('listings')
+          .select('id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade')
+          .in('id', missing);
+        const byId = new Map((listingRows || []).map((r: { id: string }) => [r.id, r]));
+        lotsRaw = lotsRaw.map(l => l.listing
+          ? l
+          : { ...l, listing: l.listing_id ? (byId.get(l.listing_id) as Lot['listing'] | undefined) || null : null });
+      }
+      setLots(lotsRaw);
       if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
       setBidders((biddersRes.data || []) as BidderRow[]);
       setLoading(false);

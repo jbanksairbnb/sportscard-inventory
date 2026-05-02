@@ -11,6 +11,7 @@ type Status = 'draft' | 'live' | 'ended' | 'settled';
 type LotRow = {
   id: string;
   lot_number: number;
+  listing_id: string | null;
   current_bid: number | null;
   bidder_name: string | null;
   bidder_fb_handle: string | null;
@@ -101,25 +102,46 @@ export default function FbAuctionsPage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
       // Auctions: try the bidder-aware select first; fall back if `bidder_id` column doesn't exist yet.
-      let aucData: unknown = null;
+      let aucData: AuctionRow[] = [];
       const { data: aucWithBidder, error: aucErr } = await supabase
         .from('fb_auctions')
-        .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
+        .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, listing_id, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       if (aucErr) {
         const fallback = await supabase
           .from('fb_auctions')
-          .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, status, listing:listings(title, year, brand, card_number, player))')
+          .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, listing_id, current_bid, bidder_name, bidder_fb_handle, status, listing:listings(title, year, brand, card_number, player))')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false });
         aucData = (fallback.data || []).map((a: { fb_auction_lots?: unknown[] }) => ({
           ...a,
           fb_auction_lots: (a.fb_auction_lots || []).map((l: object) => ({ ...l, bidder_id: null })),
-        }));
+        })) as unknown as AuctionRow[];
         if (fallback.error) console.error('fb_auctions load error:', fallback.error);
       } else {
-        aucData = aucWithBidder;
+        aucData = (aucWithBidder || []) as unknown as AuctionRow[];
+      }
+      // If the listings join returned null on any lot (FK not defined → PostgREST can't auto-resolve),
+      // fetch the listings separately and merge client-side so the lot labels render with card details.
+      const missingListingIds = new Set<string>();
+      for (const a of aucData) {
+        for (const l of (a.fb_auction_lots || [])) {
+          if (!l.listing && l.listing_id) missingListingIds.add(l.listing_id);
+        }
+      }
+      if (missingListingIds.size > 0) {
+        const { data: listingRows } = await supabase
+          .from('listings')
+          .select('id, title, year, brand, card_number, player')
+          .in('id', Array.from(missingListingIds));
+        const byId = new Map((listingRows || []).map((r: { id: string }) => [r.id, r]));
+        aucData = aucData.map(a => ({
+          ...a,
+          fb_auction_lots: (a.fb_auction_lots || []).map(l => l.listing
+            ? l
+            : { ...l, listing: l.listing_id ? (byId.get(l.listing_id) as LotRow['listing'] | undefined) || null : null }),
+        }));
       }
       // Bidders: skip silently if the table doesn't exist yet.
       const { data: bidderData, error: bidderErr } = await supabase
@@ -128,7 +150,7 @@ export default function FbAuctionsPage() {
         .eq('user_id', user.id)
         .order('name');
       if (bidderErr) console.warn('fb_bidders not available (Phase A SQL not run?):', bidderErr.message);
-      setAuctions(((aucData || []) as unknown) as AuctionRow[]);
+      setAuctions(aucData);
       setBidders((bidderData || []) as BidderRow[]);
       setLoading(false);
     }
