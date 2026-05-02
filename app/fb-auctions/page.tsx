@@ -125,16 +125,25 @@ export default function FbAuctionsPage() {
       // If the listings join returned null on any lot (FK not defined → PostgREST can't auto-resolve),
       // fetch the listings separately and merge client-side so the lot labels render with card details.
       const missingListingIds = new Set<string>();
+      let lotsWithNullId = 0;
       for (const a of aucData) {
         for (const l of (a.fb_auction_lots || [])) {
           if (!l.listing && l.listing_id) missingListingIds.add(l.listing_id);
+          if (!l.listing && !l.listing_id) lotsWithNullId++;
         }
       }
+      console.log('[fb-auctions] lot diagnostics:', {
+        totalAuctions: aucData.length,
+        lotsWithMissingJoin: missingListingIds.size,
+        lotsWithNullListingId: lotsWithNullId,
+      });
       if (missingListingIds.size > 0) {
-        const { data: listingRows } = await supabase
+        const { data: listingRows, error: listingErr } = await supabase
           .from('listings')
           .select('id, title, year, brand, card_number, player')
           .in('id', Array.from(missingListingIds));
+        if (listingErr) console.error('[fb-auctions] listings backfill error:', listingErr);
+        console.log('[fb-auctions] backfilled listings:', listingRows?.length ?? 0, 'of', missingListingIds.size);
         const byId = new Map((listingRows || []).map((r: { id: string }) => [r.id, r]));
         aucData = aucData.map(a => ({
           ...a,
