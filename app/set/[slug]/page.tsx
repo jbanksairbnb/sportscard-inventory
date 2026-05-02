@@ -487,7 +487,6 @@ export default function SetEditorPage() {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
-  const [bulkMessage, setBulkMessage] = useState<string>('');
   const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const [infoEditOpen, setInfoEditOpen] = useState(false);
@@ -632,13 +631,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
       const s = stripCurrency(String(bulkValue));
       value = s === '' ? '' : toCurrency(s);
     } else if (bulkField === 'Date Purchased') value = autoSlashDate(bulkValue);
-    const count = selectedRows.size;
     const next = rows.map((r, i) => selectedRows.has(i) ? { ...r, [bulkField]: value } : r);
     setRows(next);
     scheduleAutoSave(next);
-    const display = value === '' ? '(blank)' : String(value);
-    setBulkMessage(`✓ Updated ${count} row${count === 1 ? '' : 's'}: ${bulkField} → ${display}`);
-    setTimeout(() => setBulkMessage(''), 4000);
   }
   function onBlurCurrency(index: number, field: string) {
     const copy = [...rows];
@@ -876,15 +871,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm" style={{ background: 'transparent', color: 'var(--mustard)', border: '1.5px solid var(--mustard)', marginLeft: 'auto' }}>
               Clear
             </button>
-          </div>
-        )}
-        {bulkMessage && (
-          <div style={{
-            padding: '10px 16px', marginBottom: 14,
-            background: 'rgba(56,142,142,0.12)', border: '1.5px solid var(--teal)', borderRadius: 10,
-            fontSize: 13, color: 'var(--teal)', fontWeight: 700,
-          }}>
-            {bulkMessage}
           </div>
         )}
 

@@ -73,6 +73,7 @@ export default function EbayHitsFeed() {
   const [hits, setHits] = useState<EbayHit[]>([]);
   const [error, setError] = useState('');
   const [wantCount, setWantCount] = useState(0);
+  const [prioritySellerStats, setPrioritySellerStats] = useState<Record<string, { returned: number; matched: number }>>({});
 
   useEffect(() => {
     const supabase = createClient();
@@ -115,6 +116,7 @@ export default function EbayHitsFeed() {
       if (!res.ok) throw new Error(data.error || 'Failed to load eBay hits');
       setHits(data.hits || []);
       setWantCount(data.wantCount || 0);
+      setPrioritySellerStats(data.prioritySellerStats || {});
       setHasSearched(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load eBay hits');
@@ -260,6 +262,18 @@ export default function EbayHitsFeed() {
             Scanned {wantCount} unowned card{wantCount === 1 ? '' : 's'} from {selectedSet?.title || 'this set'} — no eBay matches{auctionsOnly ? ' from auctions' : ''} right now.
             Click <strong>Refresh</strong> to bypass the cache.
           </p>
+        </div>
+      )}
+
+      {hasSearched && Object.keys(prioritySellerStats).length > 0 && (
+        <div style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 10, padding: '8px 12px', background: 'var(--paper)', border: '1px dashed var(--rule)', borderRadius: 6 }}>
+          {Object.entries(prioritySellerStats).map(([seller, s]) => (
+            <div key={seller} className="mono">
+              Priority seller scan · <strong>{seller}</strong>: {s.returned} listing{s.returned === 1 ? '' : 's'} returned by eBay
+              {s.returned === 0 && ' (likely API-blocked or no inventory in this set)'}
+              {s.returned > 0 && ` · ${s.matched} matched a card on your want list`}
+            </div>
+          ))}
         </div>
       )}
 

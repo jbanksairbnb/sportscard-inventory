@@ -48,6 +48,7 @@ function conditionNote(l: Listing): string {
 }
 
 function listingVars(l: Listing, lotNumber?: number, minBidOverride?: string): Record<string, string> {
+  // Minimum bid is set per-auction by the user; never auto-pulled from the listing's asking price.
   const startingBid = minBidOverride !== undefined && minBidOverride !== '' ? minBidOverride : '';
   return {
     lot_number: lotNumber !== undefined ? String(lotNumber) : '',
@@ -136,12 +137,14 @@ export default function NewFbAuctionPage() {
   const [showAddGroup, setShowAddGroup] = useState(false);
   const [endsAt, setEndsAt] = useState('');
 
+  // Single-mode state
   const [singleListingId, setSingleListingId] = useState('');
   const [singleAuctionTitle, setSingleAuctionTitle] = useState('');
   const [singleBody, setSingleBody] = useState('');
   const [singleBodyTouched, setSingleBodyTouched] = useState(false);
   const [minBid, setMinBid] = useState('');
 
+  // Multi-mode state
   const [multiTitle, setMultiTitle] = useState('');
   const [multiDescription, setMultiDescription] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -172,12 +175,14 @@ export default function NewFbAuctionPage() {
 
   const filteredTemplates = useMemo(() => templates.filter(t => (t.template_type || 'multi') === type), [templates, type]);
 
+  // Auto-pick default template when type changes
   useEffect(() => {
     if (filteredTemplates.length === 0) { setTemplateId(''); return; }
     const def = filteredTemplates.find(t => t.is_default);
     setTemplateId((def || filteredTemplates[0]).id);
   }, [type, filteredTemplates]);
 
+  // Auto-fill single-card body from listing + template
   useEffect(() => {
     if (type !== 'single') return;
     const l = listings.find(x => x.id === singleListingId);
@@ -264,6 +269,7 @@ export default function NewFbAuctionPage() {
       return;
     }
 
+    // multi
     const headerVars = {
       auction_title: multiTitle.trim(),
       lot_count: String(selectedListings.length),
@@ -689,7 +695,7 @@ function MultiCardForm({ multiTitle, setMultiTitle, multiDescription, setMultiDe
               <input type="text" inputMode="decimal" value={minBid} onChange={e => setMinBid(e.target.value.replace(/[^0-9.]/g, ''))}
                 placeholder="e.g. 1" className="input-sc" style={{ width: '100%' }} />
               <div style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 3, fontStyle: 'italic' }}>
-                If set, every lot&apos;s <span className="mono">{'{starting_bid}'}</span> uses this. Leave blank for no auto-fill.
+                If set, every lot&apos;s <span className="mono">{'{starting_bid}'}</span> uses this. Leave blank to use each card&apos;s asking price.
               </div>
             </div>
           </div>

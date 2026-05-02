@@ -88,9 +88,11 @@ export default function ManageFbAuctionPage() {
   const [auction, setAuction] = useState<Auction | null>(null);
   const [lots, setLots] = useState<Lot[]>([]);
 
+  // Local edits buffer (so we can debounce save)
   const [editBuffer, setEditBuffer] = useState<Record<string, Partial<Lot>>>({});
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
 
+  // Settlement state
   const [paymentText, setPaymentText] = useState<string>('PayPal F&F to: your-paypal@email.com\nVenmo: @your-venmo');
   const [shippingByBuyer, setShippingByBuyer] = useState<Record<string, string>>({});
 
@@ -166,6 +168,9 @@ export default function ManageFbAuctionPage() {
   }
 
   async function quickSetSold(lot: Lot) {
+    patchLot(lot.id, { status: 'sold' });
+    setEditBuffer(prev => ({ ...prev, [lot.id]: { ...(prev[lot.id] || {}), status: 'sold' } }));
+    // immediate flush
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
@@ -190,6 +195,7 @@ export default function ManageFbAuctionPage() {
     setLots(prev => prev.map(l => ids.includes(l.id) ? { ...l, status: 'paid' } : l));
   }
 
+  // Group sold/paid lots by bidder for settlement
   const buyerGroups = useMemo(() => {
     const map = new Map<string, { name: string; lots: Lot[] }>();
     for (const lot of lots) {
@@ -261,6 +267,7 @@ export default function ManageFbAuctionPage() {
       </header>
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+        {/* Auction header */}
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <div className="display" style={{ fontSize: 24, color: 'var(--plum)', flex: 1, minWidth: 240 }}>{auction.title}</div>
@@ -284,6 +291,7 @@ export default function ManageFbAuctionPage() {
           </div>
         </section>
 
+        {/* Status + post URL */}
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
           <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>Auction Controls</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
@@ -316,6 +324,7 @@ export default function ManageFbAuctionPage() {
           </div>
         </section>
 
+        {/* Lots */}
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
           <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>
             Lots — track current high bids
@@ -432,6 +441,7 @@ export default function ManageFbAuctionPage() {
           )}
         </section>
 
+        {/* Settlement */}
         {(auction.status === 'ended' || auction.status === 'settled') && (
           <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
             <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Settlement — Buyer Invoices</div>

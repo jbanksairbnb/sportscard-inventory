@@ -14,6 +14,7 @@ type LotRow = {
   current_bid: number | null;
   bidder_name: string | null;
   bidder_fb_handle: string | null;
+  bidder_id: string | null;
   status: 'open' | 'sold' | 'no_sale' | 'paid';
   listing: {
     title: string | null;
@@ -22,6 +23,12 @@ type LotRow = {
     card_number: string | null;
     player: string | null;
   } | null;
+};
+
+type BidderRow = {
+  id: string;
+  name: string;
+  fb_handle: string | null;
 };
 
 type AuctionRow = {
@@ -83,22 +90,93 @@ export default function FbAuctionsPage() {
   const [editBuffer, setEditBuffer] = useState<Record<string, Partial<LotRow>>>({});
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
   const [savingPostUrls, setSavingPostUrls] = useState<Set<string>>(new Set());
+  const [userId, setUserId] = useState<string | null>(null);
+  const [bidders, setBidders] = useState<BidderRow[]>([]);
+  const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
 
   useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      const { data } = await supabase
-        .from('fb_auctions')
-        .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, status, listing:listings(title, year, brand, card_number, player))')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-      setAuctions(((data || []) as unknown) as AuctionRow[]);
+      setUserId(user.id);
+      const [{ data: aucData }, { data: bidderData }] = await Promise.all([
+        supabase
+          .from('fb_auctions')
+          .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('fb_bidders')
+          .select('id, name, fb_handle')
+          .eq('user_id', user.id)
+          .order('name'),
+      ]);
+      setAuctions(((aucData || []) as unknown) as AuctionRow[]);
+      setBidders((bidderData || []) as BidderRow[]);
       setLoading(false);
     }
     load();
   }, [router]);
+
+  const biddersByLowerName = useMemo(() => {
+    const map = new Map<string, BidderRow[]>();
+    for (const b of bidders) {
+      const k = b.name.toLowerCase();
+      const arr = map.get(k) || [];
+      arr.push(b);
+      map.set(k, arr);
+    }
+    return map;
+  }, [bidders]);
+
+  async function ensureBidderForLot(lot: LotRow, name: string | null, handle: string | null): Promise<string | null> {
+    if (!userId) return null;
+    const trimmed = (name || '').trim();
+    if (!trimmed) return null;
+    const supabase = createClient();
+    const lname = trimmed.toLowerCase();
+    const matches = biddersByLowerName.get(lname) || [];
+    let bidder: BidderRow | null = null;
+    if (handle && handle.trim()) {
+      bidder = matches.find(b => (b.fb_handle || '').toLowerCase() === handle.trim().toLowerCase()) || null;
+    } else if (matches.length === 1) {
+      bidder = matches[0];
+    } else if (matches.length > 1) {
+      // dupe — surface a warning, fall back to first match for now
+      setDupeWarnings(prev => ({ ...prev, [lot.id]: matches }));
+      bidder = matches[0];
+    }
+    if (!bidder) {
+      const { data, error } = await supabase
+        .from('fb_bidders')
+        .insert({ user_id: userId, name: trimmed, fb_handle: handle?.trim() || null })
+        .select('id, name, fb_handle')
+        .single();
+      if (error || !data) return null;
+      bidder = data as BidderRow;
+      setBidders(prev => [...prev, bidder!].sort((a, b) => a.name.localeCompare(b.name)));
+    }
+    // upsert activity row for (lot, bidder)
+    const auction = auctions.find(a => a.fb_auction_lots.some(l => l.id === lot.id));
+    const isWinner = lot.status === 'sold' || lot.status === 'paid';
+    const isPaid = lot.status === 'paid';
+    await supabase.from('fb_bidder_activity').upsert({
+      user_id: userId,
+      bidder_id: bidder.id,
+      auction_id: auction?.id,
+      lot_id: lot.id,
+      bid_amount: lot.current_bid,
+      is_winner: isWinner,
+      is_paid: isPaid,
+      listing_year: lot.listing?.year ?? null,
+      listing_brand: lot.listing?.brand ?? null,
+      listing_player: lot.listing?.player ?? null,
+      listing_card_number: lot.listing?.card_number ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'lot_id,bidder_id' });
+    return bidder.id;
+  }
 
   const filtered = useMemo(
     () => filter === 'all' ? auctions : auctions.filter(a => a.status === filter),
@@ -142,16 +220,33 @@ export default function FbAuctionsPage() {
     if (!buf) return;
     setSavingLots(prev => new Set(prev).add(lotId));
     const supabase = createClient();
+    // find the lot for context
+    let lotRef: LotRow | undefined;
+    for (const a of auctions) {
+      const l = a.fb_auction_lots.find(x => x.id === lotId);
+      if (l) { lotRef = l; break; }
+    }
+    const merged: LotRow | undefined = lotRef ? { ...lotRef, ...buf } as LotRow : undefined;
     const payload: Record<string, unknown> = {};
     if ('current_bid' in buf) payload.current_bid = buf.current_bid;
     if ('bidder_name' in buf) payload.bidder_name = buf.bidder_name?.toString().trim() || null;
     if ('bidder_fb_handle' in buf) payload.bidder_fb_handle = buf.bidder_fb_handle?.toString().trim() || null;
+
+    let bidderId: string | null = lotRef?.bidder_id ?? null;
+    if (merged && (merged.bidder_name || '').toString().trim()) {
+      bidderId = await ensureBidderForLot(merged, merged.bidder_name, merged.bidder_fb_handle);
+      if (bidderId) payload.bidder_id = bidderId;
+    } else if ('bidder_name' in buf && (!buf.bidder_name || !buf.bidder_name.toString().trim())) {
+      payload.bidder_id = null;
+      bidderId = null;
+    }
+
     const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', lotId);
     if (error) alert(error.message);
     else {
       setAuctions(prev => prev.map(a => ({
         ...a,
-        fb_auction_lots: a.fb_auction_lots.map(l => l.id === lotId ? { ...l, ...buf } : l),
+        fb_auction_lots: a.fb_auction_lots.map(l => l.id === lotId ? { ...l, ...buf, bidder_id: bidderId } : l),
       })));
       setEditBuffer(prev => { const next = { ...prev }; delete next[lotId]; return next; });
     }
@@ -217,6 +312,12 @@ export default function FbAuctionsPage() {
           </div>
         </div>
       </header>
+
+      <datalist id="fb-bidders-list">
+        {bidders.map(b => (
+          <option key={b.id} value={b.name}>{b.fb_handle ? `@${b.fb_handle}` : ''}</option>
+        ))}
+      </datalist>
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
         <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, marginBottom: 24 }}>
@@ -310,6 +411,7 @@ export default function FbAuctionsPage() {
                     <Link href={`/fb-auctions/${a.id}`} className="btn btn-ghost btn-sm">Manage →</Link>
                   </div>
 
+                  {/* Post URL — clickable when set, editable when blank */}
                   <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>FB POST</span>
                     {a.post_url ? (
@@ -354,12 +456,22 @@ export default function FbAuctionsPage() {
                                 onBlur={() => flushLot(lot.id)}
                                 placeholder="High bid $"
                                 style={{ width: '100%', padding: '4px 8px', fontSize: 12, border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)' }} />
-                              <input type="text"
-                                defaultValue={bidder || ''}
-                                onChange={e => patchLot(lot.id, { bidder_name: e.target.value })}
-                                onBlur={() => flushLot(lot.id)}
-                                placeholder="High bidder"
-                                style={{ width: '100%', padding: '4px 8px', fontSize: 12, border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)' }} />
+                              <div style={{ position: 'relative' }}>
+                                <input type="text"
+                                  list="fb-bidders-list"
+                                  defaultValue={bidder || ''}
+                                  onChange={e => patchLot(lot.id, { bidder_name: e.target.value })}
+                                  onBlur={() => flushLot(lot.id)}
+                                  placeholder="High bidder"
+                                  style={{ width: '100%', padding: '4px 8px', fontSize: 12, border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)' }} />
+                                {dupeWarnings[lot.id] && dupeWarnings[lot.id].length > 1 && (
+                                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)', borderRadius: 4, padding: '4px 6px', fontSize: 10, zIndex: 10 }}>
+                                    ⚠ {dupeWarnings[lot.id].length} bidders named &ldquo;{bidder}&rdquo;. Add an FB handle to disambiguate.
+                                    <button onClick={() => setDupeWarnings(prev => { const n = { ...prev }; delete n[lot.id]; return n; })}
+                                      style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'var(--plum)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+                                  </div>
+                                )}
+                              </div>
                               <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)', textAlign: 'right' }}>
                                 {isSaving ? 'Saving…' : dirty ? 'Unsaved' : ''}
                               </div>

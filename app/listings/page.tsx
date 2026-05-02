@@ -229,7 +229,7 @@ function ListingsPageContent() {
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
-   const [filter, setFilter] = useState<'draft' | 'active' | 'sold' | 'all'>('active');
+  const [filter, setFilter] = useState<'draft' | 'active' | 'sold' | 'all'>('active');
   const [searchQuery, setSearchQuery] = useState('');
   const [editing, setEditing] = useState<Partial<Listing> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -323,7 +323,7 @@ function ListingsPageContent() {
     active: listings.filter(l => l.status === 'active').length,
     sold: listings.filter(l => l.status === 'sold').length,
   };
-    const filtered = useMemo(() => {
+  const filtered = useMemo(() => {
     let arr = filter === 'all' ? listings : listings.filter(l => l.status === filter);
     const q = searchQuery.trim();
     if (q) {
@@ -560,6 +560,7 @@ function ListingsPageContent() {
             <button onClick={openNew} className="btn btn-primary btn-sm">+ New Listing</button>
             <button onClick={() => setImportOpen(true)} className="btn btn-ghost btn-sm">📁 Bulk Upload</button>
             <button onClick={() => router.push('/listings/scan-inbox')} className="btn btn-ghost btn-sm">📷 Scan Inbox</button>
+            <button onClick={() => router.push('/listings/scan-from-set')} className="btn btn-ghost btn-sm">📚 Scan from Set</button>
             <button onClick={() => router.push('/fb-auctions')} className="btn btn-ghost btn-sm">📣 FB Auctions</button>
             <button onClick={() => setDefaultsOpen(true)} className="btn btn-ghost btn-sm">⚙ Default Shipping</button>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>

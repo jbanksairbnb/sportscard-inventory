@@ -106,8 +106,16 @@ export default function ScanInboxPage() {
     return arr.slice(0, 12);
   }, [listings, searchQuery, onlyMissing]);
 
-  useEffect(() => { setHighlightIdx(0); }, [searchQuery, currentIdx, onlyMissing]);
-  useEffect(() => { setCurrentIdx(0); setPairStatuses({}); setPairListings({}); setSearchQuery(''); }, [files, mode]);
+  useEffect(() => {
+    setHighlightIdx(0);
+  }, [searchQuery, currentIdx, onlyMissing]);
+
+  useEffect(() => {
+    setCurrentIdx(0);
+    setPairStatuses({});
+    setPairListings({});
+    setSearchQuery('');
+  }, [files, mode]);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -230,6 +238,7 @@ export default function ScanInboxPage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Scan Inbox ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Link href="/listings/scan-from-set" className="btn btn-ghost btn-sm">↔ From Set</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
@@ -247,6 +256,7 @@ export default function ScanInboxPage() {
           </ol>
         </section>
 
+        {/* Mode + drop */}
         {pairs.length === 0 && (
           <>
             <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
@@ -293,6 +303,7 @@ export default function ScanInboxPage() {
           </>
         )}
 
+        {/* Pair matcher */}
         {pairs.length > 0 && (
           <>
             <section className="panel-bordered" style={{ padding: '14px 18px', marginBottom: 18 }}>
@@ -314,6 +325,7 @@ export default function ScanInboxPage() {
             {currentPair && (
               <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
                 <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                  {/* Thumbnails */}
                   <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
                     {currentPair.front && (
                       <div style={{ textAlign: 'center' }}>
@@ -337,6 +349,7 @@ export default function ScanInboxPage() {
                     )}
                   </div>
 
+                  {/* Search + match */}
                   <div style={{ flex: 1, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                       <label className="input-label" style={{ marginBottom: 0 }}>Match to listing</label>
@@ -418,6 +431,7 @@ export default function ScanInboxPage() {
               </section>
             )}
 
+            {/* Per-pair status list */}
             <section className="panel-bordered" style={{ padding: '16px 20px' }}>
               <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 8 }}>All pairs</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>

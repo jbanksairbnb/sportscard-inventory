@@ -174,7 +174,7 @@ function MarketplacePageInner() {
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
         <div className="panel-bordered" style={{ padding: '16px 20px', marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-       <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search — multiple terms supported (e.g. 1971 Topps Munson)"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search — multiple terms supported (e.g. 1971 Topps Munson)"
             style={{
               flex: 1, minWidth: 220, border: '2px solid var(--plum)', borderRadius: 8,
               padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: 13.5,

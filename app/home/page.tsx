@@ -1037,7 +1037,7 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
           const inner = (
-                           <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
+              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
                 <div style={{
                   width: 58, height: 58,
                   background: color, color: 'var(--cream)',
@@ -1352,7 +1352,6 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
             border: '2px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', width: 260,
           }}>
             <SearchIcon size={14} />
-                        <SearchIcon size={14} />
             <input
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
