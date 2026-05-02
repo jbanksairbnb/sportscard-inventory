@@ -100,7 +100,7 @@ export default function FbAuctionsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [{ data: aucData }, { data: bidderData }] = await Promise.all([
+      const [aucRes, bidderRes] = await Promise.all([
         supabase
           .from('fb_auctions')
           .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
@@ -112,8 +112,14 @@ export default function FbAuctionsPage() {
           .eq('user_id', user.id)
           .order('name'),
       ]);
-      setAuctions(((aucData || []) as unknown) as AuctionRow[]);
-      setBidders((bidderData || []) as BidderRow[]);
+      if (aucRes.error) {
+        console.error('fb_auctions query failed:', aucRes.error);
+      }
+      if (bidderRes.error) {
+        console.error('fb_bidders query failed:', bidderRes.error);
+      }
+      setAuctions(((aucRes.data || []) as unknown) as AuctionRow[]);
+      setBidders((bidderRes.data || []) as BidderRow[]);
       setLoading(false);
     }
     load();
@@ -307,6 +313,7 @@ export default function FbAuctionsPage() {
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <Link href="/fb-auctions/new" className="btn btn-primary btn-sm">+ New Auction</Link>
             <Link href="/fb-auctions/templates" className="btn btn-ghost btn-sm">Templates</Link>
+            <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Bidders</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>

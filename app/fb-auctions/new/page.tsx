@@ -41,6 +41,96 @@ function substitute(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? `{${key}}`);
 }
 
+const NAME_SUFFIXES = new Set(['JR', 'JR.', 'SR', 'SR.', 'II', 'III', 'IV']);
+
+function lastNameOf(player: string | null | undefined): string {
+  if (!player) return '';
+  const parts = player.trim().split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()));
+  return parts[parts.length - 1] || '';
+}
+
+type TagSuggestion = {
+  bidderId: string;
+  name: string;
+  fbHandle: string | null;
+  score: number;
+  groupMatch: boolean;
+  decadeMatches: number;
+  nameMatches: number;
+};
+
+async function computeSuggestedTags(
+  supabase: ReturnType<typeof createClient>,
+  uid: string,
+  groupIdForAuction: string | null,
+  cards: { year: number | null; player: string | null }[],
+): Promise<TagSuggestion[]> {
+  const { data: activity, error: actErr } = await supabase
+    .from('fb_bidder_activity')
+    .select('bidder_id, auction_id, listing_year, listing_player')
+    .eq('user_id', uid);
+  if (actErr) { console.error('fb_bidder_activity load failed:', actErr); return []; }
+  if (!activity || activity.length === 0) return [];
+
+  const auctionIds = Array.from(new Set(activity.map(a => a.auction_id).filter(Boolean) as string[]));
+  const auctionGroupById = new Map<string, string | null>();
+  if (auctionIds.length > 0 && groupIdForAuction) {
+    const { data: aucs } = await supabase
+      .from('fb_auctions')
+      .select('id, group_id')
+      .in('id', auctionIds);
+    for (const a of aucs || []) auctionGroupById.set(a.id as string, (a.group_id as string | null) ?? null);
+  }
+
+  const bidderIds = Array.from(new Set(activity.map(a => a.bidder_id).filter(Boolean) as string[]));
+  if (bidderIds.length === 0) return [];
+  const { data: bidders } = await supabase
+    .from('fb_bidders')
+    .select('id, name, fb_handle')
+    .in('id', bidderIds);
+  const bidderById = new Map<string, { id: string; name: string; fb_handle: string | null }>();
+  for (const b of (bidders || []) as { id: string; name: string; fb_handle: string | null }[]) bidderById.set(b.id, b);
+
+  const decades = new Set<number>();
+  const lastNames = new Set<string>();
+  for (const c of cards) {
+    if (c.year) decades.add(Math.floor(c.year / 10) * 10);
+    const ln = lastNameOf(c.player).toLowerCase();
+    if (ln) lastNames.add(ln);
+  }
+
+  const tally = new Map<string, { groupMatch: boolean; decadeMatches: number; nameMatches: number }>();
+  for (const a of activity) {
+    if (!a.bidder_id) continue;
+    const e = tally.get(a.bidder_id) || { groupMatch: false, decadeMatches: 0, nameMatches: 0 };
+    if (groupIdForAuction && a.auction_id) {
+      const g = auctionGroupById.get(a.auction_id);
+      if (g === groupIdForAuction) e.groupMatch = true;
+    }
+    if (a.listing_year != null) {
+      const d = Math.floor(Number(a.listing_year) / 10) * 10;
+      if (decades.has(d)) e.decadeMatches += 1;
+    }
+    const ln = lastNameOf(a.listing_player).toLowerCase();
+    if (ln && lastNames.has(ln)) e.nameMatches += 1;
+    tally.set(a.bidder_id, e);
+  }
+
+  const out: TagSuggestion[] = [];
+  for (const [bidderId, s] of tally) {
+    const score = (s.groupMatch ? 2 : 0) + s.decadeMatches + s.nameMatches;
+    if (score === 0) continue;
+    const b = bidderById.get(bidderId);
+    if (!b) continue;
+    out.push({
+      bidderId, name: b.name, fbHandle: b.fb_handle, score,
+      groupMatch: s.groupMatch, decadeMatches: s.decadeMatches, nameMatches: s.nameMatches,
+    });
+  }
+  out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  return out;
+}
+
 function conditionNote(l: Listing): string {
   if (l.condition_type === 'graded' && l.grading_company && l.grade) return `${l.grading_company} ${l.grade}`;
   if (l.condition_type === 'raw' && l.raw_grade) return l.raw_grade;
@@ -150,7 +240,7 @@ export default function NewFbAuctionPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [generated, setGenerated] = useState<{ auctionId: string; type: TemplateType; postBody: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }> } | null>(null);
+  const [generated, setGenerated] = useState<{ auctionId: string; type: TemplateType; postBody: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }>; tags: TagSuggestion[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyImage, setBusyImage] = useState<string | null>(null);
 
@@ -261,9 +351,11 @@ export default function NewFbAuctionPage() {
       }).select().single();
       if (lotErr) { alert(lotErr.message); setSaving(false); return; }
 
+      const tags = await computeSuggestedTags(supabase, userId, groupId || null, [{ year: l.year, player: l.player }]);
       setGenerated({
         auctionId: auc.id, type: 'single', postBody: fullPost,
         lots: [{ id: lotData.id, lot_number: 1, listing: l, text: fullPost }],
+        tags,
       });
       setSaving(false);
       return;
@@ -304,7 +396,11 @@ export default function NewFbAuctionPage() {
       };
     });
 
-    setGenerated({ auctionId: auc.id, type: 'multi', postBody: parentPost, lots });
+    const tags = await computeSuggestedTags(
+      supabase, userId, groupId || null,
+      selectedListings.map(l => ({ year: l.year, player: l.player })),
+    );
+    setGenerated({ auctionId: auc.id, type: 'multi', postBody: parentPost, lots, tags });
     setSaving(false);
   }
 
@@ -449,6 +545,8 @@ export default function NewFbAuctionPage() {
             </div>
 
             <CopyBlock label={generated.type === 'single' ? '📋 Facebook Post' : '📋 Parent Post (paste as the FB post)'} text={generated.postBody} />
+
+            <SuggestedTagsPanel tags={generated.tags} />
 
             {generated.type === 'single' && generated.lots[0] && (
               <div className="panel-bordered" style={{ padding: 18, marginTop: 16 }}>
@@ -808,6 +906,7 @@ function Header() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <Link href="/fb-auctions" className="btn btn-ghost btn-sm">All Auctions</Link>
           <Link href="/fb-auctions/templates" className="btn btn-ghost btn-sm">Templates</Link>
+          <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Bidders</Link>
           <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
           <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
         </div>
@@ -826,6 +925,64 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
         whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: '0 0 8px',
       }}>{text}</pre>
       <CopyButton text={text} label="📋 Copy" />
+    </div>
+  );
+}
+
+function SuggestedTagsPanel({ tags }: { tags: TagSuggestion[] }) {
+  if (!tags || tags.length === 0) {
+    return (
+      <div className="panel-bordered" style={{ padding: 14, marginTop: 16, borderStyle: 'dashed' }}>
+        <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 6 }}>★ Suggested tags ★</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+          No prior bidder activity matches these cards yet. Tags will populate after you start tracking bidders on past auctions.
+        </div>
+      </div>
+    );
+  }
+  const withHandle = tags.filter(t => !!t.fbHandle);
+  const noHandle = tags.filter(t => !t.fbHandle);
+  const handlesText = withHandle.map(t => `@${t.fbHandle}`).join(' ');
+  return (
+    <div className="panel-bordered" style={{ padding: 18, marginTop: 16 }}>
+      <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 8 }}>★ Suggested tags ★</div>
+      <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginBottom: 10 }}>
+        Past bidders likely interested in these cards (matched by FB group, decade, and player last name).
+      </div>
+      {withHandle.length > 0 && (
+        <>
+          <pre style={{
+            background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 6,
+            padding: '12px 14px', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--plum)',
+            whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: '0 0 8px',
+          }}>{handlesText}</pre>
+          <CopyButton text={handlesText} label="📋 Copy tag handles" />
+        </>
+      )}
+      <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {tags.map(t => {
+          const reasons: string[] = [];
+          if (t.groupMatch) reasons.push('group');
+          if (t.decadeMatches > 0) reasons.push(`${t.decadeMatches}× decade`);
+          if (t.nameMatches > 0) reasons.push(`${t.nameMatches}× player`);
+          return (
+            <span key={t.bidderId} title={reasons.join(' · ')} style={{
+              fontSize: 11, padding: '3px 8px', borderRadius: 100,
+              background: t.fbHandle ? 'rgba(56,142,142,0.18)' : 'rgba(184,146,58,0.18)',
+              border: '1.5px solid ' + (t.fbHandle ? 'var(--teal)' : 'var(--mustard)'),
+              color: 'var(--plum)', fontWeight: 600,
+            }}>
+              {t.fbHandle ? `@${t.fbHandle}` : t.name}
+              <span style={{ color: 'var(--ink-mute)', marginLeft: 4 }}>({t.score})</span>
+            </span>
+          );
+        })}
+      </div>
+      {noHandle.length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--ink-mute)' }}>
+          Also consider (no FB handle on file): {noHandle.map(t => t.name).join(', ')}
+        </div>
+      )}
     </div>
   );
 }
