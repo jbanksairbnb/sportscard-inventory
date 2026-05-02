@@ -47,7 +47,9 @@ function conditionNote(l: Listing): string {
   return '';
 }
 
-function listingVars(l: Listing, lotNumber?: number): Record<string, string> {
+function listingVars(l: Listing, lotNumber?: number, minBidOverride?: string): Record<string, string> {
+  // Minimum bid is set per-auction by the user; never auto-pulled from the listing's asking price.
+  const startingBid = minBidOverride !== undefined && minBidOverride !== '' ? minBidOverride : '';
   return {
     lot_number: lotNumber !== undefined ? String(lotNumber) : '',
     year: l.year ? String(l.year) : '',
@@ -59,11 +61,10 @@ function listingVars(l: Listing, lotNumber?: number): Record<string, string> {
     grading_company: l.grading_company || '',
     raw_grade: l.raw_grade || '',
     condition_note: conditionNote(l),
-    starting_bid: l.asking_price !== null && l.asking_price !== undefined ? String(l.asking_price) : '',
+    starting_bid: startingBid,
     description: l.description || '',
   };
 }
-
 function defaultAuctionTitle(l: Listing): string {
   const parts = [
     l.year ? String(l.year) : '',
@@ -139,6 +140,7 @@ export default function NewFbAuctionPage() {
   const [singleAuctionTitle, setSingleAuctionTitle] = useState('');
   const [singleBody, setSingleBody] = useState('');
   const [singleBodyTouched, setSingleBodyTouched] = useState(false);
+  const [minBid, setMinBid] = useState('');
 
   const [multiTitle, setMultiTitle] = useState('');
   const [multiDescription, setMultiDescription] = useState('');
@@ -186,9 +188,10 @@ export default function NewFbAuctionPage() {
       return;
     }
     if (!singleBodyTouched && t) {
-      setSingleBody(substitute(t.post_header || '', listingVars(l)));
+      setSingleBody(substitute(t.post_header || '', listingVars(l, undefined, minBid)));
     }
     if (!singleAuctionTitle) setSingleAuctionTitle(defaultAuctionTitle(l));
+  }, [type, singleListingId, templateId, listings, templates, singleBodyTouched, singleAuctionTitle, minBid]);
   }, [type, singleListingId, templateId, listings, templates, singleBodyTouched, singleAuctionTitle]);
 
   const filteredListings = useMemo(() => {
@@ -292,7 +295,7 @@ export default function NewFbAuctionPage() {
         id: (inserted?.id as string) || '',
         lot_number: idx + 1,
         listing: l,
-        text: substitute(t.lot_template || '', listingVars(l, idx + 1)),
+        text: substitute(t.lot_template || '', listingVars(l, idx + 1, minBid)),
       };
     });
 
@@ -342,11 +345,11 @@ export default function NewFbAuctionPage() {
             <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
               <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>1. Auction Type</div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <button onClick={() => { setType('single'); setSelectedIds([]); setMultiTitle(''); setMultiDescription(''); }}
+                <button onClick={() => { setType('single'); setSelectedIds([]); setMultiTitle(''); setMultiDescription(''); setMinBid(''); }}
                   className={type === 'single' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
                   Single Card
                 </button>
-                <button onClick={() => { setType('multi'); setSingleListingId(''); setSingleBody(''); setSingleAuctionTitle(''); setSingleBodyTouched(false); }}
+                <button onClick={() => { setType('multi'); setSingleListingId(''); setSingleBody(''); setSingleAuctionTitle(''); setSingleBodyTouched(false); setMinBid(''); }}
                   className={type === 'multi' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
                   Multi-Card
                 </button>
@@ -408,6 +411,8 @@ export default function NewFbAuctionPage() {
                 setSingleBody={(s) => { setSingleBody(s); setSingleBodyTouched(true); }}
                 onResetBody={() => { setSingleBodyTouched(false); }}
                 template={templates.find(x => x.id === templateId)}
+                minBid={minBid}
+                setMinBid={setMinBid}
               />
             )}
 
@@ -419,6 +424,7 @@ export default function NewFbAuctionPage() {
                 searchQuery={searchQuery} setSearchQuery={setSearchQuery}
                 filteredListings={filteredListings}
                 selectedIds={selectedIds} toggleSelect={toggleSelect}
+                minBid={minBid} setMinBid={setMinBid}
               />
             )}
 
@@ -513,7 +519,7 @@ export default function NewFbAuctionPage() {
               <button onClick={() => {
                 setGenerated(null); setSelectedIds([]); setMultiTitle(''); setMultiDescription('');
                 setSingleListingId(''); setSingleBody(''); setSingleAuctionTitle(''); setSingleBodyTouched(false);
-                setEndsAt('');
+                setEndsAt(''); setMinBid('');
               }} className="btn btn-outline">
                 ← New auction
               </button>
@@ -526,7 +532,7 @@ export default function NewFbAuctionPage() {
   );
 }
 
-function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListings, singleListingId, setSingleListingId, singleAuctionTitle, setSingleAuctionTitle, singleBody, setSingleBody, onResetBody, template }: {
+function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListings, singleListingId, setSingleListingId, singleAuctionTitle, setSingleAuctionTitle, singleBody, setSingleBody, onResetBody, template, minBid, setMinBid }: {
   listings: Listing[];
   searchQuery: string; setSearchQuery: (s: string) => void;
   filteredListings: Listing[];
@@ -535,6 +541,7 @@ function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListing
   singleBody: string; setSingleBody: (s: string) => void;
   onResetBody: () => void;
   template: Template | undefined;
+  minBid: string; setMinBid: (s: string) => void;
 }) {
   const selected = listings.find(l => l.id === singleListingId);
 
@@ -608,11 +615,21 @@ function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListing
       {selected && (
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
           <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>3. Edit Post Body</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div>
-              <label className="input-label">Auction Title (internal label, also used as the auction record name) *</label>
-              <input value={singleAuctionTitle} onChange={e => setSingleAuctionTitle(e.target.value)}
-                placeholder="1968 Topps Roberto Clemente #150" className="input-sc" style={{ width: '100%' }} />
+           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+              <div>
+                <label className="input-label">Auction Title (internal label, also used as the auction record name) *</label>
+                <input value={singleAuctionTitle} onChange={e => setSingleAuctionTitle(e.target.value)}
+                  placeholder="1968 Topps Roberto Clemente #150" className="input-sc" style={{ width: '100%' }} />
+              </div>
+              <div>
+                <label className="input-label">Minimum Bid (optional)</label>
+                <input type="text" inputMode="decimal" value={minBid} onChange={e => setMinBid(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder="e.g. 1" className="input-sc" style={{ width: '100%' }} />
+                <div style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 3, fontStyle: 'italic' }}>
+                  If your template uses <span className="mono">{'{starting_bid}'}</span>, this fills it. Leave blank to type SB manually in the body below.
+                </div>
+              </div>
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -648,23 +665,34 @@ function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListing
   );
 }
 
-function MultiCardForm({ multiTitle, setMultiTitle, multiDescription, setMultiDescription, listings, searchQuery, setSearchQuery, filteredListings, selectedIds, toggleSelect }: {
+function MultiCardForm({ multiTitle, setMultiTitle, multiDescription, setMultiDescription, listings, searchQuery, setSearchQuery, filteredListings, selectedIds, toggleSelect, minBid, setMinBid }: {
   multiTitle: string; setMultiTitle: (s: string) => void;
   multiDescription: string; setMultiDescription: (s: string) => void;
   listings: Listing[];
   searchQuery: string; setSearchQuery: (s: string) => void;
   filteredListings: Listing[];
   selectedIds: string[]; toggleSelect: (id: string) => void;
+  minBid: string; setMinBid: (s: string) => void;
 }) {
   return (
     <>
-      <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
+           <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
         <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>2. Parent Post Title & Description</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div>
-            <label className="input-label">Auction Title *</label>
-            <input value={multiTitle} onChange={e => setMultiTitle(e.target.value)}
-              placeholder="🌟 1971 Topps Mixed HOFers Auction 🌟" className="input-sc" style={{ width: '100%' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+            <div>
+              <label className="input-label">Auction Title * (typed fresh each auction)</label>
+              <input value={multiTitle} onChange={e => setMultiTitle(e.target.value)}
+                placeholder="🌟 1971 Topps Mixed HOFers Auction 🌟" className="input-sc" style={{ width: '100%' }} />
+            </div>
+            <div>
+              <label className="input-label">Minimum Bid (optional, applies to all lots)</label>
+              <input type="text" inputMode="decimal" value={minBid} onChange={e => setMinBid(e.target.value.replace(/[^0-9.]/g, ''))}
+                placeholder="e.g. 1" className="input-sc" style={{ width: '100%' }} />
+              <div style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 3, fontStyle: 'italic' }}>
+                If set, every lot&apos;s <span className="mono">{'{starting_bid}'}</span> uses this. Leave blank for no auto-fill.
+              </div>
+            </div>
           </div>
           <div>
             <label className="input-label">Description (above the auction info on your post)</label>
