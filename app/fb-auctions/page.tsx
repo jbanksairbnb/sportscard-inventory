@@ -114,12 +114,10 @@ export default function FbAuctionsPage() {
       ]);
       if (aucRes.error) {
         console.error('fb_auctions query failed:', aucRes.error);
-        alert('Failed to load auctions: ' + aucRes.error.message);
       }
       if (bidderRes.error) {
         console.error('fb_bidders query failed:', bidderRes.error);
       }
-      console.log('fb_auctions query: user.id=', user.id, 'rows=', aucRes.data?.length ?? 0);
       setAuctions(((aucRes.data || []) as unknown) as AuctionRow[]);
       setBidders((bidderRes.data || []) as BidderRow[]);
       setLoading(false);
