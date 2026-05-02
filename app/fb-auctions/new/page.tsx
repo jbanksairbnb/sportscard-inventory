@@ -48,7 +48,6 @@ function conditionNote(l: Listing): string {
 }
 
 function listingVars(l: Listing, lotNumber?: number, minBidOverride?: string): Record<string, string> {
-  // Minimum bid is set per-auction by the user; never auto-pulled from the listing's asking price.
   const startingBid = minBidOverride !== undefined && minBidOverride !== '' ? minBidOverride : '';
   return {
     lot_number: lotNumber !== undefined ? String(lotNumber) : '',
@@ -65,6 +64,7 @@ function listingVars(l: Listing, lotNumber?: number, minBidOverride?: string): R
     description: l.description || '',
   };
 }
+
 function defaultAuctionTitle(l: Listing): string {
   const parts = [
     l.year ? String(l.year) : '',
@@ -192,7 +192,6 @@ export default function NewFbAuctionPage() {
     }
     if (!singleAuctionTitle) setSingleAuctionTitle(defaultAuctionTitle(l));
   }, [type, singleListingId, templateId, listings, templates, singleBodyTouched, singleAuctionTitle, minBid]);
-  }, [type, singleListingId, templateId, listings, templates, singleBodyTouched, singleAuctionTitle]);
 
   const filteredListings = useMemo(() => {
     const q = searchQuery.trim();
@@ -615,7 +614,7 @@ function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListing
       {selected && (
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
           <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>3. Edit Post Body</div>
-           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
               <div>
                 <label className="input-label">Auction Title (internal label, also used as the auction record name) *</label>
@@ -676,7 +675,7 @@ function MultiCardForm({ multiTitle, setMultiTitle, multiDescription, setMultiDe
 }) {
   return (
     <>
-           <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
+      <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
         <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>2. Parent Post Title & Description</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
