@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
+type TemplateType = 'single' | 'multi';
+
 type Listing = {
   id: string;
   title: string;
@@ -26,6 +28,7 @@ type Listing = {
 type Template = {
   id: string;
   name: string;
+  template_type: TemplateType;
   post_header: string;
   post_footer: string;
   lot_template: string;
@@ -39,13 +42,36 @@ function substitute(template: string, vars: Record<string, string>): string {
 }
 
 function conditionNote(l: Listing): string {
-  if (l.condition_type === 'graded' && l.grading_company && l.grade) {
-    return `${l.grading_company} ${l.grade}`;
-  }
-  if (l.condition_type === 'raw' && l.raw_grade) {
-    return l.raw_grade;
-  }
+  if (l.condition_type === 'graded' && l.grading_company && l.grade) return `${l.grading_company} ${l.grade}`;
+  if (l.condition_type === 'raw' && l.raw_grade) return l.raw_grade;
   return '';
+}
+
+function listingVars(l: Listing, lotNumber?: number): Record<string, string> {
+  return {
+    lot_number: lotNumber !== undefined ? String(lotNumber) : '',
+    year: l.year ? String(l.year) : '',
+    brand: l.brand || '',
+    player: l.player || '',
+    card_number: l.card_number || '',
+    title: l.title || '',
+    grade: l.grade || '',
+    grading_company: l.grading_company || '',
+    raw_grade: l.raw_grade || '',
+    condition_note: conditionNote(l),
+    starting_bid: l.asking_price !== null && l.asking_price !== undefined ? String(l.asking_price) : '',
+    description: l.description || '',
+  };
+}
+
+function defaultAuctionTitle(l: Listing): string {
+  const parts = [
+    l.year ? String(l.year) : '',
+    l.brand || '',
+    l.player || '',
+    l.card_number ? `#${l.card_number}` : '',
+  ].filter(Boolean);
+  return parts.join(' ').trim();
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -83,21 +109,14 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null): Promis
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
 async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { return false; }
 }
 
 export default function NewFbAuctionPage() {
@@ -108,19 +127,25 @@ export default function NewFbAuctionPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
 
-  const [title, setTitle] = useState('');
-  const [endsAt, setEndsAt] = useState('');
+  const [type, setType] = useState<TemplateType>('multi');
   const [templateId, setTemplateId] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groupName, setGroupName] = useState('');
   const [groupUrl, setGroupUrl] = useState('');
   const [showAddGroup, setShowAddGroup] = useState(false);
+  const [endsAt, setEndsAt] = useState('');
+
+  const [singleListingId, setSingleListingId] = useState('');
+  const [singleAuctionTitle, setSingleAuctionTitle] = useState('');
+  const [singleBody, setSingleBody] = useState('');
+  const [singleBodyTouched, setSingleBodyTouched] = useState(false);
+
+  const [multiTitle, setMultiTitle] = useState('');
+  const [multiDescription, setMultiDescription] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [generated, setGenerated] = useState<{ auctionId: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }> } | null>(null);
-  const [headerText, setHeaderText] = useState('');
-  const [footerText, setFooterText] = useState('');
+  const [generated, setGenerated] = useState<{ auctionId: string; type: TemplateType; postBody: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyImage, setBusyImage] = useState<string | null>(null);
 
@@ -138,13 +163,33 @@ export default function NewFbAuctionPage() {
       setListings((listingsRes.data || []) as Listing[]);
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
-      const def = (templatesRes.data || []).find((t: Template) => t.is_default);
-      if (def) setTemplateId(def.id);
-      else if (templatesRes.data && templatesRes.data.length > 0) setTemplateId(templatesRes.data[0].id);
       setLoading(false);
     }
     load();
   }, [router]);
+
+  const filteredTemplates = useMemo(() => templates.filter(t => (t.template_type || 'multi') === type), [templates, type]);
+
+  useEffect(() => {
+    if (filteredTemplates.length === 0) { setTemplateId(''); return; }
+    const def = filteredTemplates.find(t => t.is_default);
+    setTemplateId((def || filteredTemplates[0]).id);
+  }, [type, filteredTemplates]);
+
+  useEffect(() => {
+    if (type !== 'single') return;
+    const l = listings.find(x => x.id === singleListingId);
+    const t = templates.find(x => x.id === templateId);
+    if (!l) {
+      setSingleBody('');
+      setSingleAuctionTitle('');
+      return;
+    }
+    if (!singleBodyTouched && t) {
+      setSingleBody(substitute(t.post_header || '', listingVars(l)));
+    }
+    if (!singleAuctionTitle) setSingleAuctionTitle(defaultAuctionTitle(l));
+  }, [type, singleListingId, templateId, listings, templates, singleBodyTouched, singleAuctionTitle]);
 
   const filteredListings = useMemo(() => {
     const q = searchQuery.trim();
@@ -168,10 +213,7 @@ export default function NewFbAuctionPage() {
     }).select().single();
     if (error) { alert(error.message); return; }
     setGroups(prev => [...prev, data as Group].sort((a, b) => a.name.localeCompare(b.name)));
-    setGroupId(data.id);
-    setGroupName('');
-    setGroupUrl('');
-    setShowAddGroup(false);
+    setGroupId(data.id); setGroupName(''); setGroupUrl(''); setShowAddGroup(false);
   }
 
   const selectedListings: Listing[] = useMemo(
@@ -179,71 +221,82 @@ export default function NewFbAuctionPage() {
     [selectedIds, listings]
   );
 
-  const canGenerate = title.trim() && templateId && selectedListings.length > 0;
+  const canGenerate = type === 'single'
+    ? !!templateId && !!singleListingId && singleAuctionTitle.trim().length > 0
+    : !!templateId && multiTitle.trim().length > 0 && selectedListings.length > 0;
 
   async function handleGenerate() {
     if (!canGenerate || !userId) return;
     const t = templates.find(x => x.id === templateId);
     if (!t) return;
     setSaving(true);
+    const supabase = createClient();
+
+    if (type === 'single') {
+      const l = listings.find(x => x.id === singleListingId);
+      if (!l) { setSaving(false); return; }
+      const auctionTitle = singleAuctionTitle.trim();
+      const body = singleBody.trim();
+      const footer = (t.post_footer || '').trim();
+      const fullPost = [body, footer].filter(Boolean).join('\n\n');
+
+      const { data: auc, error: aucErr } = await supabase.from('fb_auctions').insert({
+        user_id: userId, title: auctionTitle,
+        group_id: groupId || null, template_id: t.id,
+        ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+        status: 'draft',
+      }).select().single();
+      if (aucErr || !auc) { alert(aucErr?.message || 'Failed to create auction'); setSaving(false); return; }
+
+      const { data: lotData, error: lotErr } = await supabase.from('fb_auction_lots').insert({
+        auction_id: auc.id, user_id: userId, listing_id: l.id, lot_number: 1,
+        starting_bid: l.asking_price, status: 'open',
+      }).select().single();
+      if (lotErr) { alert(lotErr.message); setSaving(false); return; }
+
+      setGenerated({
+        auctionId: auc.id, type: 'single', postBody: fullPost,
+        lots: [{ id: lotData.id, lot_number: 1, listing: l, text: fullPost }],
+      });
+      setSaving(false);
+      return;
+    }
 
     const headerVars = {
-      auction_title: title.trim(),
+      auction_title: multiTitle.trim(),
       lot_count: String(selectedListings.length),
       ends_at: endsAt ? new Date(endsAt).toLocaleString() : '',
     };
-    const header = substitute(t.post_header, headerVars);
-    const footer = substitute(t.post_footer, headerVars);
+    const optionalIntro = substitute((t.post_header || '').trim(), headerVars);
+    const footer = (t.post_footer || '').trim();
+    const parentPost = [optionalIntro, multiTitle.trim(), multiDescription.trim(), footer].filter(Boolean).join('\n\n');
 
-    const supabase = createClient();
     const { data: auc, error: aucErr } = await supabase.from('fb_auctions').insert({
-      user_id: userId,
-      title: title.trim(),
-      group_id: groupId || null,
-      template_id: t.id,
+      user_id: userId, title: multiTitle.trim(),
+      group_id: groupId || null, template_id: t.id,
       ends_at: endsAt ? new Date(endsAt).toISOString() : null,
       status: 'draft',
     }).select().single();
     if (aucErr || !auc) { alert(aucErr?.message || 'Failed to create auction'); setSaving(false); return; }
 
     const lotRows = selectedListings.map((l, idx) => ({
-      auction_id: auc.id,
-      user_id: userId,
-      listing_id: l.id,
-      lot_number: idx + 1,
-      starting_bid: l.asking_price,
-      status: 'open',
+      auction_id: auc.id, user_id: userId, listing_id: l.id,
+      lot_number: idx + 1, starting_bid: l.asking_price, status: 'open',
     }));
     const { data: insertedLots, error: lotsErr } = await supabase.from('fb_auction_lots').insert(lotRows).select();
     if (lotsErr) { alert(lotsErr.message); setSaving(false); return; }
 
     const lots = selectedListings.map((l, idx) => {
       const inserted = (insertedLots || []).find((x: { lot_number: number }) => x.lot_number === idx + 1);
-      const lotVars: Record<string, string> = {
-        lot_number: String(idx + 1),
-        year: l.year ? String(l.year) : '',
-        brand: l.brand || '',
-        player: l.player || '',
-        card_number: l.card_number || '',
-        title: l.title || '',
-        grade: l.grade || '',
-        grading_company: l.grading_company || '',
-        raw_grade: l.raw_grade || '',
-        condition_note: conditionNote(l),
-        starting_bid: l.asking_price !== null && l.asking_price !== undefined ? String(l.asking_price) : '',
-        description: l.description || '',
-      };
       return {
         id: (inserted?.id as string) || '',
         lot_number: idx + 1,
         listing: l,
-        text: substitute(t.lot_template, lotVars),
+        text: substitute(t.lot_template || '', listingVars(l, idx + 1)),
       };
     });
 
-    setHeaderText(header);
-    setFooterText(footer);
-    setGenerated({ auctionId: auc.id, lots });
+    setGenerated({ auctionId: auc.id, type: 'multi', postBody: parentPost, lots });
     setSaving(false);
   }
 
@@ -260,9 +313,7 @@ export default function NewFbAuctionPage() {
     downloadBlob(blob, safe);
   }
 
-  if (loading) {
-    return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
-  }
+  if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
 
   if (templates.length === 0) {
     return (
@@ -272,7 +323,7 @@ export default function NewFbAuctionPage() {
           <div className="panel-bordered" style={{ padding: '40px 28px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No templates yet</div>
             <p style={{ color: 'var(--ink-mute)', fontSize: 14, marginBottom: 18 }}>
-              You need at least one auction template before you can create an auction.
+              Create at least one template to start generating auctions.
             </p>
             <Link href="/fb-auctions/templates" className="btn btn-primary">Create your first template →</Link>
           </div>
@@ -288,30 +339,36 @@ export default function NewFbAuctionPage() {
 
         {!generated && (
           <>
-            <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, marginBottom: 24 }}>
-              <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
-              <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
-                <li>Set the auction title and pick the template + Facebook group you&apos;re posting in.</li>
-                <li>Select the listings you want to auction. Order = selection order (lot 1 is the first you tick).</li>
-                <li>Click <strong>Generate Auction</strong>. You&apos;ll get a copy-ready post header, copy-ready per-lot text blocks, and a downloadable side-by-side image (front + back) for each lot.</li>
-                <li>Paste the post into your FB group, then paste each lot as a comment with the matching image attached.</li>
-                <li>Once posted, drop the FB post URL into the manage page so you can track bids and settle winners.</li>
-              </ol>
-            </section>
-
             <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
-              <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>1. Setup</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-                <div>
-                  <label className="input-label">Auction Title *</label>
-                  <input value={title} onChange={e => setTitle(e.target.value)}
-                    placeholder="e.g. 1971 Topps Mixed HOFers" className="input-sc" style={{ width: '100%' }} />
-                </div>
+              <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>1. Auction Type</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <button onClick={() => { setType('single'); setSelectedIds([]); setMultiTitle(''); setMultiDescription(''); }}
+                  className={type === 'single' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
+                  Single Card
+                </button>
+                <button onClick={() => { setType('multi'); setSingleListingId(''); setSingleBody(''); setSingleAuctionTitle(''); setSingleBodyTouched(false); }}
+                  className={type === 'multi' ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
+                  Multi-Card
+                </button>
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                {type === 'single'
+                  ? 'One card per Facebook post. Body auto-fills from the listing — you can edit before generating.'
+                  : 'One parent post with each card pasted as a comment. You type the title and description; the template provides the auction info footer.'}
+              </div>
+
+              <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
                 <div>
                   <label className="input-label">Template *</label>
-                  <select value={templateId} onChange={e => setTemplateId(e.target.value)} className="input-sc" style={{ width: '100%' }}>
-                    {templates.map(t => <option key={t.id} value={t.id}>{t.name}{t.is_default ? ' ★' : ''}</option>)}
-                  </select>
+                  {filteredTemplates.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--rust)', fontWeight: 600, padding: '8px 0' }}>
+                      No {type} templates yet. <Link href="/fb-auctions/templates" style={{ color: 'var(--orange)' }}>Create one →</Link>
+                    </div>
+                  ) : (
+                    <select value={templateId} onChange={e => setTemplateId(e.target.value)} className="input-sc" style={{ width: '100%' }}>
+                      {filteredTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.is_default ? ' ★' : ''}</option>)}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className="input-label">Facebook Group</label>
@@ -337,79 +394,37 @@ export default function NewFbAuctionPage() {
               </div>
             </section>
 
-            <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 12 }}>
-                <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>2. Pick Listings ({selectedIds.length} selected)</div>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-                  border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
-                  flex: 1, minWidth: 240, maxWidth: 420,
-                }}>
-                  <span style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>🔍</span>
-                  <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Search active listings — multi-term"
-                    style={{ border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)' }} />
-                  {searchQuery && (
-                    <button onClick={() => setSearchQuery('')} style={{ background: 'transparent', border: 'none', color: 'var(--plum)', cursor: 'pointer', fontSize: 14 }}>×</button>
-                  )}
-                </div>
-              </div>
+            {type === 'single' && (
+              <SingleCardForm
+                listings={listings}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                filteredListings={filteredListings}
+                singleListingId={singleListingId}
+                setSingleListingId={(id) => { setSingleListingId(id); setSingleBodyTouched(false); setSingleAuctionTitle(''); }}
+                singleAuctionTitle={singleAuctionTitle}
+                setSingleAuctionTitle={setSingleAuctionTitle}
+                singleBody={singleBody}
+                setSingleBody={(s) => { setSingleBody(s); setSingleBodyTouched(true); }}
+                onResetBody={() => { setSingleBodyTouched(false); }}
+                template={templates.find(x => x.id === templateId)}
+              />
+            )}
 
-              {filteredListings.length === 0 ? (
-                <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
-                  {listings.length === 0 ? 'You have no active listings. Create one first.' : 'No listings match your search.'}
-                </div>
-              ) : (
-                <div style={{ maxHeight: 480, overflowY: 'auto', border: '1.5px solid var(--rule)', borderRadius: 8 }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                      <tr>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', width: 36 }}></th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', width: 64 }}>Lot</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left', width: 64 }}>Photo</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'left' }}>Listing</th>
-                        <th style={{ padding: '8px 12px', textAlign: 'right', width: 100 }}>Asking</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredListings.map(l => {
-                        const lotIdx = selectedIds.indexOf(l.id);
-                        const isSel = lotIdx !== -1;
-                        return (
-                          <tr key={l.id} onClick={() => toggleSelect(l.id)}
-                            style={{ borderTop: '1px solid var(--rule)', cursor: 'pointer', background: isSel ? 'rgba(184,146,58,0.18)' : 'transparent' }}>
-                            <td style={{ padding: '8px 12px' }}>
-                              <input type="checkbox" checked={isSel} onChange={() => toggleSelect(l.id)} style={{ accentColor: 'var(--plum)' }} />
-                            </td>
-                            <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--plum)', fontWeight: 700 }}>
-                              {isSel ? `#${lotIdx + 1}` : ''}
-                            </td>
-                            <td style={{ padding: '8px 12px' }}>
-                              {l.photos && l.photos[0] ? (
-                                <img src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
-                              ) : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--plum)' }}>
-                              <div style={{ fontWeight: 600 }}>{l.title}</div>
-                              <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
-                                {l.year} {l.brand} #{l.card_number} {conditionNote(l) ? '· ' + conditionNote(l) : ''}
-                              </div>
-                            </td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
-                              {l.asking_price !== null && l.asking_price !== undefined ? `$${l.asking_price}` : '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
+            {type === 'multi' && (
+              <MultiCardForm
+                multiTitle={multiTitle} setMultiTitle={setMultiTitle}
+                multiDescription={multiDescription} setMultiDescription={setMultiDescription}
+                listings={listings}
+                searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+                filteredListings={filteredListings}
+                selectedIds={selectedIds} toggleSelect={toggleSelect}
+              />
+            )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button onClick={handleGenerate} disabled={!canGenerate || saving} className="btn btn-primary">
-                {saving ? 'Generating…' : `Generate Auction (${selectedIds.length} lot${selectedIds.length === 1 ? '' : 's'})`}
+                {saving ? 'Generating…' : type === 'single' ? 'Generate Auction' : `Generate Auction (${selectedIds.length} lot${selectedIds.length === 1 ? '' : 's'})`}
               </button>
             </div>
           </>
@@ -418,63 +433,88 @@ export default function NewFbAuctionPage() {
         {generated && (
           <>
             <div style={{ padding: '14px 18px', marginBottom: 24, background: 'rgba(56,142,142,0.12)', border: '1.5px solid var(--teal)', borderRadius: 10, fontSize: 13, color: 'var(--teal)', fontWeight: 700 }}>
-              ✓ Auction created with {generated.lots.length} lot{generated.lots.length === 1 ? '' : 's'}. Copy each block below into Facebook and attach the matching image.
+              ✓ Auction created. Copy the post and paste into your Facebook group.
+              {generated.type === 'multi' && ` Then paste each lot as a comment with its image attached.`}
             </div>
 
-            <CopyBlock label="📋 Post Body (paste this as the Facebook post)" text={headerText} />
+            <CopyBlock label={generated.type === 'single' ? '📋 Facebook Post' : '📋 Parent Post (paste as the FB post)'} text={generated.postBody} />
 
-            <div style={{ marginTop: 24, marginBottom: 12 }}>
-              <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>Lots — paste each as a comment with the image attached</div>
-            </div>
-
-            {generated.lots.map(lot => (
-              <div key={lot.lot_number} className="panel-bordered" style={{ padding: 18, marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-                  <div style={{
-                    width: 64, height: 64, flexShrink: 0,
-                    background: 'var(--plum)', color: 'var(--mustard)',
-                    display: 'grid', placeItems: 'center', borderRadius: 8,
-                    fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700,
-                  }}>
-                    #{lot.lot_number}
+            {generated.type === 'single' && generated.lots[0] && (
+              <div className="panel-bordered" style={{ padding: 18, marginTop: 16 }}>
+                <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 8 }}>📷 Image (attach to the post)</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {generated.lots[0].listing.photos?.[0] && (
+                      <img src={generated.lots[0].listing.photos[0]} alt="Front" style={{ width: 96, height: 134, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                    )}
+                    {generated.lots[0].listing.photos?.[1] && (
+                      <img src={generated.lots[0].listing.photos[1]} alt="Back" style={{ width: 96, height: 134, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                    )}
                   </div>
-                  <div style={{ flex: 1, minWidth: 280 }}>
-                    <div className="display" style={{ fontSize: 15, color: 'var(--plum)', marginBottom: 4 }}>{lot.listing.title}</div>
-                    <pre style={{
-                      background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 6,
-                      padding: '10px 12px', fontSize: 12.5, fontFamily: 'var(--font-mono)', color: 'var(--plum)',
-                      whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: '0 0 8px',
-                    }}>{lot.text}</pre>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <CopyButton text={lot.text} label="📋 Copy lot text" />
-                      <button onClick={() => handleDownloadImage(lot)} disabled={busyImage === lot.listing.id || !lot.listing.photos?.[0]}
-                        className="btn btn-outline btn-sm">
-                        {busyImage === lot.listing.id ? 'Building…' : '🖼 Download image'}
-                      </button>
-                      {lot.listing.photos?.length === 0 && (
-                        <span style={{ fontSize: 11, color: 'var(--rust)', fontWeight: 700, alignSelf: 'center' }}>No photos on this listing</span>
-                      )}
-                      {lot.listing.photos?.length === 1 && (
-                        <span style={{ fontSize: 11, color: 'var(--ink-mute)', alignSelf: 'center' }}>(only 1 photo — front-only download)</span>
-                      )}
-                    </div>
-                  </div>
-                  {lot.listing.photos?.[0] && (
-                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                      <img src={lot.listing.photos[0]} alt="Front" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
-                      {lot.listing.photos[1] && (
-                        <img src={lot.listing.photos[1]} alt="Back" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
-                      )}
-                    </div>
-                  )}
+                  <button onClick={() => handleDownloadImage(generated.lots[0])}
+                    disabled={busyImage === generated.lots[0].listing.id || !generated.lots[0].listing.photos?.[0]}
+                    className="btn btn-outline">
+                    {busyImage === generated.lots[0].listing.id ? 'Building…' : '🖼 Download side-by-side image'}
+                  </button>
                 </div>
               </div>
-            ))}
+            )}
 
-            <CopyBlock label="📋 Post Footer (paste at the end of your post, or as a final pinned comment)" text={footerText} />
+            {generated.type === 'multi' && (
+              <>
+                <div style={{ marginTop: 24, marginBottom: 12 }}>
+                  <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>Lots — paste each as a comment with the image attached</div>
+                </div>
+                {generated.lots.map(lot => (
+                  <div key={lot.lot_number} className="panel-bordered" style={{ padding: 18, marginBottom: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+                      <div style={{
+                        width: 64, height: 64, flexShrink: 0,
+                        background: 'var(--plum)', color: 'var(--mustard)',
+                        display: 'grid', placeItems: 'center', borderRadius: 8,
+                        fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700,
+                      }}>#{lot.lot_number}</div>
+                      <div style={{ flex: 1, minWidth: 280 }}>
+                        <div className="display" style={{ fontSize: 15, color: 'var(--plum)', marginBottom: 4 }}>{lot.listing.title}</div>
+                        <pre style={{
+                          background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 6,
+                          padding: '10px 12px', fontSize: 12.5, fontFamily: 'var(--font-mono)', color: 'var(--plum)',
+                          whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: '0 0 8px',
+                        }}>{lot.text}</pre>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <CopyButton text={lot.text} label="📋 Copy lot text" />
+                          <button onClick={() => handleDownloadImage(lot)} disabled={busyImage === lot.listing.id || !lot.listing.photos?.[0]}
+                            className="btn btn-outline btn-sm">
+                            {busyImage === lot.listing.id ? 'Building…' : '🖼 Download image'}
+                          </button>
+                          {lot.listing.photos?.length === 0 && (
+                            <span style={{ fontSize: 11, color: 'var(--rust)', fontWeight: 700, alignSelf: 'center' }}>No photos</span>
+                          )}
+                          {lot.listing.photos?.length === 1 && (
+                            <span style={{ fontSize: 11, color: 'var(--ink-mute)', alignSelf: 'center' }}>(1 photo only — front-only)</span>
+                          )}
+                        </div>
+                      </div>
+                      {lot.listing.photos?.[0] && (
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <img src={lot.listing.photos[0]} alt="Front" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                          {lot.listing.photos[1] && (
+                            <img src={lot.listing.photos[1]} alt="Back" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
 
             <div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setGenerated(null); setSelectedIds([]); setTitle(''); setEndsAt(''); }} className="btn btn-outline">
+              <button onClick={() => {
+                setGenerated(null); setSelectedIds([]); setMultiTitle(''); setMultiDescription('');
+                setSingleListingId(''); setSingleBody(''); setSingleAuctionTitle(''); setSingleBodyTouched(false);
+                setEndsAt('');
+              }} className="btn btn-outline">
                 ← New auction
               </button>
               <Link href="/fb-auctions" className="btn btn-primary">View all auctions →</Link>
@@ -483,6 +523,236 @@ export default function NewFbAuctionPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListings, singleListingId, setSingleListingId, singleAuctionTitle, setSingleAuctionTitle, singleBody, setSingleBody, onResetBody, template }: {
+  listings: Listing[];
+  searchQuery: string; setSearchQuery: (s: string) => void;
+  filteredListings: Listing[];
+  singleListingId: string; setSingleListingId: (id: string) => void;
+  singleAuctionTitle: string; setSingleAuctionTitle: (s: string) => void;
+  singleBody: string; setSingleBody: (s: string) => void;
+  onResetBody: () => void;
+  template: Template | undefined;
+}) {
+  const selected = listings.find(l => l.id === singleListingId);
+
+  return (
+    <>
+      <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 12 }}>
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>2. Pick a Listing</div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+            border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
+            flex: 1, minWidth: 240, maxWidth: 420,
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>🔍</span>
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search active listings — multi-term"
+              style={{ border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)' }} />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} style={{ background: 'transparent', border: 'none', color: 'var(--plum)', cursor: 'pointer', fontSize: 14 }}>×</button>
+            )}
+          </div>
+        </div>
+
+        {filteredListings.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+            {listings.length === 0 ? 'You have no active listings. Create one first.' : 'No listings match your search.'}
+          </div>
+        ) : (
+          <div style={{ maxHeight: 360, overflowY: 'auto', border: '1.5px solid var(--rule)', borderRadius: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                <tr>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: 36 }}></th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: 64 }}>Photo</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left' }}>Listing</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', width: 100 }}>Asking</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredListings.map(l => {
+                  const isSel = singleListingId === l.id;
+                  return (
+                    <tr key={l.id} onClick={() => setSingleListingId(l.id)}
+                      style={{ borderTop: '1px solid var(--rule)', cursor: 'pointer', background: isSel ? 'rgba(184,146,58,0.18)' : 'transparent' }}>
+                      <td style={{ padding: '8px 12px' }}>
+                        <input type="radio" name="single-listing" checked={isSel} readOnly style={{ accentColor: 'var(--plum)' }} />
+                      </td>
+                      <td style={{ padding: '8px 12px' }}>
+                        {l.photos && l.photos[0]
+                          ? <img src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
+                          : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
+                      </td>
+                      <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--plum)' }}>
+                        <div style={{ fontWeight: 600 }}>{l.title}</div>
+                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
+                          {l.year} {l.brand} #{l.card_number} {conditionNote(l) ? '· ' + conditionNote(l) : ''}
+                        </div>
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
+                        {l.asking_price !== null && l.asking_price !== undefined ? `$${l.asking_price}` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {selected && (
+        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>3. Edit Post Body</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <label className="input-label">Auction Title (internal label, also used as the auction record name) *</label>
+              <input value={singleAuctionTitle} onChange={e => setSingleAuctionTitle(e.target.value)}
+                placeholder="1968 Topps Roberto Clemente #150" className="input-sc" style={{ width: '100%' }} />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label className="input-label" style={{ marginBottom: 0 }}>Post Body — auto-filled, edit before generating</label>
+                <button type="button" onClick={onResetBody} className="btn btn-ghost btn-sm">↺ Reset from template</button>
+              </div>
+              <textarea value={singleBody} onChange={e => setSingleBody(e.target.value)}
+                rows={8}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px',
+                  fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--plum)',
+                  background: 'var(--paper)', resize: 'vertical',
+                }} />
+              <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 4, fontStyle: 'italic' }}>
+                The auction info from the template will be appended below this when you generate.
+              </div>
+            </div>
+            {template?.post_footer && (
+              <div>
+                <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 4 }}>Auction info (from template, appended automatically)</div>
+                <pre style={{
+                  background: 'var(--paper)', border: '1px dashed var(--rule)', borderRadius: 6,
+                  padding: '8px 10px', fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)',
+                  whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: 0,
+                }}>{template.post_footer}</pre>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+    </>
+  );
+}
+
+function MultiCardForm({ multiTitle, setMultiTitle, multiDescription, setMultiDescription, listings, searchQuery, setSearchQuery, filteredListings, selectedIds, toggleSelect }: {
+  multiTitle: string; setMultiTitle: (s: string) => void;
+  multiDescription: string; setMultiDescription: (s: string) => void;
+  listings: Listing[];
+  searchQuery: string; setSearchQuery: (s: string) => void;
+  filteredListings: Listing[];
+  selectedIds: string[]; toggleSelect: (id: string) => void;
+}) {
+  return (
+    <>
+      <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
+        <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 14 }}>2. Parent Post Title & Description</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <label className="input-label">Auction Title *</label>
+            <input value={multiTitle} onChange={e => setMultiTitle(e.target.value)}
+              placeholder="🌟 1971 Topps Mixed HOFers Auction 🌟" className="input-sc" style={{ width: '100%' }} />
+          </div>
+          <div>
+            <label className="input-label">Description (above the auction info on your post)</label>
+            <textarea value={multiDescription} onChange={e => setMultiDescription(e.target.value)}
+              rows={5} placeholder="Carew · Yaz · Brooks · Marichal · Bid under each card in the comments. Photos front and back."
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px',
+                fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)',
+                background: 'var(--paper)', resize: 'vertical',
+              }} />
+            <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 4, fontStyle: 'italic' }}>
+              The auction info from the template will be appended below this when you generate.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 12 }}>
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>3. Pick Listings ({selectedIds.length} selected)</div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+            border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
+            flex: 1, minWidth: 240, maxWidth: 420,
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>🔍</span>
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search active listings — multi-term"
+              style={{ border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)' }} />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} style={{ background: 'transparent', border: 'none', color: 'var(--plum)', cursor: 'pointer', fontSize: 14 }}>×</button>
+            )}
+          </div>
+        </div>
+
+        {filteredListings.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+            {listings.length === 0 ? 'You have no active listings. Create one first.' : 'No listings match your search.'}
+          </div>
+        ) : (
+          <div style={{ maxHeight: 480, overflowY: 'auto', border: '1.5px solid var(--rule)', borderRadius: 8 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                <tr>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: 36 }}></th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: 64 }}>Lot</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: 64 }}>Photo</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left' }}>Listing</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', width: 100 }}>Asking</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredListings.map(l => {
+                  const lotIdx = selectedIds.indexOf(l.id);
+                  const isSel = lotIdx !== -1;
+                  return (
+                    <tr key={l.id} onClick={() => toggleSelect(l.id)}
+                      style={{ borderTop: '1px solid var(--rule)', cursor: 'pointer', background: isSel ? 'rgba(184,146,58,0.18)' : 'transparent' }}>
+                      <td style={{ padding: '8px 12px' }}>
+                        <input type="checkbox" checked={isSel} onChange={() => toggleSelect(l.id)} style={{ accentColor: 'var(--plum)' }} />
+                      </td>
+                      <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--plum)', fontWeight: 700 }}>
+                        {isSel ? `#${lotIdx + 1}` : ''}
+                      </td>
+                      <td style={{ padding: '8px 12px' }}>
+                        {l.photos && l.photos[0]
+                          ? <img src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
+                          : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
+                      </td>
+                      <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--plum)' }}>
+                        <div style={{ fontWeight: 600 }}>{l.title}</div>
+                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
+                          {l.year} {l.brand} #{l.card_number} {conditionNote(l) ? '· ' + conditionNote(l) : ''}
+                        </div>
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
+                        {l.asking_price !== null && l.asking_price !== undefined ? `$${l.asking_price}` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 
@@ -503,6 +773,7 @@ function Header() {
         </Link>
         <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ New FB Auction ★</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <Link href="/fb-auctions" className="btn btn-ghost btn-sm">All Auctions</Link>
           <Link href="/fb-auctions/templates" className="btn btn-ghost btn-sm">Templates</Link>
           <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
           <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
