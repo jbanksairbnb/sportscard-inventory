@@ -122,7 +122,10 @@ export default function ManageFbAuctionPage() {
 
       if (!aucRes.data) { router.push('/fb-auctions'); return; }
       setAuction(aucRes.data as Auction);
-      setLots((lotsRes.data || []) as Lot[]);
+      const lotsRaw = (lotsRes.data || []) as Lot[];
+      // Backfill bidder_id null if the column doesn't exist yet (Phase A SQL not run).
+      setLots(lotsRaw.map(l => ({ ...l, bidder_id: l.bidder_id ?? null })));
+      if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
       setBidders((biddersRes.data || []) as BidderRow[]);
       setLoading(false);
     }

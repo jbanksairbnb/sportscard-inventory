@@ -192,6 +192,8 @@ export default function NewFbAuctionPage() {
       setListings((listingsRes.data || []) as Listing[]);
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
+      if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
+      if (activityRes.error) console.warn('fb_bidder_activity not available:', activityRes.error.message);
       setBidders((biddersRes.data || []) as BidderRow[]);
       setActivity((activityRes.data || []) as ActivityRow[]);
       setLoading(false);

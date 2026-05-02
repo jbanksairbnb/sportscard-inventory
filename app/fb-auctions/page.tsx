@@ -100,18 +100,34 @@ export default function FbAuctionsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [{ data: aucData }, { data: bidderData }] = await Promise.all([
-        supabase
+      // Auctions: try the bidder-aware select first; fall back if `bidder_id` column doesn't exist yet.
+      let aucData: unknown = null;
+      const { data: aucWithBidder, error: aucErr } = await supabase
+        .from('fb_auctions')
+        .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      if (aucErr) {
+        const fallback = await supabase
           .from('fb_auctions')
-          .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
+          .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, status, listing:listings(title, year, brand, card_number, player))')
           .eq('user_id', user.id)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('fb_bidders')
-          .select('id, name, fb_handle')
-          .eq('user_id', user.id)
-          .order('name'),
-      ]);
+          .order('created_at', { ascending: false });
+        aucData = (fallback.data || []).map((a: { fb_auction_lots?: unknown[] }) => ({
+          ...a,
+          fb_auction_lots: (a.fb_auction_lots || []).map((l: object) => ({ ...l, bidder_id: null })),
+        }));
+        if (fallback.error) console.error('fb_auctions load error:', fallback.error);
+      } else {
+        aucData = aucWithBidder;
+      }
+      // Bidders: skip silently if the table doesn't exist yet.
+      const { data: bidderData, error: bidderErr } = await supabase
+        .from('fb_bidders')
+        .select('id, name, fb_handle')
+        .eq('user_id', user.id)
+        .order('name');
+      if (bidderErr) console.warn('fb_bidders not available (Phase A SQL not run?):', bidderErr.message);
       setAuctions(((aucData || []) as unknown) as AuctionRow[]);
       setBidders((bidderData || []) as BidderRow[]);
       setLoading(false);
