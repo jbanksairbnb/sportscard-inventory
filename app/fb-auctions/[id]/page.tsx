@@ -30,11 +30,14 @@ type Lot = {
   current_bid: number | null;
   bidder_name: string | null;
   bidder_fb_handle: string | null;
+  bidder_id: string | null;
   comment_url: string | null;
   status: 'open' | 'sold' | 'no_sale' | 'paid';
   notes: string | null;
   listing: Listing | null;
 };
+
+type BidderRow = { id: string; name: string; fb_handle: string | null };
 
 type Auction = {
   id: string;
@@ -92,6 +95,10 @@ export default function ManageFbAuctionPage() {
   const [editBuffer, setEditBuffer] = useState<Record<string, Partial<Lot>>>({});
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
 
+  // Bidder tracking
+  const [bidders, setBidders] = useState<BidderRow[]>([]);
+  const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
+
   // Settlement state
   const [paymentText, setPaymentText] = useState<string>('PayPal F&F to: your-paypal@email.com\nVenmo: @your-venmo');
   const [shippingByBuyer, setShippingByBuyer] = useState<Record<string, string>>({});
@@ -103,22 +110,80 @@ export default function ManageFbAuctionPage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
 
-      const [aucRes, lotsRes] = await Promise.all([
+      const [aucRes, lotsRes, biddersRes] = await Promise.all([
         supabase.from('fb_auctions')
           .select('*, fb_groups(name, url), fb_auction_templates(name, post_footer)')
           .eq('id', auctionId).eq('user_id', user.id).maybeSingle(),
         supabase.from('fb_auction_lots')
           .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade)')
           .eq('auction_id', auctionId).order('lot_number'),
+        supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
       ]);
 
       if (!aucRes.data) { router.push('/fb-auctions'); return; }
       setAuction(aucRes.data as Auction);
       setLots((lotsRes.data || []) as Lot[]);
+      setBidders((biddersRes.data || []) as BidderRow[]);
       setLoading(false);
     }
     load();
   }, [auctionId, router]);
+
+  const biddersByLowerName = useMemo(() => {
+    const map = new Map<string, BidderRow[]>();
+    for (const b of bidders) {
+      const k = b.name.toLowerCase();
+      const arr = map.get(k) || [];
+      arr.push(b);
+      map.set(k, arr);
+    }
+    return map;
+  }, [bidders]);
+
+  async function ensureBidderForLot(lot: Lot, name: string | null, handle: string | null): Promise<string | null> {
+    if (!userId) return null;
+    const trimmed = (name || '').trim();
+    if (!trimmed) return null;
+    const supabase = createClient();
+    const lname = trimmed.toLowerCase();
+    const matches = biddersByLowerName.get(lname) || [];
+    let bidder: BidderRow | null = null;
+    if (handle && handle.trim()) {
+      bidder = matches.find(b => (b.fb_handle || '').toLowerCase() === handle.trim().toLowerCase()) || null;
+    } else if (matches.length === 1) {
+      bidder = matches[0];
+    } else if (matches.length > 1) {
+      setDupeWarnings(prev => ({ ...prev, [lot.id]: matches }));
+      bidder = matches[0];
+    }
+    if (!bidder) {
+      const { data, error } = await supabase
+        .from('fb_bidders')
+        .insert({ user_id: userId, name: trimmed, fb_handle: handle?.trim() || null })
+        .select('id, name, fb_handle')
+        .single();
+      if (error || !data) return null;
+      bidder = data as BidderRow;
+      setBidders(prev => [...prev, bidder!].sort((a, b) => a.name.localeCompare(b.name)));
+    }
+    const isWinner = lot.status === 'sold' || lot.status === 'paid';
+    const isPaid = lot.status === 'paid';
+    await supabase.from('fb_bidder_activity').upsert({
+      user_id: userId,
+      bidder_id: bidder.id,
+      auction_id: auctionId,
+      lot_id: lot.id,
+      bid_amount: lot.current_bid,
+      is_winner: isWinner,
+      is_paid: isPaid,
+      listing_year: lot.listing?.year ?? null,
+      listing_brand: lot.listing?.brand ?? null,
+      listing_player: lot.listing?.player ?? null,
+      listing_card_number: lot.listing?.card_number ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'lot_id,bidder_id' });
+    return bidder.id;
+  }
 
   function getLotValue<K extends keyof Lot>(lot: Lot, key: K): Lot[K] {
     const buf = editBuffer[lot.id];
@@ -135,6 +200,8 @@ export default function ManageFbAuctionPage() {
     if (!buf) return;
     setSavingLots(prev => new Set(prev).add(id));
     const supabase = createClient();
+    const lotRef = lots.find(l => l.id === id);
+    const merged: Lot | undefined = lotRef ? ({ ...lotRef, ...buf } as Lot) : undefined;
     const payload: Record<string, unknown> = {};
     if ('current_bid' in buf) payload.current_bid = buf.current_bid;
     if ('bidder_name' in buf) payload.bidder_name = buf.bidder_name?.toString().trim() || null;
@@ -142,10 +209,20 @@ export default function ManageFbAuctionPage() {
     if ('comment_url' in buf) payload.comment_url = buf.comment_url?.toString().trim() || null;
     if ('status' in buf) payload.status = buf.status;
     if ('notes' in buf) payload.notes = buf.notes?.toString().trim() || null;
+
+    let bidderId: string | null = lotRef?.bidder_id ?? null;
+    if (merged && (merged.bidder_name || '').toString().trim()) {
+      bidderId = await ensureBidderForLot(merged, merged.bidder_name, merged.bidder_fb_handle);
+      if (bidderId) payload.bidder_id = bidderId;
+    } else if ('bidder_name' in buf && (!buf.bidder_name || !buf.bidder_name.toString().trim())) {
+      payload.bidder_id = null;
+      bidderId = null;
+    }
+
     const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', id);
     if (error) { alert(error.message); }
     else {
-      setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf } : l));
+      setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf, bidder_id: bidderId } : l));
       setEditBuffer(prev => { const next = { ...prev }; delete next[id]; return next; });
     }
     setSavingLots(prev => { const next = new Set(prev); next.delete(id); return next; });
@@ -245,6 +322,11 @@ export default function ManageFbAuctionPage() {
 
   return (
     <div style={{ minHeight: '100vh' }}>
+      <datalist id="fb-bidders-list">
+        {bidders.map(b => (
+          <option key={b.id} value={b.name}>{b.fb_handle ? `@${b.fb_handle}` : ''}</option>
+        ))}
+      </datalist>
       <header style={{
         position: 'sticky', top: 0, zIndex: 50,
         background: 'rgba(248,236,208,0.96)', backdropFilter: 'blur(8px)',
@@ -384,14 +466,22 @@ export default function ManageFbAuctionPage() {
                               placeholder="0"
                               className="input-sc" style={{ width: '100%' }} />
                           </div>
-                          <div>
+                          <div style={{ position: 'relative' }}>
                             <label className="input-label" style={{ fontSize: 9 }}>Bidder name</label>
                             <input type="text"
+                              list="fb-bidders-list"
                               defaultValue={bidder || ''}
                               onChange={e => patchLot(lot.id, { bidder_name: e.target.value })}
                               onBlur={() => flushLot(lot.id)}
                               placeholder="Lee Cho"
                               className="input-sc" style={{ width: '100%' }} />
+                            {dupeWarnings[lot.id] && dupeWarnings[lot.id].length > 1 && (
+                              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)', borderRadius: 4, padding: '4px 6px', fontSize: 10, zIndex: 10 }}>
+                                ⚠ {dupeWarnings[lot.id].length} bidders named &ldquo;{bidder}&rdquo;. Add an FB handle to disambiguate.
+                                <button onClick={() => setDupeWarnings(prev => { const n = { ...prev }; delete n[lot.id]; return n; })}
+                                  style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'var(--plum)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+                              </div>
+                            )}
                           </div>
                           <div>
                             <label className="input-label" style={{ fontSize: 9 }}>FB handle (optional)</label>
