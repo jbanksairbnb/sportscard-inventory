@@ -923,7 +923,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         <input value={v(row["Card #"])} readOnly style={{ ...CELL_INPUT, width: 72, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-<input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
+                        <input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Owned"])} onChange={(e) => onChangeCell(origIndex, "Owned", e.target.value)} style={CELL_SELECT}>
@@ -1012,7 +1012,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
                           onDelete={() => handleImageDelete(origIndex, 1)} />
                       </td>
-                                            <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 2"])} label="Img 2"
                           otherUrl={v(row["Image 1"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
@@ -1117,8 +1117,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           }}
         />
       )}
-
-      {/* Footer */}
 
       {/* Footer */}
       <footer style={{
