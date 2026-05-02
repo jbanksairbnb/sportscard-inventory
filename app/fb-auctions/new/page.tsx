@@ -517,6 +517,10 @@ export default function NewFbAuctionPage() {
               {generated.type === 'multi' && ` Then paste each lot as a comment with its image attached.`}
             </div>
 
+            {bidderSuggestions.length > 0 && (
+              <BidderSuggestionsPanel suggestions={bidderSuggestions} />
+            )}
+
             <CopyBlock label={generated.type === 'single' ? '📋 Facebook Post' : '📋 Parent Post (paste as the FB post)'} text={generated.postBody} />
 
             {generated.type === 'single' && generated.lots[0] && (
