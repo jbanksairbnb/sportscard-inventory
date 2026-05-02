@@ -498,6 +498,10 @@ export default function NewFbAuctionPage() {
               />
             )}
 
+            {bidderSuggestions.length > 0 && (
+              <BidderSuggestionsPanel suggestions={bidderSuggestions} />
+            )}
+
             <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
               <button onClick={handleGenerate} disabled={!canGenerate || saving} className="btn btn-primary">
                 {saving ? 'Generating…' : type === 'single' ? 'Generate Auction' : `Generate Auction (${selectedIds.length} lot${selectedIds.length === 1 ? '' : 's'})`}
