@@ -100,7 +100,7 @@ export default function FbAuctionsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [{ data: aucData }, { data: bidderData }] = await Promise.all([
+      const [aucRes, bidderRes] = await Promise.all([
         supabase
           .from('fb_auctions')
           .select('id, title, status, post_url, ends_at, created_at, fb_auction_lots(id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, status, listing:listings(title, year, brand, card_number, player))')
@@ -112,8 +112,16 @@ export default function FbAuctionsPage() {
           .eq('user_id', user.id)
           .order('name'),
       ]);
-      setAuctions(((aucData || []) as unknown) as AuctionRow[]);
-      setBidders((bidderData || []) as BidderRow[]);
+      if (aucRes.error) {
+        console.error('fb_auctions query failed:', aucRes.error);
+        alert('Failed to load auctions: ' + aucRes.error.message);
+      }
+      if (bidderRes.error) {
+        console.error('fb_bidders query failed:', bidderRes.error);
+      }
+      console.log('fb_auctions query: user.id=', user.id, 'rows=', aucRes.data?.length ?? 0);
+      setAuctions(((aucRes.data || []) as unknown) as AuctionRow[]);
+      setBidders((bidderRes.data || []) as BidderRow[]);
       setLoading(false);
     }
     load();
