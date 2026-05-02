@@ -212,6 +212,7 @@ function Header() {
         <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ FB Auction Templates ★</div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <Link href="/fb-auctions" className="btn btn-ghost btn-sm">Auctions</Link>
+          <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Bidders</Link>
           <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
           <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
         </div>

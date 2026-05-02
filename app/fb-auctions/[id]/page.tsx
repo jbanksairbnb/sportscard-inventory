@@ -30,11 +30,29 @@ type Lot = {
   current_bid: number | null;
   bidder_name: string | null;
   bidder_fb_handle: string | null;
+  bidder_id: string | null;
   comment_url: string | null;
   status: 'open' | 'sold' | 'no_sale' | 'paid';
   notes: string | null;
   listing: Listing | null;
 };
+
+async function syncActivityStatus(
+  supabase: ReturnType<typeof createClient>,
+  lotId: string,
+  bidderId: string | null,
+  lotStatus: 'open' | 'sold' | 'no_sale' | 'paid',
+) {
+  // Reset every activity row for this lot, then mark the current bidder if won/paid.
+  await supabase.from('fb_bidder_activity').update({
+    is_winner: false, is_paid: false, updated_at: new Date().toISOString(),
+  }).eq('lot_id', lotId);
+  if (bidderId && (lotStatus === 'sold' || lotStatus === 'paid')) {
+    await supabase.from('fb_bidder_activity').update({
+      is_winner: true, is_paid: lotStatus === 'paid', updated_at: new Date().toISOString(),
+    }).eq('lot_id', lotId).eq('bidder_id', bidderId);
+  }
+}
 
 type Auction = {
   id: string;
@@ -145,6 +163,10 @@ export default function ManageFbAuctionPage() {
     const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', id);
     if (error) { alert(error.message); }
     else {
+      if ('status' in buf && buf.status) {
+        const lot = lots.find(l => l.id === id);
+        await syncActivityStatus(supabase, id, lot?.bidder_id ?? null, buf.status);
+      }
       setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf } : l));
       setEditBuffer(prev => { const next = { ...prev }; delete next[id]; return next; });
     }
@@ -173,25 +195,30 @@ export default function ManageFbAuctionPage() {
     // immediate flush
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
+    await syncActivityStatus(supabase, lot.id, lot.bidder_id, 'sold');
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
   }
   async function quickSetNoSale(lot: Lot) {
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'no_sale' }).eq('id', lot.id);
+    await syncActivityStatus(supabase, lot.id, lot.bidder_id, 'no_sale');
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'no_sale' } : l));
   }
   async function quickReopen(lot: Lot) {
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'open' }).eq('id', lot.id);
+    await syncActivityStatus(supabase, lot.id, lot.bidder_id, 'open');
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'open' } : l));
   }
 
   async function markBuyerPaid(bidderName: string) {
     if (!confirm(`Mark all of ${bidderName}'s lots as PAID?`)) return;
     const supabase = createClient();
-    const ids = lots.filter(l => (l.bidder_name || '').trim().toLowerCase() === bidderName.toLowerCase() && l.status === 'sold').map(l => l.id);
+    const matched = lots.filter(l => (l.bidder_name || '').trim().toLowerCase() === bidderName.toLowerCase() && l.status === 'sold');
+    const ids = matched.map(l => l.id);
     if (ids.length === 0) return;
     await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', ids);
+    await Promise.all(matched.map(l => syncActivityStatus(supabase, l.id, l.bidder_id, 'paid')));
     setLots(prev => prev.map(l => ids.includes(l.id) ? { ...l, status: 'paid' } : l));
   }
 
@@ -261,6 +288,7 @@ export default function ManageFbAuctionPage() {
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Manage Auction ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <Link href="/fb-auctions" className="btn btn-ghost btn-sm">All Auctions</Link>
+            <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Bidders</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
         </div>
