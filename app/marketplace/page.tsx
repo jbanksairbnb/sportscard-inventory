@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
@@ -65,10 +65,19 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
 }
 
 export default function MarketplacePage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>}>
+      <MarketplacePageInner />
+    </Suspense>
+  );
+}
+
+function MarketplacePageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('q') || '');
     const [conditionFilter, setConditionFilter] = useState<'all' | 'raw' | 'graded'>('all');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
@@ -124,9 +133,9 @@ export default function MarketplacePage() {
         if (!Number.isNaN(m) && (l.asking_price ?? 0) > m) return false;
       }
       if (search.trim()) {
-        const q = search.toLowerCase();
-        const hay = [l.title, l.player, l.brand, l.card_number, l.description].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
+        const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
+        const hay = [l.title, l.player, l.brand, l.card_number, l.description, l.seller_handle, l.seller_display_name].filter(Boolean).join(' ').toLowerCase();
+        if (!terms.every(t => hay.includes(t))) return false;
       }
       return true;
     });
@@ -165,7 +174,7 @@ export default function MarketplacePage() {
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
         <div className="panel-bordered" style={{ padding: '16px 20px', marginBottom: 24, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by year, brand, player…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search — multiple terms supported (e.g. 1971 Topps Munson)"
             style={{
               flex: 1, minWidth: 220, border: '2px solid var(--plum)', borderRadius: 8,
               padding: '8px 12px', fontFamily: 'var(--font-body)', fontSize: 13.5,

@@ -1037,7 +1037,7 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
           const inner = (
-              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: s.share_token ? 'pointer' : 'default' }}>
+              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
                 <div style={{
                   width: 58, height: 58,
                   background: color, color: 'var(--cream)',
@@ -1077,9 +1077,10 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
                 </div>
               </div>
           );
-          return s.share_token
-            ? <Link key={s.slug} href={`/set/${encodeURIComponent(s.slug)}/view`} style={{ textDecoration: 'none' }}>{inner}</Link>
-            : <div key={s.slug}>{inner}</div>;
+          const href = s.share_token
+            ? `/set/${encodeURIComponent(s.slug)}/view`
+            : `/set/${encodeURIComponent(s.slug)}`;
+          return <Link key={s.slug} href={href} style={{ textDecoration: 'none' }}>{inner}</Link>;
         })}
       </div>
     </section>
@@ -1276,9 +1277,16 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
   );
 }
 
-const NAV_LINKS = ['My Shelf', 'Discover', 'Sets'];
+const NAV_LINKS = ['My Shelf'];
 
 function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void }) {
+  const router = useRouter();
+  const [searchQuery, setSearchQuery] = useState('');
+  function submitSearch() {
+    const q = searchQuery.trim();
+    if (!q) return;
+    router.push(`/search?q=${encodeURIComponent(q)}`);
+  }
   return (
     <header style={{
       position: 'sticky', top: 0, zIndex: 50,
@@ -1344,13 +1352,23 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
             border: '2px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', width: 260,
           }}>
             <SearchIcon size={14} />
-            <input placeholder="Find cards, sets, collectors…" style={{
-              border: 'none', outline: 'none', background: 'transparent',
-              fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)',
-            }} />
-            <span className="mono" style={{ fontSize: 10, color: 'var(--plum)', padding: '1px 5px', background: 'var(--mustard)', borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>⌘K</span>
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitSearch(); }}
+              placeholder="Find cards, listings, collectors…"
+              style={{
+                border: 'none', outline: 'none', background: 'transparent',
+                fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)',
+              }}
+            />
+            <span className="mono" style={{ fontSize: 10, color: 'var(--plum)', padding: '1px 5px', background: 'var(--mustard)', borderRadius: 4, fontWeight: 700, flexShrink: 0 }}>⏎</span>
           </div>
-          <button style={{ position: 'relative', padding: 8, color: 'var(--plum)' }} title="Notifications">
+          <button
+            onClick={() => router.push('/home?feed=wantlist')}
+            style={{ position: 'relative', padding: 8, color: 'var(--plum)' }}
+            title="New want-list hits"
+          >
             <BellIcon size={18} />
             <span style={{ position: 'absolute', top: 5, right: 5, width: 9, height: 9, borderRadius: '50%', background: 'var(--orange)', border: '2px solid var(--cream)' }} />
           </button>
@@ -1434,7 +1452,7 @@ export default function HomePage() {
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}
         onCoverPositionChange={(x, y) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y }))} />
-      <SubNav active={activeTab} setActive={setActiveTab} />
+      {/* <SubNav active={activeTab} setActive={setActiveTab} /> */}
       <StatsStrip stats={[
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
         { label: 'Sets tracked', value: sets.length.toString() || '—', sub: 'in progress' },

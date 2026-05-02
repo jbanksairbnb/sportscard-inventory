@@ -143,6 +143,40 @@ export default function AdminPage() {
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
         <div style={{ marginBottom: 28 }}>
           <div className="section-head" style={{ marginBottom: 16 }}>
+            <span className="eyebrow" style={{ fontSize: 14 }}>★ Set Library ★</span>
+          </div>
+          <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: '18px 22px', marginBottom: 28 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 6 }}>Bulk Upload Set Templates</div>
+                <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55, margin: 0 }}>
+                  Drop one or more CSV checklists. Each becomes an official template available to all users on the New Set page.
+                </p>
+                <details style={{ marginTop: 10 }}>
+                  <summary style={{ cursor: 'pointer', fontSize: 12.5, color: 'var(--plum)', fontWeight: 700 }}>How to build the upload file ▾</summary>
+                  <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+                    <p style={{ margin: '6px 0' }}><strong>Required columns</strong> (exact names, in any order):</p>
+                    <code style={{ display: 'block', background: 'var(--cream)', padding: '8px 10px', borderRadius: 6, fontSize: 11, color: 'var(--plum)', wordBreak: 'break-word' }}>
+                      Card #, Player, Owned, Raw Grade, Graded, Grading Company, Grade, Cost, Value, Target Price, Sale Price, Date Purchased, Purchased From, Upload Image(s)
+                    </code>
+                    <p style={{ margin: '10px 0 4px' }}><strong>For checklists</strong>, only <span className="mono">Card #</span> and <span className="mono">Player</span> need to be populated — leave the other columns empty (or blank).</p>
+                    <p style={{ margin: '10px 0 4px' }}><strong>Filename convention</strong> (recommended; metadata auto-fills from name):</p>
+                    <code style={{ display: 'block', background: 'var(--cream)', padding: '8px 10px', borderRadius: 6, fontSize: 11, color: 'var(--plum)' }}>
+                      1971-topps-base-set-baseball.csv<br />
+                      1986-topps-football.csv<br />
+                      1989-upper-deck-baseball.csv
+                    </code>
+                    <p style={{ margin: '10px 0 4px' }}>The bulk page parses year, brand, and sport from the filename and you can edit per-row before upload. Title format saved as: <span className="mono">{'<year>'} {'<brand>'} — {'<description>'}</span>.</p>
+                  </div>
+                </details>
+              </div>
+              <button onClick={() => router.push('/admin/templates')} className="btn btn-primary">
+                Bulk Upload →
+              </button>
+            </div>
+          </div>
+
+          <div className="section-head" style={{ marginBottom: 16 }}>
             <span className="eyebrow" style={{ fontSize: 14 }}>★ Membership Applications ★</span>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
