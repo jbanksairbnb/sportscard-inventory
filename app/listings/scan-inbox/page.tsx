@@ -238,6 +238,7 @@ export default function ScanInboxPage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Scan Inbox ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Link href="/listings/scan-from-set" className="btn btn-ghost btn-sm">↔ From Set</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
