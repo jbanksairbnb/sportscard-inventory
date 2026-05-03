@@ -430,7 +430,7 @@ export default function ManageFbAuctionPage() {
                 {(['draft', 'live', 'ended', 'settled'] as const).map(s => (
                   <button key={s} onClick={() => setStatus(s)}
                     className={`btn btn-sm ${auction.status === s ? 'btn-primary' : 'btn-ghost'}`}>
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                    {s === 'ended' ? 'Sold' : s.charAt(0).toUpperCase() + s.slice(1)}
                   </button>
                 ))}
               </div>
