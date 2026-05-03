@@ -6,6 +6,7 @@ import Link from "next/link";
 import Papa from "papaparse";
 import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
+import SetHeaderBanner from "@/components/SetHeaderBanner";
 
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
@@ -797,6 +798,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
       </header>
 
       <div style={{ maxWidth: 1600, margin: '0 auto', padding: '28px 28px 80px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+        <SetHeaderBanner year={year} brand={brand} title={datasetTitle} />
 
         {/* Controls */}
         {datasetTitle && (

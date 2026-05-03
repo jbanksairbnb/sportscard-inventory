@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import SetHeaderBanner from '@/components/SetHeaderBanner';
 
 function ImageLightbox({ urls, onClose }: { urls: string[]; onClose: () => void }) {
   const [idx, setIdx] = useState(0);
@@ -235,6 +236,9 @@ export default function InventoryViewPage() {
       </header>
 
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 28px 80px' }}>
+        <div style={{ marginBottom: 20 }}>
+          <SetHeaderBanner year={year} brand={brand} title={title} />
+        </div>
         {displayed.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No cards to display</div>
