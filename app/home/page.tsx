@@ -355,7 +355,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   );
 }
 
-type WantCard = { year: number; brand: string; description: string; targetPrice: string; targetConditionLow: string; targetConditionHigh: string };
+type WantCard = { year: number; brand: string; cardNumber: string; description: string; targetPrice: string; targetConditionLow: string; targetConditionHigh: string };
 type StatItem = { label: string; value: string; sub: string; onClick?: () => void };
 
 function StatsStrip({ stats }: { stats: StatItem[] }) {
@@ -402,9 +402,10 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             unowned.push({
               year: s.year || 0,
               brand: s.brand || '',
+              cardNumber: String(row['Card #'] || ''),
               description: String(row['Player'] || row['Description'] || ''),
               targetPrice: String(row['Target Price'] || ''),
-                            targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || ''),
+              targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || ''),
               targetConditionHigh: String(row['Target Condition - High'] || ''),
             });
           }
@@ -422,6 +423,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
         return (
           String(c.year).includes(q) ||
           c.brand.toLowerCase().includes(q) ||
+          c.cardNumber.toLowerCase().includes(q) ||
           c.description.toLowerCase().includes(q) ||
           c.targetPrice.toLowerCase().includes(q)
         );
@@ -478,7 +480,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                                    {['Year', 'Brand', 'Player', 'Target Price', 'Target Condition - Low', 'Target Condition - High'].map((h) => (
+                    {['Year', 'Brand', 'Card #', 'Player', 'Target Price', 'Target Condition - Low', 'Target Condition - High'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 14px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
@@ -496,6 +498,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
                   }}>
                     <td className="mono" style={{ padding: '9px 14px', fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>{c.year || '—'}</td>
                     <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.brand || '—'}</td>
+                    <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--plum)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.cardNumber ? `#${c.cardNumber}` : '—'}</td>
                     <td className="display" style={{ padding: '9px 14px', fontSize: 13, color: 'var(--plum)' }}>{c.description || '—'}</td>
                     <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.targetPrice || '—'}</td>
                      <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetConditionLow || '—'}</td>
@@ -1328,6 +1331,13 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
             textDecoration: 'none',
           }}>
             My Listings
+          </Link>
+          <Link href="/fb-auctions" style={{
+            color: 'inherit',
+            cursor: 'pointer',
+            textDecoration: 'none',
+          }}>
+            Auctions
           </Link>
           <Link href="/purchases" style={{
             color: 'inherit',
