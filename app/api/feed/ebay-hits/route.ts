@@ -27,8 +27,22 @@ function rawRank(label: string | null | undefined): number | null {
 
 const NAME_SUFFIXES = new Set(['JR', 'JR.', 'SR', 'SR.', 'II', 'III', 'IV'])
 
+// Strip team / position annotations that often follow the player name in
+// set rows, e.g. "Mike Schmidt – Philadelphia Phillies", "Hank Aaron - HOF",
+// "Bob Gibson (HOF)", "Tom Seaver, P". The eBay listing titles rarely
+// include those bits, so we should match against the raw player name only.
+function cleanPlayer(player: string): string {
+  return player
+    .replace(/[–—].*$/, '')   // en-dash / em-dash and everything after
+    .replace(/\s-\s.*$/, '')             // " - " hyphen and everything after
+    .replace(/\(.*?\)/g, '')             // parenthesized aside
+    .replace(/,.*$/, '')                 // comma and everything after
+    .trim()
+}
+
 function lastNameOf(player: string): string {
-  const parts = player.trim().split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
+  const cleaned = cleanPlayer(player)
+  const parts = cleaned.split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
   return parts[parts.length - 1] || ''
 }
 
@@ -155,13 +169,15 @@ function buildQuery(want: WantRow): string {
   const parts = [
     String(want.year),
     want.brand,
-    want.player,
+    cleanPlayer(want.player),
   ].filter(Boolean)
   return parts.join(' ').trim()
 }
 
+// v2: switched to cleanPlayer-based queries (was including " - Team Name" in
+// the search). Bumped to invalidate stale cache entries from v1.
 function cacheKey(want: WantRow): string {
-  return `${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${want.player.toLowerCase()}|${want.setSport || 'any'}`
+  return `v2|${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${cleanPlayer(want.player).toLowerCase()}|${want.setSport || 'any'}`
 }
 
 const GRADED_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA)\s*[:#]?\s*(\d+(?:\.\d)?)/i
