@@ -393,20 +393,25 @@ function WantListModal({ onClose }: { onClose: () => void }) {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data: setsData } = await supabase.from('sets').select('year, brand, rows').eq('user_id', user.id);
+      const { data: setsData } = await supabase.from('sets').select('year, brand, rows, default_target').eq('user_id', user.id);
       if (!setsData) { setLoading(false); return; }
       const unowned: WantCard[] = [];
       for (const s of setsData) {
+        const dt = (s.default_target || {}) as { low?: string; high?: string };
+        const defaultLow = String(dt.low || '');
+        const defaultHigh = String(dt.high || '');
         for (const row of (s.rows || [])) {
           if (String(row['Owned'] || '') !== 'Yes') {
+            const rowLow = String(row['Target Condition - Low'] || row['Target Condition'] || '').trim();
+            const rowHigh = String(row['Target Condition - High'] || '').trim();
             unowned.push({
               year: s.year || 0,
               brand: s.brand || '',
               cardNumber: String(row['Card #'] || ''),
               description: String(row['Player'] || row['Description'] || ''),
               targetPrice: String(row['Target Price'] || ''),
-              targetConditionLow: String(row['Target Condition - Low'] || row['Target Condition'] || ''),
-              targetConditionHigh: String(row['Target Condition - High'] || ''),
+              targetConditionLow: rowLow || defaultLow,
+              targetConditionHigh: rowHigh || defaultHigh,
             });
           }
         }
