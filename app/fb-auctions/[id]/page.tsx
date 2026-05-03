@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { applyOwnedTransition } from '@/lib/inventory';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'ended' | 'settled';
@@ -277,37 +278,27 @@ export default function ManageFbAuctionPage() {
     if (!userId) return;
     const supabase = createClient();
     // Group source rows by set slug so we update each set once.
-    const bySet = new Map<string, { rowsToTouch: Set<string>; }>();
+    const bySet = new Map<string, Set<string>>();
     for (const l of targetLots) {
       const slug = l.listing?.source_set_slug;
       const card = l.listing?.source_card_number;
       if (!slug || !card) continue;
-      const entry = bySet.get(slug) || { rowsToTouch: new Set() };
-      entry.rowsToTouch.add(card);
-      bySet.set(slug, entry);
+      const set = bySet.get(slug) || new Set<string>();
+      set.add(card);
+      bySet.set(slug, set);
     }
-    for (const [slug, { rowsToTouch }] of bySet.entries()) {
+    for (const [slug, cards] of bySet.entries()) {
       const { data: setRow } = await supabase
         .from('sets')
-        .select('rows, row_count')
+        .select('rows')
         .eq('user_id', userId)
         .eq('slug', slug)
         .maybeSingle();
       if (!setRow) continue;
       const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
-      const desired = owned ? 'Yes' : 'No';
-      let touched = false;
-      const nextRows = rows.map(r => {
-        const card = String(r['Card #'] ?? '').trim();
-        if (!rowsToTouch.has(card)) return r;
-        if (String(r['Owned'] ?? '') === desired) return r;
-        touched = true;
-        return { ...r, Owned: desired };
-      });
+      const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, cards, owned);
       if (!touched) continue;
-      const total = nextRows.length;
-      const ownedCount = nextRows.filter(r => String(r['Owned'] ?? '') === 'Yes').length;
-      const ownedPct = total > 0 ? (ownedCount / total) * 100 : 0;
+      const ownedPct = nextRows.length > 0 ? (ownedCount / nextRows.length) * 100 : 0;
       await supabase
         .from('sets')
         .update({ rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now() })

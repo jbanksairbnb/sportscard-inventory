@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { applyOwnedTransition } from '@/lib/inventory';
 import SCLogo from '@/components/SCLogo';
 
 type TemplateType = 'single' | 'multi';
@@ -210,16 +211,8 @@ export default function NewFbAuctionPage() {
           .from('sets').select('rows').eq('user_id', user.id).eq('slug', slug).maybeSingle();
         if (!setRow) continue;
         const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
-        let touched = false;
-        const nextRows = rows.map(r => {
-          const c = String(r['Card #'] ?? '').trim();
-          if (!cards.has(c)) return r;
-          if (String(r['Owned'] ?? '') === 'No') return r;
-          touched = true;
-          return { ...r, Owned: 'No' };
-        });
+        const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, cards, false);
         if (!touched) continue;
-        const ownedCount = nextRows.filter(r => String(r['Owned'] ?? '') === 'Yes').length;
         const ownedPct = nextRows.length > 0 ? (ownedCount / nextRows.length) * 100 : 0;
         await supabase.from('sets').update({
           rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now(),
