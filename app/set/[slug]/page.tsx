@@ -564,8 +564,19 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
    async function saveDefaultTarget(patch: { type: string; low: string; high: string; companies: string }) {
     if (!userId || !slug || slug === 'new') return;
     const supabase = createClient();
-    await supabase.from('sets').update({ default_target: patch }).eq('user_id', userId).eq('slug', slug);
+    const nextRows = rows.map((r) => {
+      if (String(r['Owned'] || '') === 'Yes') return r;
+      return {
+        ...r,
+        'Target Type': patch.type,
+        'Target Condition - Low': patch.low,
+        'Target Condition - High': patch.high,
+        'Target Grading Companies': patch.companies,
+      };
+    });
+    await supabase.from('sets').update({ default_target: patch, rows: nextRows }).eq('user_id', userId).eq('slug', slug);
     setDefaultTarget(patch);
+    setRows(nextRows);
   }
 
   function handleListForSale(row: Record<string, any>) {
