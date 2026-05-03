@@ -6,343 +6,227 @@ import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-type Status = 'draft' | 'live' | 'ended' | 'settled';
-
-type Listing = {
+type Bidder = {
   id: string;
-  title: string;
+  name: string;
+  fb_handle: string | null;
+  notes: string | null;
+  email: string | null;
+  phone: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+};
+
+type ListingRef = {
+  id: string;
+  title: string | null;
   year: number | null;
   brand: string | null;
   card_number: string | null;
   player: string | null;
-  photos: string[];
-  condition_type: 'raw' | 'graded';
-  raw_grade: string | null;
-  grading_company: string | null;
-  grade: string | null;
 };
 
-type Lot = {
+type ActivityRow = {
   id: string;
-  lot_number: number;
-  listing_id: string | null;
-  starting_bid: number | null;
-  current_bid: number | null;
-  bidder_name: string | null;
-  bidder_fb_handle: string | null;
-  bidder_id: string | null;
-  comment_url: string | null;
-  status: 'open' | 'sold' | 'no_sale' | 'paid';
-  notes: string | null;
-  listing: Listing | null;
-};
-
-type BidderRow = { id: string; name: string; fb_handle: string | null };
-
-type Auction = {
-  id: string;
-  title: string;
-  status: Status;
-  post_url: string | null;
-  ends_at: string | null;
+  auction_id: string;
+  lot_id: string;
+  bid_amount: number | null;
+  is_winner: boolean;
+  is_paid: boolean;
+  listing_year: number | null;
+  listing_brand: string | null;
+  listing_player: string | null;
+  listing_card_number: string | null;
   created_at: string;
-  notes: string | null;
-  group_id: string | null;
-  template_id: string | null;
-  fb_groups?: { name: string; url: string | null } | null;
-  fb_auction_templates?: { name: string; post_footer: string } | null;
+  updated_at: string;
+  fb_auctions?: { title: string | null; status: string | null } | null;
+  // Resolved client-side via lot_id → fb_auction_lots.listing_id → listings:
+  resolved?: ListingRef | null;
 };
 
-function statusBg(s: Status) {
-  if (s === 'live') return 'var(--teal)';
-  if (s === 'ended') return 'var(--mustard)';
-  if (s === 'settled') return 'var(--plum)';
-  return 'var(--ink-mute)';
-}
-function statusFg(s: Status) {
-  if (s === 'ended') return 'var(--plum)';
-  return 'var(--cream)';
-}
-
-function fmtMoney(n: number | null | undefined): string {
+function fmtMoney(n: number | null): string {
   if (n === null || n === undefined) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
-function conditionNote(l: Listing | null): string {
-  if (!l) return '';
-  if (l.condition_type === 'graded' && l.grading_company && l.grade) return `${l.grading_company} ${l.grade}`;
-  if (l.condition_type === 'raw' && l.raw_grade) return l.raw_grade;
-  return '';
+function activityLabel(a: ActivityRow): string {
+  const r = a.resolved;
+  const year = r?.year ?? a.listing_year;
+  const brand = r?.brand ?? a.listing_brand;
+  const num = r?.card_number ?? a.listing_card_number;
+  const player = r?.player ?? a.listing_player;
+  const parts = [
+    year ? String(year) : '',
+    brand || '',
+    num ? `#${num}` : '',
+    player || '',
+  ].filter(Boolean);
+  const label = parts.join(' ').trim();
+  if (label) return label;
+  if (r?.title) return r.title;
+  return '(card details missing)';
 }
 
-async function copyText(text: string) {
-  try { await navigator.clipboard.writeText(text); return true; }
-  catch { return false; }
+function fullAddress(b: Bidder): string {
+  const parts = [
+    b.address_line1,
+    b.address_line2,
+    [b.city, b.state, b.postal_code].filter(Boolean).join(', '),
+    b.country,
+  ].filter(Boolean) as string[];
+  return parts.join('\n');
 }
 
-export default function ManageFbAuctionPage() {
+export default function BidderProfilePage() {
   const router = useRouter();
   const params = useParams();
-  const auctionId = String(params?.id || '');
+  const bidderId = String(params?.id || '');
 
-  const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [auction, setAuction] = useState<Auction | null>(null);
-  const [lots, setLots] = useState<Lot[]>([]);
-
-  // Local edits buffer (so we can debounce save)
-  const [editBuffer, setEditBuffer] = useState<Record<string, Partial<Lot>>>({});
-  const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
-
-  // Bidder tracking
-  const [bidders, setBidders] = useState<BidderRow[]>([]);
-  const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
-
-  // Settlement state
-  const [paymentText, setPaymentText] = useState<string>('PayPal F&F to: your-paypal@email.com\nVenmo: @your-venmo');
-  const [shippingByBuyer, setShippingByBuyer] = useState<Record<string, string>>({});
+  const [bidder, setBidder] = useState<Bidder | null>(null);
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [edit, setEdit] = useState({
+    name: '', fb_handle: '', email: '', phone: '',
+    address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '',
+    notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      setUserId(user.id);
-
-      const [aucRes, lotsRes, biddersRes] = await Promise.all([
-        supabase.from('fb_auctions')
-          .select('*, fb_groups(name, url), fb_auction_templates(name, post_footer)')
-          .eq('id', auctionId).eq('user_id', user.id).maybeSingle(),
-        supabase.from('fb_auction_lots')
-          .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade)')
-          .eq('auction_id', auctionId).order('lot_number'),
-        supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
+      const [bRes, aRes] = await Promise.all([
+        supabase.from('fb_bidders')
+          .select('id, name, fb_handle, notes, email, phone, address_line1, address_line2, city, state, postal_code, country')
+          .eq('id', bidderId).eq('user_id', user.id).maybeSingle(),
+        supabase.from('fb_bidder_activity')
+          .select('id, auction_id, lot_id, bid_amount, is_winner, is_paid, listing_year, listing_brand, listing_player, listing_card_number, created_at, updated_at, fb_auctions(title, status)')
+          .eq('user_id', user.id).eq('bidder_id', bidderId)
+          .order('updated_at', { ascending: false }),
       ]);
+      if (!bRes.data) { router.push('/fb-auctions/bidders'); return; }
+      const b = bRes.data as Bidder;
+      setBidder(b);
+      setEdit({
+        name: b.name || '',
+        fb_handle: b.fb_handle || '',
+        email: b.email || '',
+        phone: b.phone || '',
+        address_line1: b.address_line1 || '',
+        address_line2: b.address_line2 || '',
+        city: b.city || '',
+        state: b.state || '',
+        postal_code: b.postal_code || '',
+        country: b.country || '',
+        notes: b.notes || '',
+      });
 
-      if (!aucRes.data) { router.push('/fb-auctions'); return; }
-      setAuction(aucRes.data as Auction);
-      let lotsRaw = (lotsRes.data || []) as Lot[];
-      // Backfill bidder_id null if the column doesn't exist yet (Phase A SQL not run).
-      lotsRaw = lotsRaw.map(l => ({ ...l, bidder_id: l.bidder_id ?? null }));
-      // If the listings join returned null on any lot, fetch them separately and merge.
-      const missing = lotsRaw.filter(l => !l.listing && l.listing_id).map(l => l.listing_id as string);
-      if (missing.length > 0) {
-        const { data: listingRows } = await supabase
-          .from('listings')
-          .select('id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade')
-          .in('id', missing);
-        const byId = new Map((listingRows || []).map((r: { id: string }) => [r.id, r]));
-        lotsRaw = lotsRaw.map(l => l.listing
-          ? l
-          : { ...l, listing: l.listing_id ? (byId.get(l.listing_id) as Lot['listing'] | undefined) || null : null });
+      // Walk the FK chain to resolve listing details for each activity row,
+      // so labels render even if the activity snapshot fields are null.
+      let acts = ((aRes.data || []) as unknown) as ActivityRow[];
+      const lotIds = Array.from(new Set(acts.map(a => a.lot_id).filter(Boolean)));
+      if (lotIds.length > 0) {
+        const { data: lotRows } = await supabase
+          .from('fb_auction_lots')
+          .select('id, listing_id')
+          .in('id', lotIds);
+        const lotToListingId = new Map<string, string>();
+        for (const lot of (lotRows || []) as { id: string; listing_id: string | null }[]) {
+          if (lot.listing_id) lotToListingId.set(lot.id, lot.listing_id);
+        }
+        const listingIds = Array.from(new Set(Array.from(lotToListingId.values())));
+        let listingsById = new Map<string, ListingRef>();
+        if (listingIds.length > 0) {
+          const { data: listingRows } = await supabase
+            .from('listings')
+            .select('id, title, year, brand, card_number, player')
+            .in('id', listingIds);
+          listingsById = new Map(((listingRows || []) as ListingRef[]).map(r => [r.id, r]));
+        }
+        acts = acts.map(a => {
+          const lid = lotToListingId.get(a.lot_id);
+          return { ...a, resolved: lid ? listingsById.get(lid) || null : null };
+        });
       }
-      setLots(lotsRaw);
-      if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
-      setBidders((biddersRes.data || []) as BidderRow[]);
+      setActivity(acts);
       setLoading(false);
     }
     load();
-  }, [auctionId, router]);
+  }, [bidderId, router]);
 
-  const biddersByLowerName = useMemo(() => {
-    const map = new Map<string, BidderRow[]>();
-    for (const b of bidders) {
-      const k = b.name.toLowerCase();
-      const arr = map.get(k) || [];
-      arr.push(b);
-      map.set(k, arr);
+  const stats = useMemo(() => {
+    let bidCount = 0, wonCount = 0, paidCount = 0, totalSpend = 0;
+    for (const a of activity) {
+      bidCount += 1;
+      if (a.is_winner) wonCount += 1;
+      if (a.is_paid) {
+        paidCount += 1;
+        if (a.bid_amount) totalSpend += a.bid_amount;
+      }
     }
-    return map;
-  }, [bidders]);
+    return { bidCount, wonCount, paidCount, totalSpend };
+  }, [activity]);
 
-  async function ensureBidderForLot(lot: Lot, name: string | null, handle: string | null): Promise<string | null> {
-    if (!userId) return null;
-    const trimmed = (name || '').trim();
-    if (!trimmed) return null;
+  async function saveProfile() {
+    if (!bidder) return;
+    setSaving(true);
     const supabase = createClient();
-    const lname = trimmed.toLowerCase();
-    const matches = biddersByLowerName.get(lname) || [];
-    let bidder: BidderRow | null = null;
-    if (handle && handle.trim()) {
-      bidder = matches.find(b => (b.fb_handle || '').toLowerCase() === handle.trim().toLowerCase()) || null;
-    } else if (matches.length === 1) {
-      bidder = matches[0];
-    } else if (matches.length > 1) {
-      setDupeWarnings(prev => ({ ...prev, [lot.id]: matches }));
-      bidder = matches[0];
-    }
-    if (!bidder) {
-      const { data, error } = await supabase
-        .from('fb_bidders')
-        .insert({ user_id: userId, name: trimmed, fb_handle: handle?.trim() || null })
-        .select('id, name, fb_handle')
-        .single();
-      if (error || !data) return null;
-      bidder = data as BidderRow;
-      setBidders(prev => [...prev, bidder!].sort((a, b) => a.name.localeCompare(b.name)));
-    }
-    const isWinner = lot.status === 'sold' || lot.status === 'paid';
-    const isPaid = lot.status === 'paid';
-    await supabase.from('fb_bidder_activity').upsert({
-      user_id: userId,
-      bidder_id: bidder.id,
-      auction_id: auctionId,
-      lot_id: lot.id,
-      bid_amount: lot.current_bid,
-      is_winner: isWinner,
-      is_paid: isPaid,
-      listing_year: lot.listing?.year ?? null,
-      listing_brand: lot.listing?.brand ?? null,
-      listing_player: lot.listing?.player ?? null,
-      listing_card_number: lot.listing?.card_number ?? null,
+    const payload: Record<string, string | null> = {
+      name: edit.name.trim(),
+      fb_handle: edit.fb_handle.trim() || null,
+      email: edit.email.trim() || null,
+      phone: edit.phone.trim() || null,
+      address_line1: edit.address_line1.trim() || null,
+      address_line2: edit.address_line2.trim() || null,
+      city: edit.city.trim() || null,
+      state: edit.state.trim() || null,
+      postal_code: edit.postal_code.trim() || null,
+      country: edit.country.trim() || null,
+      notes: edit.notes.trim() || null,
+    };
+    const { error } = await supabase.from('fb_bidders').update({
+      ...payload,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'lot_id,bidder_id' });
-    return bidder.id;
-  }
-
-  function getLotValue<K extends keyof Lot>(lot: Lot, key: K): Lot[K] {
-    const buf = editBuffer[lot.id];
-    if (buf && key in buf) return (buf as Lot)[key];
-    return lot[key];
-  }
-
-  function patchLot(id: string, patch: Partial<Lot>) {
-    setEditBuffer(prev => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
-  }
-
-  async function flushLot(id: string) {
-    const buf = editBuffer[id];
-    if (!buf) return;
-    setSavingLots(prev => new Set(prev).add(id));
-    const supabase = createClient();
-    const lotRef = lots.find(l => l.id === id);
-    const merged: Lot | undefined = lotRef ? ({ ...lotRef, ...buf } as Lot) : undefined;
-    const payload: Record<string, unknown> = {};
-    if ('current_bid' in buf) payload.current_bid = buf.current_bid;
-    if ('bidder_name' in buf) payload.bidder_name = buf.bidder_name?.toString().trim() || null;
-    if ('bidder_fb_handle' in buf) payload.bidder_fb_handle = buf.bidder_fb_handle?.toString().trim() || null;
-    if ('comment_url' in buf) payload.comment_url = buf.comment_url?.toString().trim() || null;
-    if ('status' in buf) payload.status = buf.status;
-    if ('notes' in buf) payload.notes = buf.notes?.toString().trim() || null;
-
-    let bidderId: string | null = lotRef?.bidder_id ?? null;
-    if (merged && (merged.bidder_name || '').toString().trim()) {
-      bidderId = await ensureBidderForLot(merged, merged.bidder_name, merged.bidder_fb_handle);
-      if (bidderId) payload.bidder_id = bidderId;
-    } else if ('bidder_name' in buf && (!buf.bidder_name || !buf.bidder_name.toString().trim())) {
-      payload.bidder_id = null;
-      bidderId = null;
-    }
-
-    const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', id);
-    if (error) { alert(error.message); }
-    else {
-      setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf, bidder_id: bidderId } : l));
-      setEditBuffer(prev => { const next = { ...prev }; delete next[id]; return next; });
-    }
-    setSavingLots(prev => { const next = new Set(prev); next.delete(id); return next; });
-  }
-
-  async function setStatus(s: Status) {
-    if (!auction) return;
-    const supabase = createClient();
-    const { error } = await supabase.from('fb_auctions').update({ status: s }).eq('id', auction.id);
+    }).eq('id', bidder.id);
+    setSaving(false);
     if (error) { alert(error.message); return; }
-    setAuction(a => a ? { ...a, status: s } : a);
+    setBidder({ ...bidder, ...payload } as Bidder);
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1800);
   }
 
-  async function setPostUrl(url: string) {
-    if (!auction) return;
+  async function deleteBidder() {
+    if (!bidder) return;
+    if (!confirm(`Delete bidder "${bidder.name}"? Their activity rows will also be removed. Lots will keep the typed name but lose the link.`)) return;
     const supabase = createClient();
-    const trimmed = url.trim() || null;
-    await supabase.from('fb_auctions').update({ post_url: trimmed }).eq('id', auction.id);
-    setAuction(a => a ? { ...a, post_url: trimmed } : a);
+    const { error } = await supabase.from('fb_bidders').delete().eq('id', bidder.id);
+    if (error) { alert(error.message); return; }
+    router.push('/fb-auctions/bidders');
   }
 
-  async function quickSetSold(lot: Lot) {
-    patchLot(lot.id, { status: 'sold' });
-    setEditBuffer(prev => ({ ...prev, [lot.id]: { ...(prev[lot.id] || {}), status: 'sold' } }));
-    // immediate flush
-    const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
-  }
-  async function quickSetNoSale(lot: Lot) {
-    const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'no_sale' }).eq('id', lot.id);
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'no_sale' } : l));
-  }
-  async function quickReopen(lot: Lot) {
-    const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'open' }).eq('id', lot.id);
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'open' } : l));
+  async function copyAddress() {
+    if (!bidder) return;
+    const text = fullAddress(bidder);
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); } catch {}
   }
 
-  async function markBuyerPaid(bidderName: string) {
-    if (!confirm(`Mark all of ${bidderName}'s lots as PAID?`)) return;
-    const supabase = createClient();
-    const ids = lots.filter(l => (l.bidder_name || '').trim().toLowerCase() === bidderName.toLowerCase() && l.status === 'sold').map(l => l.id);
-    if (ids.length === 0) return;
-    await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', ids);
-    setLots(prev => prev.map(l => ids.includes(l.id) ? { ...l, status: 'paid' } : l));
+  if (loading || !bidder) {
+    return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
   }
 
-  // Group sold/paid lots by bidder for settlement
-  const buyerGroups = useMemo(() => {
-    const map = new Map<string, { name: string; lots: Lot[] }>();
-    for (const lot of lots) {
-      if (lot.status !== 'sold' && lot.status !== 'paid') continue;
-      const name = (lot.bidder_name || '').trim();
-      if (!name) continue;
-      const key = name.toLowerCase();
-      if (!map.has(key)) map.set(key, { name, lots: [] });
-      map.get(key)!.lots.push(lot);
-    }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [lots]);
-
-  function buildInvoice(group: { name: string; lots: Lot[] }, shipping: number): string {
-    const subtotal = group.lots.reduce((s, l) => s + (l.current_bid || 0), 0);
-    const total = subtotal + (Number.isFinite(shipping) ? shipping : 0);
-    const lines = group.lots.map(l => {
-      const ttl = l.listing?.title || `Lot #${l.lot_number}`;
-      return `· ${ttl} — ${fmtMoney(l.current_bid)}`;
-    });
-    return [
-      `Hi ${group.name}!`,
-      '',
-      `Congrats on winning these from my ${auction?.title || 'auction'}:`,
-      '',
-      ...lines,
-      '',
-      `Subtotal: ${fmtMoney(subtotal)}`,
-      `Shipping: ${fmtMoney(shipping)}`,
-      `Total: ${fmtMoney(total)}`,
-      '',
-      paymentText,
-      '',
-      'Thanks!',
-    ].join('\n');
-  }
-
-  if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
-  if (!auction) return null;
-
-  const totalLots = lots.length;
-  const openLots = lots.filter(l => l.status === 'open').length;
-  const soldLots = lots.filter(l => l.status === 'sold' || l.status === 'paid').length;
-  const noSaleLots = lots.filter(l => l.status === 'no_sale').length;
-  const paidLots = lots.filter(l => l.status === 'paid').length;
-  const grossSales = lots.filter(l => l.status === 'sold' || l.status === 'paid').reduce((s, l) => s + (l.current_bid || 0), 0);
+  const winningActivity = activity.filter(a => a.is_winner);
+  const losingActivity = activity.filter(a => !a.is_winner);
 
   return (
     <div style={{ minHeight: '100vh' }}>
-      <datalist id="fb-bidders-list">
-        {bidders.map(b => (
-          <option key={b.id} value={b.name}>{b.fb_handle ? `@${b.fb_handle}` : ''}</option>
-        ))}
-      </datalist>
       <header style={{
         position: 'sticky', top: 0, zIndex: 50,
         background: 'rgba(248,236,208,0.96)', backdropFilter: 'blur(8px)',
@@ -356,301 +240,148 @@ export default function ManageFbAuctionPage() {
               <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
             </div>
           </Link>
-          <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Manage Auction ★</div>
+          <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Bidder Profile ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <Link href="/fb-auctions" className="btn btn-ghost btn-sm">All Auctions</Link>
-            <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
+            <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">← All Bidders</Link>
+            <Link href="/fb-auctions" className="btn btn-ghost btn-sm">FB Auctions</Link>
           </div>
         </div>
       </header>
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
-        {/* Auction header */}
-        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-            <div className="display" style={{ fontSize: 24, color: 'var(--plum)', flex: 1, minWidth: 240 }}>{auction.title}</div>
-            <span style={{
-              fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', padding: '4px 12px', borderRadius: 100,
-              background: statusBg(auction.status), color: statusFg(auction.status), textTransform: 'uppercase',
-            }}>{auction.status}</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 14 }}>
-            <Stat label="Lots" value={String(totalLots)} />
-            <Stat label="Open" value={String(openLots)} />
-            <Stat label="Sold" value={String(soldLots)} />
-            <Stat label="Paid" value={String(paidLots)} />
-            <Stat label="No Sale" value={String(noSaleLots)} />
-            <Stat label="Gross" value={fmtMoney(grossSales)} />
-          </div>
-          <div className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
-            Created {new Date(auction.created_at).toLocaleString()}
-            {auction.fb_groups?.name && ` · Group: ${auction.fb_groups.name}`}
-            {auction.ends_at && ` · Ends ${new Date(auction.ends_at).toLocaleString()}`}
-          </div>
-        </section>
-
-        {/* Status + post URL */}
-        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
-          <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>Auction Controls</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-            <div>
-              <label className="input-label">Facebook Post URL</label>
-              <input
-                defaultValue={auction.post_url || ''}
-                onBlur={e => { if ((e.target.value.trim() || null) !== (auction.post_url || null)) setPostUrl(e.target.value); }}
-                placeholder="https://www.facebook.com/groups/..."
-                className="input-sc" style={{ width: '100%' }}
-              />
-              <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 4, fontStyle: 'italic' }}>
-                Paste here once your post is live. Saved on blur.
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 18, alignItems: 'start' }}>
+          <div>
+            <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
+              <div className="display" style={{ fontSize: 24, color: 'var(--plum)', marginBottom: 4 }}>{bidder.name}</div>
+              {bidder.fb_handle && (
+                <div className="mono" style={{ fontSize: 13, color: 'var(--teal)', fontWeight: 600 }}>@{bidder.fb_handle}</div>
+              )}
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8, fontSize: 12, color: 'var(--ink-soft)' }}>
+                {bidder.email && <span>✉ <a href={`mailto:${bidder.email}`} style={{ color: 'var(--teal)', fontWeight: 600 }}>{bidder.email}</a></span>}
+                {bidder.phone && <span>☎ {bidder.phone}</span>}
+                {fullAddress(bidder) && (
+                  <button onClick={copyAddress} className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 8px' }}>📋 Copy mailing address</button>
+                )}
               </div>
-            </div>
-            <div>
-              <label className="input-label">Status</label>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {(['draft', 'live', 'ended', 'settled'] as const).map(s => (
-                  <button key={s} onClick={() => setStatus(s)}
-                    className={`btn btn-sm ${auction.status === s ? 'btn-primary' : 'btn-ghost'}`}>
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                  </button>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginTop: 14 }}>
+                <Stat label="Bids" value={String(stats.bidCount)} />
+                <Stat label="Won" value={String(stats.wonCount)} />
+                <Stat label="Paid" value={String(stats.paidCount)} />
+                <Stat label="$ Spent" value={fmtMoney(stats.totalSpend)} accent />
               </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 4, fontStyle: 'italic' }}>
-                Draft → Live (after posting) → Ended (24h up) → Settled (paid out).
-              </div>
-            </div>
-          </div>
-        </section>
+            </section>
 
-        {/* Lots */}
-        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
-          <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>
-            Lots — track current high bids
-          </div>
-          {lots.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No lots in this auction.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {lots.map(lot => {
-                const cur = getLotValue(lot, 'current_bid');
-                const bidder = getLotValue(lot, 'bidder_name');
-                const handle = getLotValue(lot, 'bidder_fb_handle');
-                const commentUrl = getLotValue(lot, 'comment_url');
-                const isSaving = savingLots.has(lot.id);
-                const buf = editBuffer[lot.id];
-                const dirty = !!buf && Object.keys(buf).length > 0;
-                return (
-                  <div key={lot.id} className="panel" style={{
-                    padding: 14,
-                    border: lot.status === 'paid' ? '1.5px solid var(--teal)' :
-                            lot.status === 'sold' ? '1.5px solid var(--orange)' :
-                            lot.status === 'no_sale' ? '1.5px dashed var(--rust)' : '1.5px solid var(--rule)',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
-                      <div style={{
-                        width: 50, height: 50, flexShrink: 0,
-                        background: 'var(--plum)', color: 'var(--mustard)',
-                        display: 'grid', placeItems: 'center', borderRadius: 8,
-                        fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700,
-                      }}>#{lot.lot_number}</div>
-                      {lot.listing?.photos?.[0] && (
-                        <img src={lot.listing.photos[0]} alt="" style={{ width: 44, height: 62, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)', flexShrink: 0 }} />
-                      )}
-                      <div style={{ flex: 1, minWidth: 240 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <div className="display" style={{ fontSize: 14, color: 'var(--plum)' }}>
-                            {lot.listing?.title || 'Listing missing'}
-                          </div>
-                          <span style={{
-                            fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
-                            background: lot.status === 'paid' ? 'var(--teal)' : lot.status === 'sold' ? 'var(--orange)' : lot.status === 'no_sale' ? 'var(--rust)' : 'var(--ink-mute)',
-                            color: 'var(--cream)', textTransform: 'uppercase',
-                          }}>{lot.status.replace('_', ' ')}</span>
-                        </div>
-                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
-                          {lot.listing?.year} {lot.listing?.brand} #{lot.listing?.card_number} {conditionNote(lot.listing) ? '· ' + conditionNote(lot.listing) : ''}
-                          {lot.starting_bid !== null && ` · SB ${fmtMoney(lot.starting_bid)}`}
-                        </div>
-
-                        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, alignItems: 'flex-end' }}>
-                          <div>
-                            <label className="input-label" style={{ fontSize: 9 }}>Current bid ($)</label>
-                            <input type="text" inputMode="decimal"
-                              defaultValue={cur !== null && cur !== undefined ? String(cur) : ''}
-                              onChange={e => patchLot(lot.id, { current_bid: e.target.value === '' ? null : Number(e.target.value.replace(/[^0-9.]/g, '')) })}
-                              onBlur={() => flushLot(lot.id)}
-                              placeholder="0"
-                              className="input-sc" style={{ width: '100%' }} />
-                          </div>
-                          <div style={{ position: 'relative' }}>
-                            <label className="input-label" style={{ fontSize: 9 }}>Bidder name</label>
-                            <input type="text"
-                              list="fb-bidders-list"
-                              defaultValue={bidder || ''}
-                              onChange={e => patchLot(lot.id, { bidder_name: e.target.value })}
-                              onBlur={() => flushLot(lot.id)}
-                              placeholder="Lee Cho"
-                              className="input-sc" style={{ width: '100%' }} />
-                            {dupeWarnings[lot.id] && dupeWarnings[lot.id].length > 1 && (
-                              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)', borderRadius: 4, padding: '4px 6px', fontSize: 10, zIndex: 10 }}>
-                                ⚠ {dupeWarnings[lot.id].length} bidders named &ldquo;{bidder}&rdquo;. Add an FB handle to disambiguate.
-                                <button onClick={() => setDupeWarnings(prev => { const n = { ...prev }; delete n[lot.id]; return n; })}
-                                  style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'var(--plum)', cursor: 'pointer', fontWeight: 700 }}>✕</button>
-                              </div>
-                            )}
-                          </div>
-                          <div>
-                            <label className="input-label" style={{ fontSize: 9 }}>FB handle (optional)</label>
-                            <input type="text"
-                              defaultValue={handle || ''}
-                              onChange={e => patchLot(lot.id, { bidder_fb_handle: e.target.value })}
-                              onBlur={() => flushLot(lot.id)}
-                              placeholder="@lee.cho"
-                              className="input-sc" style={{ width: '100%' }} />
-                          </div>
-                          <div>
-                            <label className="input-label" style={{ fontSize: 9 }}>Comment URL (optional)</label>
-                            <input type="text"
-                              defaultValue={commentUrl || ''}
-                              onChange={e => patchLot(lot.id, { comment_url: e.target.value })}
-                              onBlur={() => flushLot(lot.id)}
-                              placeholder="https://www.facebook.com/..."
-                              className="input-sc" style={{ width: '100%' }} />
-                          </div>
-                        </div>
-
-                        <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                          {lot.status !== 'sold' && lot.status !== 'paid' && (
-                            <button onClick={() => quickSetSold(lot)} className="btn btn-sm" style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>✓ Mark Sold</button>
-                          )}
-                          {lot.status !== 'no_sale' && lot.status !== 'paid' && (
-                            <button onClick={() => quickSetNoSale(lot)} className="btn btn-sm" style={{ background: 'transparent', color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>✗ No Sale</button>
-                          )}
-                          {(lot.status === 'sold' || lot.status === 'no_sale') && (
-                            <button onClick={() => quickReopen(lot)} className="btn btn-ghost btn-sm">↺ Reopen</button>
-                          )}
-                          {commentUrl && (
-                            <a href={commentUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">🔗 View comment</a>
-                          )}
-                          {(isSaving || dirty) && (
-                            <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginLeft: 'auto' }}>
-                              {isSaving ? 'Saving…' : 'Unsaved'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        {/* Settlement */}
-        {(auction.status === 'ended' || auction.status === 'settled') && (
-          <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
-            <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Settlement — Buyer Invoices</div>
-            <div style={{ marginBottom: 14 }}>
-              <label className="input-label">Payment Instructions (used in every invoice)</label>
-              <textarea value={paymentText} onChange={e => setPaymentText(e.target.value)} rows={3}
-                style={{
-                  width: '100%', boxSizing: 'border-box',
-                  border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px',
-                  fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--plum)',
-                  background: 'var(--paper)', resize: 'vertical',
-                }} />
-            </div>
-
-            {buyerGroups.length === 0 ? (
-              <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>
-                No sold lots with bidder names yet. Mark winning lots as <strong>Sold</strong> and fill in the bidder name on each.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {buyerGroups.map(group => {
-                  const shipping = Number(shippingByBuyer[group.name.toLowerCase()] || '0') || 0;
-                  const subtotal = group.lots.reduce((s, l) => s + (l.current_bid || 0), 0);
-                  const total = subtotal + shipping;
-                  const allPaid = group.lots.every(l => l.status === 'paid');
-                  const invoice = buildInvoice(group, shipping);
-                  return (
-                    <div key={group.name} className="panel" style={{
-                      padding: 14,
-                      border: allPaid ? '1.5px solid var(--teal)' : '1.5px solid var(--plum)',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-                        <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1, minWidth: 180 }}>
-                          {group.name} {allPaid && <span style={{ fontSize: 10, color: 'var(--teal)', fontWeight: 700, letterSpacing: '0.1em', marginLeft: 8 }}>✓ PAID</span>}
-                        </div>
-                        <div className="mono" style={{ fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
-                          {group.lots.length} lot{group.lots.length === 1 ? '' : 's'} · {fmtMoney(subtotal)} subtotal
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 10 }}>
-                        <div style={{ flex: 1, minWidth: 280 }}>
-                          <pre style={{
-                            background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 6,
-                            padding: '12px 14px', fontSize: 12.5, fontFamily: 'var(--font-mono)', color: 'var(--plum)',
-                            whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: 0,
-                          }}>{invoice}</pre>
-                        </div>
-                        <div style={{ width: 200, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          <div>
-                            <label className="input-label" style={{ fontSize: 10 }}>Shipping ($)</label>
-                            <input type="text" inputMode="decimal"
-                              value={shippingByBuyer[group.name.toLowerCase()] || ''}
-                              onChange={e => setShippingByBuyer(prev => ({ ...prev, [group.name.toLowerCase()]: e.target.value.replace(/[^0-9.]/g, '') }))}
-                              placeholder="5"
-                              className="input-sc" style={{ width: '100%' }} />
-                          </div>
-                          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 700 }}>
-                            <div>Subtotal: {fmtMoney(subtotal)}</div>
-                            <div>Shipping: {fmtMoney(shipping)}</div>
-                            <div style={{ color: 'var(--orange)', fontSize: 14, marginTop: 2 }}>Total: {fmtMoney(total)}</div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        <CopyButton text={invoice} label="📋 Copy Messenger Invoice" />
-                        {!allPaid && (
-                          <button onClick={() => markBuyerPaid(group.name)} className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
-                            ✓ Mark all paid
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+            {winningActivity.length > 0 && (
+              <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
+                <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>🏆 Won ({winningActivity.length})</div>
+                <ActivityList items={winningActivity} />
+              </section>
             )}
+
+            <section className="panel-bordered" style={{ padding: '18px 22px' }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>
+                {winningActivity.length > 0 ? `Other bids (${losingActivity.length})` : `Bid activity (${activity.length})`}
+              </div>
+              {activity.length === 0 ? (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+                  No bid activity yet.
+                </div>
+              ) : (
+                <ActivityList items={winningActivity.length > 0 ? losingActivity : activity} />
+              )}
+            </section>
+          </div>
+
+          <section className="panel-bordered" style={{ padding: '18px 22px', position: 'sticky', top: 80 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)' }}>Edit profile</div>
+              {savedFlash && <span style={{ fontSize: 11, color: 'var(--teal)', fontWeight: 700 }}>✓ Saved</span>}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Field label="Name" value={edit.name} onChange={v => setEdit(s => ({ ...s, name: v }))} />
+              <Field label="FB handle" value={edit.fb_handle} onChange={v => setEdit(s => ({ ...s, fb_handle: v }))} placeholder="lee.cho.42" />
+              <Field label="Email" value={edit.email} onChange={v => setEdit(s => ({ ...s, email: v }))} placeholder="lee@example.com" />
+              <Field label="Phone" value={edit.phone} onChange={v => setEdit(s => ({ ...s, phone: v }))} placeholder="(555) 123-4567" />
+              <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px dashed var(--rule)' }}>
+                <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 6 }}>Mailing address</div>
+                <Field label="Street" value={edit.address_line1} onChange={v => setEdit(s => ({ ...s, address_line1: v }))} placeholder="123 Main St" />
+                <Field label="Apt / Unit" value={edit.address_line2} onChange={v => setEdit(s => ({ ...s, address_line2: v }))} placeholder="Apt 4B" />
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 6 }}>
+                  <Field label="City" value={edit.city} onChange={v => setEdit(s => ({ ...s, city: v }))} />
+                  <Field label="State" value={edit.state} onChange={v => setEdit(s => ({ ...s, state: v }))} placeholder="CA" />
+                  <Field label="ZIP" value={edit.postal_code} onChange={v => setEdit(s => ({ ...s, postal_code: v }))} />
+                </div>
+                <Field label="Country" value={edit.country} onChange={v => setEdit(s => ({ ...s, country: v }))} placeholder="USA" />
+              </div>
+              <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px dashed var(--rule)' }}>
+                <label className="input-label">Notes</label>
+                <textarea value={edit.notes} onChange={e => setEdit(s => ({ ...s, notes: e.target.value }))} rows={3}
+                  style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', background: 'var(--paper)', resize: 'vertical' }} />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={saveProfile} disabled={saving} className="btn btn-primary btn-sm" style={{ flex: 1 }}>
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={deleteBidder} className="btn btn-ghost btn-sm" style={{ color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>
+                  Delete
+                </button>
+              </div>
+            </div>
           </section>
-        )}
+        </div>
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
-    <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, padding: '8px 12px' }}>
-      <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 2 }}>{label}</div>
-      <div className="display" style={{ fontSize: 17, color: 'var(--plum)' }}>{value}</div>
+    <div>
+      <label className="input-label">{label}</label>
+      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="input-sc" style={{ width: '100%' }} />
     </div>
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+function ActivityList({ items }: { items: ActivityRow[] }) {
   return (
-    <button onClick={async () => {
-      const ok = await copyText(text);
-      if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); }
-      else alert('Copy failed — please select and copy manually.');
-    }} className="btn btn-primary btn-sm">
-      {copied ? '✓ Copied' : label}
-    </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {items.map(a => (
+        <div key={a.id} style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 90px 90px',
+          gap: 10, padding: '8px 10px', alignItems: 'center',
+          background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
+        }}>
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 600 }}>{activityLabel(a)}</div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
+              {new Date(a.updated_at).toLocaleDateString()}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Link href={`/fb-auctions/${a.auction_id}`} style={{ color: 'var(--teal)', textDecoration: 'underline', fontWeight: 600 }}>
+              {a.fb_auctions?.title || 'View auction'}
+            </Link>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, textAlign: 'right' }}>
+            {fmtMoney(a.bid_amount)}
+          </div>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            {a.is_winner && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)', textTransform: 'uppercase' }}>WON</span>}
+            {a.is_paid && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--plum)', color: 'var(--cream)', textTransform: 'uppercase' }}>PAID</span>}
+            {!a.is_winner && !a.is_paid && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--ink-mute)' }}>BID</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div style={{ padding: '8px 10px', background: 'var(--paper)', borderRadius: 6, border: '1px solid var(--rule)', textAlign: 'center' }}>
+      <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 2 }}>{label}</div>
+      <div className="display" style={{ fontSize: 18, color: accent ? 'var(--orange)' : 'var(--plum)', fontWeight: 700 }}>{value}</div>
+    </div>
   );
 }
