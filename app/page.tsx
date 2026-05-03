@@ -228,6 +228,10 @@ export default function HomePage() {
   const [scansPickerOpen, setScansPickerOpen] = useState(false);
   const router = useRouter();
 
+  const goSingleCards = () => { setScansPickerOpen(false); router.push('/listings/scan-inbox'); };
+  const goSetInventory = () => { setScansPickerOpen(false); router.push('/listings/scan-from-set'); };
+  const goMultiCard = () => { setScansPickerOpen(false); router.push('/listings/scan-multi-card'); };
+
   useEffect(() => {
     const supabase = createClient();
     async function load() {
@@ -334,18 +338,20 @@ export default function HomePage() {
       {scansPickerOpen && (
         <ScansPicker
           onClose={() => setScansPickerOpen(false)}
-          onSingleCards={() => { setScansPickerOpen(false); router.push('/listings/scan-inbox'); }}
-          onSetInventory={() => { setScansPickerOpen(false); router.push('/listings/scan-from-set'); }}
+          onSingleCards={goSingleCards}
+          onSetInventory={goSetInventory}
+          onMultiCard={goMultiCard}
         />
       )}
     </div>
   );
 }
 
-function ScansPicker({ onClose, onSingleCards, onSetInventory }: {
+function ScansPicker({ onClose, onSingleCards, onSetInventory, onMultiCard }: {
   onClose: () => void;
   onSingleCards: () => void;
   onSetInventory: () => void;
+  onMultiCard: () => void;
 }) {
   const choices = [
     {
@@ -359,6 +365,12 @@ function ScansPicker({ onClose, onSingleCards, onSetInventory }: {
       label: 'Add Scans to Set Inventory',
       hint: 'Bulk attach scans to rows in one of your sets.',
       onClick: onSetInventory,
+    },
+    {
+      icon: '🪟',
+      label: 'Multi-Card Scan (2×3 grid)',
+      hint: 'Upload one image of 6 fronts + one of 6 backs. Splits losslessly into 6 cards and assigns each to a row.',
+      onClick: onMultiCard,
     },
   ];
   return (
