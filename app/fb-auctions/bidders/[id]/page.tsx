@@ -30,22 +30,33 @@ type ListingRef = {
   player: string | null;
 };
 
-type ActivityRow = {
+type LotRow = {
   id: string;
   auction_id: string;
-  lot_id: string;
-  bid_amount: number | null;
-  is_winner: boolean;
-  is_paid: boolean;
-  listing_year: number | null;
-  listing_brand: string | null;
-  listing_player: string | null;
-  listing_card_number: string | null;
-  created_at: string;
-  updated_at: string;
-  fb_auctions?: { title: string | null; status: string | null } | null;
-  // Resolved client-side via lot_id → fb_auction_lots.listing_id → listings:
-  resolved?: ListingRef | null;
+  lot_number: number;
+  current_bid: number | null;
+  bidder_name: string | null;
+  bidder_fb_handle: string | null;
+  bidder_id: string | null;
+  listing_id: string | null;
+  status: 'open' | 'sold' | 'no_sale' | 'paid';
+};
+
+type AuctionRef = {
+  id: string;
+  title: string | null;
+  status: string | null;
+};
+
+type ActivityItem = {
+  lotId: string;
+  auctionId: string;
+  auctionTitle: string | null;
+  bid: number | null;
+  status: LotRow['status'];
+  isWinner: boolean;
+  isPaid: boolean;
+  listing: ListingRef | null;
 };
 
 function fmtMoney(n: number | null): string {
@@ -53,22 +64,16 @@ function fmtMoney(n: number | null): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
-function activityLabel(a: ActivityRow): string {
-  const r = a.resolved;
-  const year = r?.year ?? a.listing_year;
-  const brand = r?.brand ?? a.listing_brand;
-  const num = r?.card_number ?? a.listing_card_number;
-  const player = r?.player ?? a.listing_player;
+function activityLabel(item: ActivityItem): string {
+  const r = item.listing;
+  if (!r) return '(card details missing)';
   const parts = [
-    year ? String(year) : '',
-    brand || '',
-    num ? `#${num}` : '',
-    player || '',
+    r.year ? String(r.year) : '',
+    r.brand || '',
+    r.card_number ? `#${r.card_number}` : '',
+    r.player || '',
   ].filter(Boolean);
-  const label = parts.join(' ').trim();
-  if (label) return label;
-  if (r?.title) return r.title;
-  return '(card details missing)';
+  return parts.join(' ').trim() || r.title || '(card details missing)';
 }
 
 function fullAddress(b: Bidder): string {
@@ -88,7 +93,7 @@ export default function BidderProfilePage() {
 
   const [loading, setLoading] = useState(true);
   const [bidder, setBidder] = useState<Bidder | null>(null);
-  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [items, setItems] = useState<ActivityItem[]>([]);
   const [edit, setEdit] = useState({
     name: '', fb_handle: '', email: '', phone: '',
     address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '',
@@ -102,15 +107,10 @@ export default function BidderProfilePage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      const [bRes, aRes] = await Promise.all([
-        supabase.from('fb_bidders')
-          .select('id, name, fb_handle, notes, email, phone, address_line1, address_line2, city, state, postal_code, country')
-          .eq('id', bidderId).eq('user_id', user.id).maybeSingle(),
-        supabase.from('fb_bidder_activity')
-          .select('id, auction_id, lot_id, bid_amount, is_winner, is_paid, listing_year, listing_brand, listing_player, listing_card_number, created_at, updated_at, fb_auctions(title, status)')
-          .eq('user_id', user.id).eq('bidder_id', bidderId)
-          .order('updated_at', { ascending: false }),
-      ]);
+
+      const bRes = await supabase.from('fb_bidders')
+        .select('id, name, fb_handle, notes, email, phone, address_line1, address_line2, city, state, postal_code, country')
+        .eq('id', bidderId).eq('user_id', user.id).maybeSingle();
       if (!bRes.data) { router.push('/fb-auctions/bidders'); return; }
       const b = bRes.data as Bidder;
       setBidder(b);
@@ -128,34 +128,65 @@ export default function BidderProfilePage() {
         notes: b.notes || '',
       });
 
-      // Walk the FK chain to resolve listing details for each activity row,
-      // so labels render even if the activity snapshot fields are null.
-      let acts = ((aRes.data || []) as unknown) as ActivityRow[];
-      const lotIds = Array.from(new Set(acts.map(a => a.lot_id).filter(Boolean)));
-      if (lotIds.length > 0) {
-        const { data: lotRows } = await supabase
+      // Pull every lot tied to this bidder (by bidder_id OR by typed name fallback).
+      const { data: byIdLots, error: lotErr } = await supabase
+        .from('fb_auction_lots')
+        .select('id, auction_id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, listing_id, status')
+        .eq('user_id', user.id)
+        .eq('bidder_id', bidderId);
+      if (lotErr) console.warn('[bidder-profile] lot lookup error:', lotErr.message);
+
+      const lots = (byIdLots || []) as LotRow[];
+      const seen = new Set(lots.map(l => l.id));
+      const nameMatch = b.name.trim();
+      if (nameMatch) {
+        const { data: byNameLots } = await supabase
           .from('fb_auction_lots')
-          .select('id, listing_id')
-          .in('id', lotIds);
-        const lotToListingId = new Map<string, string>();
-        for (const lot of (lotRows || []) as { id: string; listing_id: string | null }[]) {
-          if (lot.listing_id) lotToListingId.set(lot.id, lot.listing_id);
+          .select('id, auction_id, lot_number, current_bid, bidder_name, bidder_fb_handle, bidder_id, listing_id, status')
+          .eq('user_id', user.id)
+          .ilike('bidder_name', nameMatch);
+        for (const l of ((byNameLots || []) as LotRow[])) {
+          if (!seen.has(l.id) && (!l.bidder_id || l.bidder_id === bidderId)) {
+            lots.push(l);
+            seen.add(l.id);
+          }
         }
-        const listingIds = Array.from(new Set(Array.from(lotToListingId.values())));
-        let listingsById = new Map<string, ListingRef>();
-        if (listingIds.length > 0) {
-          const { data: listingRows } = await supabase
-            .from('listings')
-            .select('id, title, year, brand, card_number, player')
-            .in('id', listingIds);
-          listingsById = new Map(((listingRows || []) as ListingRef[]).map(r => [r.id, r]));
-        }
-        acts = acts.map(a => {
-          const lid = lotToListingId.get(a.lot_id);
-          return { ...a, resolved: lid ? listingsById.get(lid) || null : null };
-        });
       }
-      setActivity(acts);
+
+      // Resolve auction titles + listing details.
+      const auctionIds = Array.from(new Set(lots.map(l => l.auction_id).filter(Boolean)));
+      const listingIds = Array.from(new Set(lots.map(l => l.listing_id).filter(Boolean) as string[]));
+      const [aucRes, lstRes] = await Promise.all([
+        auctionIds.length > 0
+          ? supabase.from('fb_auctions').select('id, title, status').in('id', auctionIds)
+          : Promise.resolve({ data: [] as AuctionRef[] }),
+        listingIds.length > 0
+          ? supabase.from('listings').select('id, title, year, brand, card_number, player').in('id', listingIds)
+          : Promise.resolve({ data: [] as ListingRef[] }),
+      ]);
+      const auctionsById = new Map((aucRes.data || []).map((a: AuctionRef) => [a.id, a]));
+      const listingsById = new Map((lstRes.data || []).map((l: ListingRef) => [l.id, l]));
+
+      const activityItems: ActivityItem[] = lots.map(l => {
+        const a = auctionsById.get(l.auction_id);
+        return {
+          lotId: l.id,
+          auctionId: l.auction_id,
+          auctionTitle: a?.title || null,
+          bid: l.current_bid,
+          status: l.status,
+          isWinner: l.status === 'sold' || l.status === 'paid',
+          isPaid: l.status === 'paid',
+          listing: l.listing_id ? listingsById.get(l.listing_id) || null : null,
+        };
+      });
+
+      // Sort: winners first, then by bid amount desc
+      activityItems.sort((a, b1) => {
+        if (a.isWinner !== b1.isWinner) return a.isWinner ? -1 : 1;
+        return (b1.bid ?? 0) - (a.bid ?? 0);
+      });
+      setItems(activityItems);
       setLoading(false);
     }
     load();
@@ -163,16 +194,16 @@ export default function BidderProfilePage() {
 
   const stats = useMemo(() => {
     let bidCount = 0, wonCount = 0, paidCount = 0, totalSpend = 0;
-    for (const a of activity) {
+    for (const i of items) {
       bidCount += 1;
-      if (a.is_winner) wonCount += 1;
-      if (a.is_paid) {
+      if (i.isWinner) wonCount += 1;
+      if (i.isPaid) {
         paidCount += 1;
-        if (a.bid_amount) totalSpend += a.bid_amount;
+        if (i.bid) totalSpend += i.bid;
       }
     }
     return { bidCount, wonCount, paidCount, totalSpend };
-  }, [activity]);
+  }, [items]);
 
   async function saveProfile() {
     if (!bidder) return;
@@ -204,7 +235,7 @@ export default function BidderProfilePage() {
 
   async function deleteBidder() {
     if (!bidder) return;
-    if (!confirm(`Delete bidder "${bidder.name}"? Their activity rows will also be removed. Lots will keep the typed name but lose the link.`)) return;
+    if (!confirm(`Delete bidder "${bidder.name}"? Their bid history will not be deleted, but the link from lots to this profile will be removed.`)) return;
     const supabase = createClient();
     const { error } = await supabase.from('fb_bidders').delete().eq('id', bidder.id);
     if (error) { alert(error.message); return; }
@@ -222,8 +253,8 @@ export default function BidderProfilePage() {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
   }
 
-  const winningActivity = activity.filter(a => a.is_winner);
-  const losingActivity = activity.filter(a => !a.is_winner);
+  const winning = items.filter(i => i.isWinner);
+  const losing = items.filter(i => !i.isWinner);
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -271,23 +302,23 @@ export default function BidderProfilePage() {
               </div>
             </section>
 
-            {winningActivity.length > 0 && (
+            {winning.length > 0 && (
               <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
-                <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>🏆 Won ({winningActivity.length})</div>
-                <ActivityList items={winningActivity} />
+                <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>🏆 Won ({winning.length})</div>
+                <ActivityList items={winning} />
               </section>
             )}
 
             <section className="panel-bordered" style={{ padding: '18px 22px' }}>
               <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>
-                {winningActivity.length > 0 ? `Other bids (${losingActivity.length})` : `Bid activity (${activity.length})`}
+                {winning.length > 0 ? `Other bids (${losing.length})` : `Bid activity (${items.length})`}
               </div>
-              {activity.length === 0 ? (
+              {items.length === 0 ? (
                 <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
-                  No bid activity yet.
+                  No bid activity yet. Activity is tracked when this name is entered as a high bidder on a live auction.
                 </div>
               ) : (
-                <ActivityList items={winningActivity.length > 0 ? losingActivity : activity} />
+                <ActivityList items={winning.length > 0 ? losing : items} />
               )}
             </section>
           </div>
@@ -299,8 +330,8 @@ export default function BidderProfilePage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <Field label="Name" value={edit.name} onChange={v => setEdit(s => ({ ...s, name: v }))} />
-              <Field label="FB handle" value={edit.fb_handle} onChange={v => setEdit(s => ({ ...s, fb_handle: v }))} placeholder="lee.cho.42" />
-              <Field label="Email" value={edit.email} onChange={v => setEdit(s => ({ ...s, email: v }))} placeholder="lee@example.com" />
+              <Field label="FB handle" value={edit.fb_handle} onChange={v => setEdit(s => ({ ...s, fb_handle: v }))} placeholder="facebook.handle" />
+              <Field label="Email" value={edit.email} onChange={v => setEdit(s => ({ ...s, email: v }))} placeholder="name@example.com" />
               <Field label="Phone" value={edit.phone} onChange={v => setEdit(s => ({ ...s, phone: v }))} placeholder="(555) 123-4567" />
               <div style={{ marginTop: 4, paddingTop: 8, borderTop: '1px dashed var(--rule)' }}>
                 <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 6 }}>Mailing address</div>
@@ -343,33 +374,30 @@ function Field({ label, value, onChange, placeholder }: { label: string; value: 
   );
 }
 
-function ActivityList({ items }: { items: ActivityRow[] }) {
+function ActivityList({ items }: { items: ActivityItem[] }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {items.map(a => (
-        <div key={a.id} style={{
+      {items.map(item => (
+        <div key={item.lotId} style={{
           display: 'grid', gridTemplateColumns: '1fr 1fr 90px 90px',
           gap: 10, padding: '8px 10px', alignItems: 'center',
           background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
         }}>
-          <div>
-            <div style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 600 }}>{activityLabel(a)}</div>
-            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
-              {new Date(a.updated_at).toLocaleDateString()}
-            </div>
+          <div style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {activityLabel(item)}
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <Link href={`/fb-auctions/${a.auction_id}`} style={{ color: 'var(--teal)', textDecoration: 'underline', fontWeight: 600 }}>
-              {a.fb_auctions?.title || 'View auction'}
+            <Link href={`/fb-auctions/${item.auctionId}`} style={{ color: 'var(--teal)', textDecoration: 'underline', fontWeight: 600 }}>
+              {item.auctionTitle || 'View auction'}
             </Link>
           </div>
           <div style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, textAlign: 'right' }}>
-            {fmtMoney(a.bid_amount)}
+            {fmtMoney(item.bid)}
           </div>
           <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-            {a.is_winner && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)', textTransform: 'uppercase' }}>WON</span>}
-            {a.is_paid && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--plum)', color: 'var(--cream)', textTransform: 'uppercase' }}>PAID</span>}
-            {!a.is_winner && !a.is_paid && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--ink-mute)' }}>BID</span>}
+            {item.isWinner && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)', textTransform: 'uppercase' }}>WON</span>}
+            {item.isPaid && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--plum)', color: 'var(--cream)', textTransform: 'uppercase' }}>PAID</span>}
+            {!item.isWinner && !item.isPaid && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--ink-mute)' }}>BID</span>}
           </div>
         </div>
       ))}
