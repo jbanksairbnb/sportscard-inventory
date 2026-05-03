@@ -1369,6 +1369,13 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
           }}>
             Auctions
           </Link>
+          <Link href="/fb-claim-sales" style={{
+            color: 'inherit',
+            cursor: 'pointer',
+            textDecoration: 'none',
+          }}>
+            Claim Sales
+          </Link>
           <Link href="/purchases" style={{
             color: 'inherit',
             cursor: 'pointer',

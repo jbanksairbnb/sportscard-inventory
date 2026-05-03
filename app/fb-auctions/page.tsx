@@ -367,6 +367,7 @@ export default function FbAuctionsPage() {
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ FB Auctions ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <Link href="/fb-auctions/new" className="btn btn-primary btn-sm">+ New Auction</Link>
+            <Link href="/fb-claim-sales" className="btn btn-ghost btn-sm">Claim Sales</Link>
             <Link href="/fb-auctions/templates" className="btn btn-ghost btn-sm">Templates</Link>
             <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Bidders</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
