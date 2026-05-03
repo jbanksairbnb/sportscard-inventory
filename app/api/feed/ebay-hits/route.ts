@@ -11,9 +11,11 @@ const RAW_GRADE_RANKS: Record<string, number> = {
   'EX': 4, 'EXCELLENT': 4,
   'EX+': 5, 'EX-PLUS': 5,
   'EXMT': 6, 'EX-MT': 6, 'EX-MINT': 6, 'EXMINT': 6, 'EXCELLENT-MINT': 6,
-  'NM': 7, 'NEAR MINT': 7,
+  // "NR-MINT" / "NRMT" / "NR MT" all mean Near Mint in collector shorthand,
+  // not "Mint". Important: must match before MINT in RAW_TOKEN_REGEX.
+  'NM': 7, 'NEAR MINT': 7, 'NR-MINT': 7, 'NR MINT': 7, 'NRMT': 7, 'NR-MT': 7, 'NR MT': 7,
   'NM+': 8,
-  'NM-MT': 9, 'NMMT': 9, 'NEAR MINT-MINT': 9,
+  'NM-MT': 9, 'NMMT': 9, 'NEAR MINT-MINT': 9, 'NR-MINT+': 9,
   'MINT': 10, 'MT': 10,
   'GEM MINT': 11, 'GEMMINT': 11, 'GEM-MINT': 11, 'GM': 11, 'GEM': 11,
 }
@@ -181,7 +183,9 @@ function cacheKey(want: WantRow): string {
 }
 
 const GRADED_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA)\s*[:#]?\s*(\d+(?:\.\d)?)/i
-const RAW_TOKEN_REGEX = /\b(GEM\s*MINT|GEM-MINT|GEMMINT|GM|MINT|MT|NM-MT|NMMT|NEAR\s*MINT|NM\+|NM|EXMT|EX-MT|EXMINT|EXCELLENT-MINT|EX\+|EX|VG-EX|VGEX|VG|G|GOOD|POOR|PR|P)\b/i
+// Order matters — alternation is left-to-right. Compound tokens like "NR-MINT"
+// must come before MINT/MT so the substring "MINT" inside them doesn't win.
+const RAW_TOKEN_REGEX = /\b(GEM\s*MINT|GEM-MINT|GEMMINT|GM|NR-MINT|NR\s*MINT|NRMT|NR-MT|NR\s*MT|NM-MT|NMMT|NEAR\s*MINT-MINT|NEAR\s*MINT|MINT|MT|NM\+|NM|EXMT|EX-MT|EXMINT|EXCELLENT-MINT|EX\+|EX|VG-EX|VGEX|VG|G|GOOD|POOR|PR|P)\b/i
 
 function detectListingCondition(title: string, mappings: RawGradeMapping[]): ConditionDetection {
   const gMatch = title.match(GRADED_REGEX)
