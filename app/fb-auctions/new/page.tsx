@@ -23,6 +23,8 @@ type Listing = {
   asking_price: number | null;
   photos: string[];
   status: string;
+  source_set_slug: string | null;
+  source_card_number: string | null;
 };
 
 type Template = {
@@ -174,7 +176,58 @@ export default function NewFbAuctionPage() {
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [generated, setGenerated] = useState<{ auctionId: string; type: TemplateType; postBody: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }> } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [goingLive, setGoingLive] = useState(false);
   const [busyImage, setBusyImage] = useState<string | null>(null);
+
+  async function handleGoLive() {
+    if (!generated || goingLive) return;
+    setGoingLive(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from('fb_auctions')
+      .update({ status: 'live' })
+      .eq('id', generated.auctionId);
+    if (error) {
+      setGoingLive(false);
+      alert('Could not mark auction live: ' + error.message);
+      return;
+    }
+    // Pull the source set rows out of inventory for every lot whose listing
+    // came from a tracked set. Mirrors the logic in the auction manage page.
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const bySet = new Map<string, Set<string>>();
+      for (const lot of generated.lots) {
+        const slug = lot.listing.source_set_slug;
+        const card = lot.listing.source_card_number;
+        if (!slug || !card) continue;
+        const set = bySet.get(slug) || new Set<string>();
+        set.add(card);
+        bySet.set(slug, set);
+      }
+      for (const [slug, cards] of bySet.entries()) {
+        const { data: setRow } = await supabase
+          .from('sets').select('rows').eq('user_id', user.id).eq('slug', slug).maybeSingle();
+        if (!setRow) continue;
+        const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
+        let touched = false;
+        const nextRows = rows.map(r => {
+          const c = String(r['Card #'] ?? '').trim();
+          if (!cards.has(c)) return r;
+          if (String(r['Owned'] ?? '') === 'No') return r;
+          touched = true;
+          return { ...r, Owned: 'No' };
+        });
+        if (!touched) continue;
+        const ownedCount = nextRows.filter(r => String(r['Owned'] ?? '') === 'Yes').length;
+        const ownedPct = nextRows.length > 0 ? (ownedCount / nextRows.length) * 100 : 0;
+        await supabase.from('sets').update({
+          rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now(),
+        }).eq('user_id', user.id).eq('slug', slug);
+      }
+    }
+    router.push('/fb-auctions');
+  }
 
   useEffect(() => {
     const supabase = createClient();
@@ -183,7 +236,7 @@ export default function NewFbAuctionPage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
       const [listingsRes, templatesRes, groupsRes, biddersRes, activityRes] = await Promise.all([
-        supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
+        supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
         supabase.from('fb_auction_templates').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
@@ -589,15 +642,14 @@ export default function NewFbAuctionPage() {
               </>
             )}
 
-            <div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => {
-                setGenerated(null); setSelectedIds([]); setMultiTitle(''); setMultiDescription('');
-                setSingleListingId(''); setSingleBody(''); setSingleAuctionTitle(''); setSingleBodyTouched(false);
-                setEndsAt(''); setMinBid('');
-              }} className="btn btn-outline">
-                ← New auction
+            <div style={{ marginTop: 24, display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+              <Link href="/fb-auctions" className="btn btn-outline">View all auctions →</Link>
+              <button onClick={handleGoLive} disabled={goingLive}
+                className="btn btn-primary"
+                style={{ background: 'var(--teal)', borderColor: 'var(--teal)', color: 'var(--cream)' }}
+                title="Mark this auction as Live (pulls each lot's source card out of your inventory) and return to All Auctions">
+                {goingLive ? 'Going live…' : '▶ Go Live'}
               </button>
-              <Link href="/fb-auctions" className="btn btn-primary">View all auctions →</Link>
             </div>
           </>
         )}
