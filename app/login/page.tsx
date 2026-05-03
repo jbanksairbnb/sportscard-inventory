@@ -1,14 +1,16 @@
 'use client'
 
 import React, { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import SCLogo from '@/components/SCLogo'
 
 type Mode = 'login' | 'register' | 'forgot'
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<Mode>('login')
+  const searchParams = useSearchParams()
+  const initialMode: Mode = searchParams?.get('mode') === 'register' ? 'register' : 'login'
+  const [mode, setMode] = useState<Mode>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
