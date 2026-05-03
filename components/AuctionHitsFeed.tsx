@@ -73,6 +73,29 @@ type AuctionLot = {
 
 type Hit = AuctionLot & { matched_set_title: string };
 
+type OutbidNotification = {
+  id: string;
+  read_at: string | null;
+  created_at: string;
+  link: string | null;
+  payload: {
+    lot_id: string;
+    auction_id: string;
+    auction_title: string;
+    auction_post_url: string | null;
+    lot_number: number;
+    current_bid: number | null;
+    listing: {
+      title: string | null;
+      year: number | null;
+      brand: string | null;
+      card_number: string | null;
+      player: string | null;
+      photos: string[] | null;
+    } | null;
+  };
+};
+
 function fmtMoney(n: number | null) {
   if (n == null) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
@@ -161,12 +184,32 @@ function matchesCondition(lot: AuctionLot, want: WantRow): boolean {
 export default function AuctionHitsFeed() {
   const [loading, setLoading] = useState(true);
   const [hits, setHits] = useState<Hit[]>([]);
+  const [outbids, setOutbids] = useState<OutbidNotification[]>([]);
+
+  async function dismissOutbid(id: string) {
+    setOutbids(prev => prev.filter(n => n.id !== id));
+    await fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id] }),
+    }).catch(() => {});
+  }
 
   useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoading(false); return; }
+
+      // Outbid notifications (unread first, fall back to recent)
+      try {
+        const res = await fetch('/api/notifications?kind=outbid');
+        if (res.ok) {
+          const { notifications } = await res.json();
+          const unread = (notifications || []).filter((n: OutbidNotification) => !n.read_at);
+          setOutbids(unread.slice(0, 10));
+        }
+      } catch {}
 
       const { data: setsData } = await supabase
         .from('sets')
@@ -258,7 +301,7 @@ export default function AuctionHitsFeed() {
     );
   }
 
-  if (hits.length === 0) {
+  if (hits.length === 0 && outbids.length === 0) {
     return (
       <div className="panel" style={{ padding: 28, textAlign: 'center' }}>
         <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 8 }}>No auction hits right now</div>
@@ -271,8 +314,68 @@ export default function AuctionHitsFeed() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {outbids.map(n => <OutbidItem key={n.id} notification={n} onDismiss={() => dismissOutbid(n.id)} />)}
       {hits.map(h => <AuctionHitItem key={h.lot_id} hit={h} />)}
     </div>
+  );
+}
+
+function OutbidItem({ notification, onDismiss }: { notification: OutbidNotification; onDismiss: () => void }) {
+  const p = notification.payload;
+  const photo = p.listing?.photos?.[0];
+  const cardLine = p.listing
+    ? `${p.listing.year || ''} ${p.listing.brand || ''} #${p.listing.card_number || ''} ${p.listing.player || ''}`.trim()
+    : '';
+  const title = p.listing?.title || cardLine || `Lot #${p.lot_number}`;
+  return (
+    <article className="panel" style={{
+      padding: 16, display: 'flex', gap: 16, alignItems: 'stretch',
+      border: '2px solid var(--rust)', background: 'rgba(192,57,43,0.06)',
+    }}>
+      <div style={{
+        width: 90, height: 126, flexShrink: 0,
+        background: 'var(--paper)', border: '2px solid var(--plum)', borderRadius: 8,
+        overflow: 'hidden', display: 'grid', placeItems: 'center',
+      }}>
+        {photo ? (
+          <img src={photo} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : (
+          <span className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>No photo</span>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <span className="chip" style={{ fontSize: 10, background: 'var(--rust)', color: 'var(--cream)', border: '1.5px solid var(--rust)', fontWeight: 700 }}>
+            ⚠ You were outbid
+          </span>
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginLeft: 'auto', fontWeight: 600 }}>
+            {fmtRelativeTime(notification.created_at)}
+          </span>
+        </div>
+        <h3 className="display" style={{ fontSize: 20, margin: '4px 0 2px', color: 'var(--plum)', lineHeight: 1.2 }}>
+          {title}
+        </h3>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginBottom: 8 }}>
+          Lot #{p.lot_number} of <span style={{ color: 'var(--plum)', fontWeight: 700 }}>{p.auction_title}</span>
+        </div>
+        <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div className="stat-num" style={{ fontSize: 22, color: 'var(--rust)' }}>
+            {fmtMoney(p.current_bid)}
+          </div>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
+            new leading bid
+          </span>
+          {(notification.link || p.auction_post_url) && (
+            <a href={(notification.link || p.auction_post_url)!} target="_blank" rel="noreferrer" className="btn btn-primary btn-sm">
+              Bid again on Facebook ↗
+            </a>
+          )}
+          <button type="button" onClick={onDismiss} className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+            ✕ Dismiss
+          </button>
+        </div>
+      </div>
+    </article>
   );
 }
 

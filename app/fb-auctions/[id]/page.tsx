@@ -37,7 +37,8 @@ type Lot = {
   listing: Listing | null;
 };
 
-type BidderRow = { id: string; name: string; fb_handle: string | null };
+type BidderRow = { id: string; name: string; fb_handle: string | null; member_user_id: string | null };
+type MemberOption = { user_id: string; display_name: string | null; handle: string | null; fb_handle: string | null };
 
 type Auction = {
   id: string;
@@ -96,6 +97,8 @@ export default function ManageFbAuctionPage() {
 
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
+  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [memberPickerBidderId, setMemberPickerBidderId] = useState<string | null>(null);
 
   const [paymentText, setPaymentText] = useState<string>('PayPal F&F to: your-paypal@email.com\nVenmo: @your-venmo');
   const [shippingByBuyer, setShippingByBuyer] = useState<Record<string, string>>({});
@@ -114,7 +117,7 @@ export default function ManageFbAuctionPage() {
         supabase.from('fb_auction_lots')
           .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade)')
           .eq('auction_id', auctionId).order('lot_number'),
-        supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
+        supabase.from('fb_bidders').select('id, name, fb_handle, member_user_id').eq('user_id', user.id).order('name'),
       ]);
 
       if (!aucRes.data) { router.push('/fb-auctions'); return; }
@@ -135,6 +138,12 @@ export default function ManageFbAuctionPage() {
       setLots(lotsRaw);
       if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
       setBidders((biddersRes.data || []) as BidderRow[]);
+
+      const { data: memberData } = await supabase
+        .from('user_profiles')
+        .select('user_id, display_name, handle, fb_handle')
+        .eq('application_status', 'approved');
+      setMembers(((memberData || []) as MemberOption[]).filter(m => m.user_id !== user.id));
       setLoading(false);
     }
     load();
@@ -196,6 +205,18 @@ export default function ManageFbAuctionPage() {
     return bidder.id;
   }
 
+  async function linkBidderToMember(bidderId: string, memberUserId: string | null) {
+    if (!userId) return;
+    const supabase = createClient();
+    const { error } = await supabase
+      .from('fb_bidders')
+      .update({ member_user_id: memberUserId })
+      .eq('id', bidderId)
+      .eq('user_id', userId);
+    if (error) { alert('Could not save member link: ' + error.message); return; }
+    setBidders(prev => prev.map(b => b.id === bidderId ? { ...b, member_user_id: memberUserId } : b));
+  }
+
   function getLotValue<K extends keyof Lot>(lot: Lot, key: K): Lot[K] {
     const buf = editBuffer[lot.id];
     if (buf && key in buf) return (buf as Lot)[key];
@@ -230,11 +251,20 @@ export default function ManageFbAuctionPage() {
       bidderId = null;
     }
 
+    const previousBidderId = lotRef?.bidder_id ?? null;
     const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', id);
     if (error) { alert(error.message); }
     else {
       setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf, bidder_id: bidderId } : l));
       setEditBuffer(prev => { const next = { ...prev }; delete next[id]; return next; });
+      if (previousBidderId && previousBidderId !== bidderId) {
+        // Fire-and-forget — server will skip if previous bidder isn't linked to a member.
+        fetch('/api/auctions/notify-outbid', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lot_id: id, previous_bidder_id: previousBidderId, new_bidder_id: bidderId }),
+        }).catch(() => {});
+      }
     }
     setSavingLots(prev => { const next = new Set(prev); next.delete(id); return next; });
   }
@@ -508,6 +538,38 @@ export default function ManageFbAuctionPage() {
                         </div>
 
                         <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                          {(() => {
+                            if (!lot.bidder_id) return null;
+                            const linkedBidder = bidders.find(b => b.id === lot.bidder_id);
+                            const linkedMember = linkedBidder?.member_user_id
+                              ? members.find(m => m.user_id === linkedBidder.member_user_id) : null;
+                            if (linkedMember) {
+                              const label = linkedMember.handle ? `@${linkedMember.handle}` : (linkedMember.display_name || 'member');
+                              return (
+                                <button type="button" onClick={() => setMemberPickerBidderId(lot.bidder_id)}
+                                  title="Click to change or unlink"
+                                  style={{
+                                    fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
+                                    padding: '4px 9px', borderRadius: 100,
+                                    background: 'var(--teal)', color: 'var(--cream)',
+                                    border: '1.5px solid var(--teal)', cursor: 'pointer',
+                                  }}>
+                                  ✓ Member: {label}
+                                </button>
+                              );
+                            }
+                            return (
+                              <button type="button" onClick={() => setMemberPickerBidderId(lot.bidder_id)}
+                                style={{
+                                  fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
+                                  padding: '4px 9px', borderRadius: 100,
+                                  background: 'transparent', color: 'var(--orange)',
+                                  border: '1.5px dashed var(--orange)', cursor: 'pointer',
+                                }}>
+                                🔗 Link to member
+                              </button>
+                            );
+                          })()}
                           {lot.status !== 'sold' && lot.status !== 'paid' && (
                             <button onClick={() => quickSetSold(lot)} className="btn btn-sm" style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>✓ Mark Sold</button>
                           )}
@@ -614,6 +676,137 @@ export default function ManageFbAuctionPage() {
               </div>
             )}
           </section>
+        )}
+      </div>
+
+      {memberPickerBidderId && (
+        <MemberPicker
+          bidder={bidders.find(b => b.id === memberPickerBidderId) || null}
+          members={members}
+          onClose={() => setMemberPickerBidderId(null)}
+          onSave={async (memberUserId) => {
+            await linkBidderToMember(memberPickerBidderId, memberUserId);
+            setMemberPickerBidderId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function MemberPicker({ bidder, members, onClose, onSave }: {
+  bidder: BidderRow | null;
+  members: MemberOption[];
+  onClose: () => void;
+  onSave: (memberUserId: string | null) => void | Promise<void>;
+}) {
+  const [search, setSearch] = useState('');
+  if (!bidder) return null;
+
+  const q = search.trim().toLowerCase();
+  // Auto-suggest by matching the bidder's name or fb_handle against member fields
+  const bidderName = (bidder.name || '').toLowerCase();
+  const bidderHandle = (bidder.fb_handle || '').replace(/^@/, '').toLowerCase();
+  const matches = (m: MemberOption) => {
+    const fields = [m.display_name, m.handle, m.fb_handle].filter(Boolean).map(s => String(s).toLowerCase());
+    if (q) return fields.some(f => f.includes(q));
+    return fields.some(f => f === bidderName || f === bidderHandle || f.includes(bidderName));
+  };
+  const filtered = members.filter(matches).slice(0, 50);
+  const others = !q ? members.filter(m => !matches(m)).slice(0, 50) : [];
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '60px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 540, padding: 22, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', flex: 1 }}>
+            Link bidder to member
+          </div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginBottom: 12, lineHeight: 1.5 }}>
+          Mapping <strong style={{ color: 'var(--plum)' }}>{bidder.name}</strong>
+          {bidder.fb_handle && <> (<span className="mono">@{bidder.fb_handle.replace(/^@/, '')}</span>)</>}
+          {' '}to a Sports Collective member. Once linked, future bids by this bidder are tracked
+          and they&apos;ll get an outbid notification when you raise the leading bid for someone else.
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px',
+          border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', marginBottom: 12,
+        }}>
+          <span style={{ fontSize: 13, color: 'var(--plum)' }}>🔍</span>
+          <input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, handle, or FB handle…"
+            autoFocus
+            style={{ border: 'none', outline: 'none', background: 'transparent', flex: 1, fontSize: 13, color: 'var(--plum)' }} />
+        </div>
+        <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {filtered.length === 0 && others.length === 0 ? (
+            <div className="eyebrow" style={{ textAlign: 'center', padding: 20, color: 'var(--ink-mute)' }}>
+              No members found.
+            </div>
+          ) : (
+            <>
+              {filtered.length > 0 && !q && (
+                <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', padding: '4px 6px', fontWeight: 700 }}>
+                  ★ Likely matches
+                </div>
+              )}
+              {filtered.map(m => (
+                <button key={m.user_id} type="button" onClick={() => onSave(m.user_id)}
+                  style={{
+                    textAlign: 'left', padding: '8px 12px',
+                    border: '1.5px solid var(--rule)', borderRadius: 8,
+                    background: 'var(--paper)', cursor: 'pointer',
+                  }}>
+                  <div className="display" style={{ fontSize: 13.5, color: 'var(--plum)' }}>
+                    {m.display_name || m.handle || 'Member'}
+                  </div>
+                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
+                    {m.handle ? `@${m.handle}` : ''}
+                    {m.fb_handle ? `${m.handle ? ' · ' : ''}FB: ${m.fb_handle}` : ''}
+                  </div>
+                </button>
+              ))}
+              {others.length > 0 && (
+                <>
+                  <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--ink-mute)', padding: '8px 6px 2px', fontWeight: 700 }}>
+                    All members
+                  </div>
+                  {others.map(m => (
+                    <button key={m.user_id} type="button" onClick={() => onSave(m.user_id)}
+                      style={{
+                        textAlign: 'left', padding: '8px 12px',
+                        border: '1.5px solid var(--rule)', borderRadius: 8,
+                        background: 'var(--paper)', cursor: 'pointer',
+                      }}>
+                      <div className="display" style={{ fontSize: 13.5, color: 'var(--plum)' }}>
+                        {m.display_name || m.handle || 'Member'}
+                      </div>
+                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
+                        {m.handle ? `@${m.handle}` : ''}
+                        {m.fb_handle ? `${m.handle ? ' · ' : ''}FB: ${m.fb_handle}` : ''}
+                      </div>
+                    </button>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </div>
+        {bidder.member_user_id && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1.5px solid var(--rule)' }}>
+            <button type="button" onClick={() => onSave(null)}
+              className="btn btn-ghost btn-sm">
+              ✕ Unlink from member
+            </button>
+          </div>
         )}
       </div>
     </div>
