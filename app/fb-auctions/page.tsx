@@ -253,7 +253,16 @@ export default function FbAuctionsPage() {
     setAuctions(prev => prev.map(a => ids.includes(a.id) ? { ...a, status: 'live' } : a));
     setSelectedDrafts(new Set());
   }
-
+  async function deleteAuction(a: AuctionRow) {
+    if (!confirm(`Delete auction "${a.title}"? This will remove all its lots and bid history. This cannot be undone.`)) return;
+    const supabase = createClient();
+    // Delete in dependency order: bidder activity → lots → auction
+    await supabase.from('fb_bidder_activity').delete().eq('auction_id', a.id);
+    await supabase.from('fb_auction_lots').delete().eq('auction_id', a.id);
+    const { error } = await supabase.from('fb_auctions').delete().eq('id', a.id);
+    if (error) { alert('Delete failed: ' + error.message); return; }
+    setAuctions(prev => prev.filter(x => x.id !== a.id));
+  }
   function getLotValue<K extends keyof LotRow>(lot: LotRow, key: K): LotRow[K] {
     const buf = editBuffer[lot.id];
     if (buf && key in buf) return (buf as LotRow)[key];
@@ -457,6 +466,7 @@ export default function FbAuctionsPage() {
                       </div>
                     </div>
                     <Link href={`/fb-auctions/${a.id}`} className="btn btn-ghost btn-sm">Manage →</Link>
+                    <button onClick={() => deleteAuction(a)} className="btn btn-ghost btn-sm" style={{ color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>🗑 Delete</button>
                   </div>
 
                   {/* Post URL — clickable when set, editable when blank */}
