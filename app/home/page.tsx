@@ -1050,8 +1050,30 @@ function FavoritesShowcase({ userId }: { userId: string }) {
 const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
 
 function SetsInProgress({ sets }: { sets: SetRow[] }) {
-  if (sets.length === 0) return null;
   const sorted = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
+  if (sets.length === 0) {
+    return (
+      <section style={{ marginBottom: 32 }}>
+        <div className="section-head">
+          <span className="eyebrow" style={{ fontSize: 12 }}>★ Sets in Progress ★</span>
+        </div>
+        <div className="panel-bordered" style={{
+          padding: '32px 24px', textAlign: 'center', borderStyle: 'dashed',
+        }}>
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 6 }}>
+            No sets yet
+          </div>
+          <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55 }}>
+            Start tracking a set to see your progress, want list, and value here.
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href="/set/new" className="btn btn-primary btn-sm">+ New Set</Link>
+            <Link href="/" className="btn btn-outline btn-sm">My Shelf →</Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
   return (
     <section style={{ marginBottom: 32 }}>
       <div className="section-head">
