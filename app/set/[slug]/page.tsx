@@ -736,6 +736,27 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     position: 'sticky', top: 0, zIndex: 10,
   };
 
+  // Freeze the first three columns (checkbox, Card #, Player) so they stay
+  // visible while scrolling right. Widths must match the actual cell widths.
+  const FROZEN_W = { check: 36, cardNum: 96, player: 248 };
+  const FROZEN_LEFT = {
+    check: 0,
+    cardNum: FROZEN_W.check,
+    player: FROZEN_W.check + FROZEN_W.cardNum,
+  };
+  const PLAYER_RIGHT_BORDER: React.CSSProperties = { boxShadow: 'inset -2px 0 0 var(--plum)' };
+
+  function thFrozen(left: number, width: number, extra: React.CSSProperties = {}): React.CSSProperties {
+    return { ...TH_STYLE, position: 'sticky', top: 0, left, width, minWidth: width, zIndex: 30, ...extra };
+  }
+  function tdFrozen(left: number, width: number, rowBg: string, extra: React.CSSProperties = {}): React.CSSProperties {
+    return {
+      position: 'sticky', left, width, minWidth: width,
+      background: rowBg, zIndex: 5,
+      padding: '6px 8px', verticalAlign: 'top', ...extra,
+    };
+  }
+
   function SortableHeader({ label }: { label: SortKey }) {
     const isActive = sortKey === label;
     return (
@@ -895,15 +916,25 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th style={{ ...TH_STYLE, width: 32 }}>
+                    <th style={thFrozen(FROZEN_LEFT.check, FROZEN_W.check)}>
                       <input type="checkbox"
                         checked={displayRows.length > 0 && displayRows.every(r => selectedRows.has(r.origIndex))}
                         onChange={toggleSelectAllVisible}
                         title="Select all visible"
                         style={{ cursor: 'pointer', accentColor: 'var(--plum)' }} />
                     </th>
-                    <SortableHeader label="Card #" />
-                    <SortableHeader label="Player" />
+                    <th style={thFrozen(FROZEN_LEFT.cardNum, FROZEN_W.cardNum)}>
+                      <button type="button" onClick={() => handleSortClick('Card #')}
+                        style={{ color: 'inherit', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3, fontWeight: sortKey === 'Card #' ? 900 : 700 }}>
+                        Card # {sortKey === 'Card #' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                      </button>
+                    </th>
+                    <th style={thFrozen(FROZEN_LEFT.player, FROZEN_W.player, PLAYER_RIGHT_BORDER)}>
+                      <button type="button" onClick={() => handleSortClick('Player')}
+                        style={{ color: 'inherit', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3, fontWeight: sortKey === 'Player' ? 900 : 700 }}>
+                        Player {sortKey === 'Player' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                      </button>
+                    </th>
                     <SortableHeader label="Owned" />
                     <SortableHeader label="Raw Grade" />
                     <SortableHeader label="Graded" />
@@ -922,21 +953,23 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayRows.map(({ row, origIndex }, i) => (
+                  {displayRows.map(({ row, origIndex }, i) => {
+                    const rowBg = selectedRows.has(origIndex) ? '#f0d8a3' : (i % 2 === 0 ? 'var(--cream)' : 'var(--paper)');
+                    return (
                     <tr key={`${origIndex}-${i}`} style={{
                       borderTop: '1.5px solid var(--cream-warm)',
-                      background: selectedRows.has(origIndex) ? 'rgba(184, 146, 58, 0.18)' : (i % 2 === 0 ? 'var(--cream)' : 'var(--paper)'),
+                      background: rowBg,
                     }}>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'middle', textAlign: 'center' }}>
+                      <td style={tdFrozen(FROZEN_LEFT.check, FROZEN_W.check, rowBg, { verticalAlign: 'middle', textAlign: 'center' })}>
                         <input type="checkbox"
                           checked={selectedRows.has(origIndex)}
                           onChange={() => toggleRowSelected(origIndex)}
                           style={{ cursor: 'pointer', accentColor: 'var(--plum)' }} />
                       </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                      <td style={tdFrozen(FROZEN_LEFT.cardNum, FROZEN_W.cardNum, rowBg)}>
                         <input value={v(row["Card #"])} readOnly style={{ ...CELL_INPUT, width: 72, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                      <td style={tdFrozen(FROZEN_LEFT.player, FROZEN_W.player, rowBg, PLAYER_RIGHT_BORDER)}>
                         <input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
@@ -1043,7 +1076,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         )}
                       </td>
                     </tr>
-                  ))}
+                  );
+                  })}
                 </tbody>
               </table>
             </div>
