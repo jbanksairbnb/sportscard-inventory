@@ -45,6 +45,11 @@ type AuctionRow = {
 const STATUS_FILTERS = ['all', 'draft', 'live', 'ended', 'settled'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
+function statusLabel(s: string) {
+  if (s === 'ended') return 'Sold';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function statusBg(s: string) {
   if (s === 'live') return 'var(--teal)';
   if (s === 'ended') return 'var(--mustard)';
@@ -392,7 +397,7 @@ export default function FbAuctionsPage() {
           {STATUS_FILTERS.map(f => (
             <button key={f} onClick={() => { setFilter(f); setSelectedDrafts(new Set()); }}
               className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-ghost'}`}>
-              {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'all' ? 'All' : statusLabel(f)}
               <span style={{ marginLeft: 6, opacity: 0.8 }}>
                 ({f === 'all' ? auctions.length : (counts[f] || 0)})
               </span>
@@ -458,7 +463,7 @@ export default function FbAuctionsPage() {
                         <span style={{
                           fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
                           background: statusBg(a.status), color: statusFg(a.status), textTransform: 'uppercase',
-                        }}>{a.status}</span>
+                        }}>{statusLabel(a.status)}</span>
                       </div>
                       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
                         {a.fb_auction_lots.length} lot{a.fb_auction_lots.length === 1 ? '' : 's'} · created {new Date(a.created_at).toLocaleDateString()}
