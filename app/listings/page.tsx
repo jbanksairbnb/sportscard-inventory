@@ -236,6 +236,8 @@ function ListingsPageContent() {
   const [working, setWorking] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
    const [importOpen, setImportOpen] = useState(false);
+  const [newPickerOpen, setNewPickerOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
     const [defaultShipping, setDefaultShipping] = useState<ShippingOption[]>([]);
@@ -341,7 +343,17 @@ function ListingsPageContent() {
 
   function openNew() {
     setFormError('');
+    setNewPickerOpen(true);
+  }
+  function openBlankNew() {
+    setFormError('');
+    setNewPickerOpen(false);
     setEditing(emptyDraft(userId, defaultShipping));
+  }
+  function openInventoryNew() {
+    setFormError('');
+    setNewPickerOpen(false);
+    setInventoryOpen(true);
   }
   function openEdit(l: Listing) {
     setFormError('');
@@ -791,6 +803,26 @@ function ListingsPageContent() {
           onComplete={(newListings) => {
             setListings(prev => [...newListings, ...prev]);
             setImportOpen(false);
+          }}
+        />
+      )}
+
+      {newPickerOpen && (
+        <NewListingPicker
+          onClose={() => setNewPickerOpen(false)}
+          onChooseBlank={openBlankNew}
+          onChooseInventory={openInventoryNew}
+        />
+      )}
+
+      {inventoryOpen && (
+        <InventoryListingWizard
+          userId={userId}
+          defaultShipping={defaultShipping}
+          onClose={() => setInventoryOpen(false)}
+          onComplete={(newListings) => {
+            setListings(prev => [...newListings, ...prev]);
+            setInventoryOpen(false);
           }}
         />
       )}
@@ -1348,5 +1380,601 @@ function DefaultShippingModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function NewListingPicker({
+  onClose, onChooseBlank, onChooseInventory,
+}: {
+  onClose: () => void;
+  onChooseBlank: () => void;
+  onChooseInventory: () => void;
+}) {
+  return (
+    <div onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(42,20,52,0.82)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '60px 20px', overflowY: 'auto',
+      }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>New Listing</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>How would you like to start?</p>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <button type="button" onClick={onChooseBlank}
+            className="panel-bordered"
+            style={{
+              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+            }}>
+            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>✏️ Blank listing</div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Type in a single card from scratch.</div>
+          </button>
+          <button type="button" onClick={onChooseInventory}
+            className="panel-bordered"
+            style={{
+              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+            }}>
+            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>📚 From my inventory</div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Pick one or many cards from a set you already track.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type InventorySet = {
+  id?: string | null;
+  slug: string;
+  year: number | null;
+  brand: string | null;
+  title: string | null;
+  rows: Record<string, any>[];
+};
+
+function stripMoney(v: any): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(String(v).replace(/[^0-9.-]/g, ''));
+  if (Number.isNaN(n) || n === 0) return null;
+  return n;
+}
+
+function InventoryListingWizard({
+  userId, defaultShipping, onClose, onComplete,
+}: {
+  userId: string;
+  defaultShipping: ShippingOption[];
+  onClose: () => void;
+  onComplete: (newListings: Listing[]) => void;
+}) {
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [sets, setSets] = useState<InventorySet[]>([]);
+  const [setsLoading, setSetsLoading] = useState(true);
+  const [setSearch, setSetSearch] = useState('');
+  const [chosenSlug, setChosenSlug] = useState<string | null>(null);
+  const [cardSearch, setCardSearch] = useState('');
+  const [ownedOnly, setOwnedOnly] = useState(true);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [drafts, setDrafts] = useState<Partial<Listing>[]>([]);
+  const initialShip = (defaultShipping && defaultShipping.length > 0) ? defaultShipping : DEFAULT_SHIPPING_OPTIONS;
+  const [sharedShipping, setSharedShipping] = useState<ShippingOption[]>([...initialShip]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const supabase = createClient();
+    async function load() {
+      const { data } = await supabase
+        .from('sets')
+        .select('id, slug, year, brand, title, rows')
+        .eq('user_id', userId)
+        .order('year', { ascending: false });
+      setSets((data || []) as InventorySet[]);
+      setSetsLoading(false);
+    }
+    load();
+  }, [userId]);
+
+  const chosenSet = sets.find(s => s.slug === chosenSlug) || null;
+
+  const filteredSets = useMemo(() => {
+    const q = setSearch.toLowerCase().trim();
+    if (!q) return sets;
+    return sets.filter(s => {
+      const hay = [s.title, s.brand, s.year ? String(s.year) : ''].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [sets, setSearch]);
+
+  const candidateRows = useMemo(() => {
+    if (!chosenSet) return [] as { row: Record<string, any>; origIndex: number }[];
+    const rows = (chosenSet.rows || []).map((row, origIndex) => ({ row, origIndex }));
+    const q = cardSearch.toLowerCase().trim();
+    return rows.filter(({ row }) => {
+      if (ownedOnly && String(row['Owned'] || '') !== 'Yes') return false;
+      if (!q) return true;
+      const hay = [row['Card #'], row['Player'], row['Description']].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [chosenSet, ownedOnly, cardSearch]);
+
+  function togglePick(origIndex: number) {
+    setPicked(prev => {
+      const next = new Set(prev);
+      if (next.has(origIndex)) next.delete(origIndex); else next.add(origIndex);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setPicked(prev => {
+      const next = new Set(prev);
+      candidateRows.forEach(c => next.add(c.origIndex));
+      return next;
+    });
+  }
+  function clearPicked() { setPicked(new Set()); }
+
+  function buildDraftFromRow(row: Record<string, any>): Partial<Listing> {
+    const isGraded = String(row['Graded'] || '').toLowerCase() === 'yes';
+    const company = String(row['Grading Company'] || '').toUpperCase();
+    const grade = String(row['Grade'] || '');
+    const rawGrade = String(row['Raw Grade'] || '');
+    const photos: string[] = [];
+    if (row['Image 1']) photos.push(String(row['Image 1']));
+    if (row['Image 2']) photos.push(String(row['Image 2']));
+    const cost = stripMoney(row['Cost']);
+    const value = stripMoney(row['Value']);
+    const sale = stripMoney(row['Sale Price']);
+    const target = stripMoney(row['Target Price']);
+    const askingPrice = sale ?? value ?? target ?? null;
+    const draft: Partial<Listing> = {
+      user_id: userId,
+      set_id: chosenSet?.id || null,
+      title: '',
+      description: '',
+      year: chosenSet?.year || null,
+      brand: chosenSet?.brand || '',
+      card_number: String(row['Card #'] || ''),
+      player: String(row['Player'] || row['Description'] || ''),
+      condition_type: isGraded ? 'graded' : 'raw',
+      raw_grade: !isGraded && RAW_GRADES.includes(rawGrade) ? rawGrade : null,
+      grading_company: isGraded && COMPANIES.includes(company) ? company : null,
+      grade: isGraded ? grade : null,
+      asking_price: askingPrice,
+      cost: cost,
+      photos,
+      shipping_options: [...sharedShipping],
+      status: 'draft',
+    };
+    draft.title = buildTitle(draft);
+    return draft;
+  }
+
+  function goToReview() {
+    if (!chosenSet) return;
+    const ds = Array.from(picked).map(i => buildDraftFromRow(chosenSet.rows[i]));
+    setDrafts(ds);
+    setStep(3);
+  }
+
+  function updateDraft(i: number, patch: Partial<Listing>) {
+    setDrafts(prev => prev.map((d, idx) => {
+      if (idx !== i) return d;
+      const next = { ...d, ...patch };
+      next.title = buildTitle(next);
+      return next;
+    }));
+  }
+  function removeDraft(i: number) {
+    setDrafts(prev => prev.filter((_, idx) => idx !== i));
+  }
+  function applySharedShippingToAll() {
+    setDrafts(prev => prev.map(d => ({ ...d, shipping_options: [...sharedShipping] })));
+  }
+  function updateSharedShip(i: number, patch: Partial<ShippingOption>) {
+    setSharedShipping(prev => prev.map((s, idx) => idx === i ? { ...s, ...patch } : s));
+  }
+  function addSharedShip() {
+    setSharedShipping(prev => [...prev, { label: '', cost: 0 }]);
+  }
+  function removeSharedShip(i: number) {
+    setSharedShipping(prev => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function saveAll() {
+    setError('');
+    if (drafts.length === 0) { setError('No cards selected.'); return; }
+    for (let i = 0; i < drafts.length; i++) {
+      const d = drafts[i];
+      if (!d.year) { setError(`Row ${i + 1}: Year is required.`); return; }
+      if (!d.brand?.trim()) { setError(`Row ${i + 1}: Brand is required.`); return; }
+      if (!d.card_number?.toString().trim()) { setError(`Row ${i + 1}: Card # is required.`); return; }
+      if (!d.player?.trim()) { setError(`Row ${i + 1}: Player is required.`); return; }
+      if (d.condition_type === 'graded' && (!d.grading_company || !d.grade)) {
+        setError(`Row ${i + 1}: Graded cards need a grading company and grade.`); return;
+      }
+      if (d.condition_type === 'raw' && !d.raw_grade) {
+        setError(`Row ${i + 1}: Raw cards need a raw grade.`); return;
+      }
+    }
+    setSaving(true);
+    const supabase = createClient();
+    const payload = drafts.map(d => ({
+      ...d,
+      title: buildTitle(d),
+      year: d.year ? Number(d.year) : null,
+      asking_price: d.asking_price !== null && d.asking_price !== undefined && String(d.asking_price) !== '' ? Number(d.asking_price) : null,
+      cost: d.cost !== null && d.cost !== undefined && String(d.cost) !== '' ? Number(d.cost) : null,
+    }));
+    const { data, error: err } = await supabase.from('listings').insert(payload).select();
+    setSaving(false);
+    if (err) { setError(err.message); return; }
+    onComplete((data || []) as Listing[]);
+  }
+
+  const SECTION_LABEL: React.CSSProperties = {
+    fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
+    color: 'var(--orange)', fontWeight: 700, marginBottom: 8,
+  };
+
+  return (
+    <div onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(42,20,52,0.82)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '40px 20px', overflowY: 'auto',
+      }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 980, padding: 24, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>
+            New Listing — From Inventory
+          </div>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>
+            Step {step} of 3
+          </span>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
+          {[1, 2, 3].map(n => (
+            <div key={n} style={{
+              flex: 1, height: 4, borderRadius: 2,
+              background: step >= n ? 'var(--orange)' : 'var(--rule)',
+            }} />
+          ))}
+        </div>
+
+        {step === 1 && (
+          <div>
+            <div style={SECTION_LABEL}>★ Choose a set ★</div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 12px', border: '1.5px solid var(--plum)',
+              borderRadius: 100, background: 'var(--cream)', marginBottom: 12,
+            }}>
+              <span style={{ fontSize: 13, color: 'var(--plum)' }}>🔍</span>
+              <input
+                value={setSearch}
+                onChange={(e) => setSetSearch(e.target.value)}
+                placeholder="Search sets by year, brand, title…"
+                autoFocus
+                style={{
+                  border: 'none', outline: 'none', background: 'transparent',
+                  fontFamily: 'var(--font-body)', fontSize: 13, flex: 1, color: 'var(--plum)',
+                }}
+              />
+            </div>
+            {setsLoading ? (
+              <div className="eyebrow" style={{ textAlign: 'center', padding: 30, color: 'var(--ink-mute)' }}>Loading sets…</div>
+            ) : filteredSets.length === 0 ? (
+              <div className="eyebrow" style={{ textAlign: 'center', padding: 30, color: 'var(--ink-mute)' }}>No sets found.</div>
+            ) : (
+              <div style={{ maxHeight: 420, overflowY: 'auto', display: 'grid', gap: 6 }}>
+                {filteredSets.map(s => {
+                  const ownedCount = (s.rows || []).filter(r => String(r['Owned'] || '') === 'Yes').length;
+                  const isChosen = s.slug === chosenSlug;
+                  return (
+                    <button key={s.slug} type="button" onClick={() => setChosenSlug(s.slug)}
+                      style={{
+                        textAlign: 'left', padding: '12px 14px',
+                        border: isChosen ? '2px solid var(--orange)' : '1.5px solid var(--rule)',
+                        borderRadius: 10, background: isChosen ? 'rgba(184, 146, 58, 0.18)' : 'var(--paper)',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
+                      }}>
+                      <div style={{ flex: 1 }}>
+                        <div className="display" style={{ fontSize: 15, color: 'var(--plum)' }}>
+                          {s.title || `${s.year || ''} ${s.brand || ''}`.trim() || s.slug}
+                        </div>
+                        <div className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 2 }}>
+                          {s.year || '—'} · {s.brand || '—'} · {(s.rows || []).length} rows · {ownedCount} owned
+                        </div>
+                      </div>
+                      {isChosen && <span style={{ color: 'var(--orange)', fontSize: 18 }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <button type="button" onClick={onClose} className="btn btn-outline btn-sm">Cancel</button>
+              <button type="button" disabled={!chosenSlug} onClick={() => setStep(2)} className="btn btn-primary btn-sm">
+                Next: Pick cards →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && chosenSet && (
+          <div>
+            <div style={SECTION_LABEL}>★ Pick cards from {chosenSet.title || chosenSet.slug} ★</div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 12px', border: '1.5px solid var(--plum)',
+                borderRadius: 100, background: 'var(--cream)', flex: 1, minWidth: 220,
+              }}>
+                <span style={{ fontSize: 13, color: 'var(--plum)' }}>🔍</span>
+                <input
+                  value={cardSearch}
+                  onChange={(e) => setCardSearch(e.target.value)}
+                  placeholder="Search by card #, player…"
+                  style={{
+                    border: 'none', outline: 'none', background: 'transparent',
+                    fontFamily: 'var(--font-body)', fontSize: 13, flex: 1, color: 'var(--plum)',
+                  }}
+                />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--plum)', fontWeight: 600 }}>
+                <input type="checkbox" checked={ownedOnly} onChange={(e) => setOwnedOnly(e.target.checked)} />
+                Owned only
+              </label>
+              <button type="button" onClick={selectAllVisible} className="btn btn-ghost btn-sm">Select all visible</button>
+              <button type="button" onClick={clearPicked} className="btn btn-ghost btn-sm">Clear</button>
+              <span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', fontWeight: 700 }}>
+                {picked.size} selected · {candidateRows.length} shown
+              </span>
+            </div>
+
+            <div style={{ maxHeight: 420, overflowY: 'auto', border: '1.5px solid var(--rule)', borderRadius: 10 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)' }}>
+                  <tr>
+                    {['', 'Card #', 'Player', 'Condition', 'Cost', 'Value'].map(h => (
+                      <th key={h} className="eyebrow" style={{
+                        padding: '8px 12px', textAlign: 'left', fontSize: 10,
+                        letterSpacing: '0.16em', fontWeight: 700,
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidateRows.length === 0 ? (
+                    <tr><td colSpan={6} className="eyebrow" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No matching cards.</td></tr>
+                  ) : candidateRows.map(({ row, origIndex }, i) => {
+                    const isGraded = String(row['Graded'] || '').toLowerCase() === 'yes';
+                    const cond = isGraded
+                      ? `${row['Grading Company'] || '?'} ${row['Grade'] || '?'}`
+                      : (row['Raw Grade'] ? String(row['Raw Grade']) : '—');
+                    const isPicked = picked.has(origIndex);
+                    return (
+                      <tr key={origIndex} onClick={() => togglePick(origIndex)} style={{
+                        cursor: 'pointer',
+                        borderTop: '1px solid var(--rule)',
+                        background: isPicked ? 'rgba(184, 146, 58, 0.18)' : (i % 2 === 0 ? 'var(--cream)' : 'var(--paper)'),
+                      }}>
+                        <td style={{ padding: '8px 12px' }}>
+                          <input type="checkbox" checked={isPicked} onChange={() => togglePick(origIndex)} onClick={(e) => e.stopPropagation()} />
+                        </td>
+                        <td className="mono" style={{ padding: '8px 12px', fontWeight: 700, color: 'var(--plum)' }}>
+                          {row['Card #'] ? `#${row['Card #']}` : '—'}
+                        </td>
+                        <td className="display" style={{ padding: '8px 12px', color: 'var(--plum)' }}>
+                          {row['Player'] || row['Description'] || '—'}
+                        </td>
+                        <td className="eyebrow" style={{ padding: '8px 12px', color: 'var(--orange)', fontSize: 10.5 }}>
+                          {cond}
+                        </td>
+                        <td className="mono" style={{ padding: '8px 12px', color: 'var(--ink-soft)' }}>
+                          {row['Cost'] ? String(row['Cost']) : '—'}
+                        </td>
+                        <td className="mono" style={{ padding: '8px 12px', color: 'var(--ink-soft)' }}>
+                          {row['Value'] ? String(row['Value']) : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 18 }}>
+              <button type="button" onClick={() => setStep(1)} className="btn btn-outline btn-sm">← Back</button>
+              <button type="button" disabled={picked.size === 0} onClick={goToReview} className="btn btn-primary btn-sm">
+                Next: Review {picked.size} card{picked.size === 1 ? '' : 's'} →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div>
+            <div style={SECTION_LABEL}>★ Review & finalize ★</div>
+
+            <div className="panel-bordered" style={{ padding: 14, background: 'var(--paper)', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700, flex: 1 }}>
+                  Shared shipping (applied to all)
+                </div>
+                <button type="button" onClick={addSharedShip} className="btn btn-ghost btn-sm">+ Add option</button>
+                <button type="button" onClick={applySharedShippingToAll} className="btn btn-outline btn-sm">Apply to all rows</button>
+              </div>
+              {sharedShipping.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--ink-mute)' }}>No shipping options. Click + Add option.</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {sharedShipping.map((s, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        value={s.label}
+                        onChange={(e) => updateSharedShip(i, { label: e.target.value })}
+                        placeholder="Label (e.g. Bubble Mailer with Tracking)"
+                        style={{
+                          flex: 1, padding: '6px 10px', border: '1.5px solid var(--plum)',
+                          borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-body)', color: 'var(--plum)',
+                          background: 'var(--cream)',
+                        }}
+                      />
+                      <input
+                        type="number" step="0.01" min="0"
+                        value={s.cost}
+                        onChange={(e) => updateSharedShip(i, { cost: Number(e.target.value) || 0 })}
+                        placeholder="0.00"
+                        style={{
+                          width: 90, padding: '6px 10px', border: '1.5px solid var(--plum)',
+                          borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-mono)', color: 'var(--plum)',
+                          background: 'var(--cream)',
+                        }}
+                      />
+                      <button type="button" onClick={() => removeSharedShip(i)} className="btn btn-ghost btn-sm">✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {drafts.length === 0 ? (
+              <div className="eyebrow" style={{ textAlign: 'center', padding: 30, color: 'var(--ink-mute)' }}>No cards left. Go back to pick some.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10, maxHeight: 460, overflowY: 'auto' }}>
+                {drafts.map((d, i) => (
+                  <div key={i} className="panel-bordered" style={{ padding: 14, background: 'var(--paper)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                      <div className="display" style={{ flex: 1, fontSize: 14, color: 'var(--plum)' }}>{d.title || '—'}</div>
+                      <button type="button" onClick={() => removeDraft(i)} className="btn btn-ghost btn-sm">🗑 Remove</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+                      <LabeledInput label="Year" type="number" value={d.year ?? ''}
+                        onChange={(v) => updateDraft(i, { year: v === '' ? null : Number(v) })} />
+                      <LabeledInput label="Brand" value={d.brand ?? ''}
+                        onChange={(v) => updateDraft(i, { brand: String(v) })} />
+                      <LabeledInput label="Card #" value={d.card_number ?? ''}
+                        onChange={(v) => updateDraft(i, { card_number: String(v) })} />
+                      <LabeledInput label="Player" value={d.player ?? ''}
+                        onChange={(v) => updateDraft(i, { player: String(v) })} />
+                      <LabeledSelect label="Condition" value={d.condition_type || 'raw'}
+                        options={[{ v: 'raw', l: 'Raw' }, { v: 'graded', l: 'Graded' }]}
+                        onChange={(v) => updateDraft(i, { condition_type: v as ConditionType })} />
+                      {d.condition_type === 'raw' ? (
+                        <LabeledSelect label="Raw Grade" value={d.raw_grade ?? ''}
+                          options={[{ v: '', l: '—' }, ...RAW_GRADES.map(g => ({ v: g, l: g }))]}
+                          onChange={(v) => updateDraft(i, { raw_grade: v || null })} />
+                      ) : (
+                        <>
+                          <LabeledSelect label="Company" value={d.grading_company ?? ''}
+                            options={[{ v: '', l: '—' }, ...COMPANIES.map(c => ({ v: c, l: c }))]}
+                            onChange={(v) => updateDraft(i, { grading_company: v || null })} />
+                          <LabeledSelect label="Grade" value={d.grade ?? ''}
+                            options={[{ v: '', l: '—' }, ...NUMERIC_GRADES.map(g => ({ v: g, l: g }))]}
+                            onChange={(v) => updateDraft(i, { grade: v || null })} />
+                        </>
+                      )}
+                      <LabeledInput label="Asking Price" type="number" value={d.asking_price ?? ''}
+                        onChange={(v) => updateDraft(i, { asking_price: v === '' ? null : Number(v) })} />
+                      <LabeledInput label="Cost" type="number" value={d.cost ?? ''}
+                        onChange={(v) => updateDraft(i, { cost: v === '' ? null : Number(v) })} />
+                    </div>
+                    {(d.photos && d.photos.length > 0) && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                        {d.photos.map((p, pi) => (
+                          <img key={pi} src={p} alt=""
+                            style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--rule)' }} />
+                        ))}
+                        <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', alignSelf: 'center', marginLeft: 4 }}>
+                          {d.photos.length} photo{d.photos.length === 1 ? '' : 's'} from set
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {error && (
+              <div style={{
+                marginTop: 12, padding: '10px 12px', background: 'rgba(192,57,43,0.12)',
+                border: '1.5px solid var(--rust)', borderRadius: 8, color: 'var(--rust)', fontSize: 12.5, fontWeight: 600,
+              }}>{error}</div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 18 }}>
+              <button type="button" onClick={() => setStep(2)} className="btn btn-outline btn-sm">← Back</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={onClose} className="btn btn-ghost btn-sm">Cancel</button>
+                <button type="button" disabled={saving || drafts.length === 0} onClick={saveAll} className="btn btn-primary btn-sm">
+                  {saving ? 'Creating…' : `Create ${drafts.length} draft${drafts.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LabeledInput({ label, value, onChange, type = 'text' }: {
+  label: string;
+  value: string | number;
+  onChange: (v: string) => void;
+  type?: string;
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>{label}</span>
+      <input
+        type={type}
+        value={value as any}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          padding: '6px 10px', border: '1.5px solid var(--plum)',
+          borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-body)', color: 'var(--plum)',
+          background: 'var(--cream)',
+        }}
+      />
+    </label>
+  );
+}
+
+function LabeledSelect({ label, value, options, onChange }: {
+  label: string;
+  value: string;
+  options: { v: string; l: string }[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          padding: '6px 10px', border: '1.5px solid var(--plum)',
+          borderRadius: 6, fontSize: 12.5, fontFamily: 'var(--font-body)', color: 'var(--plum)',
+          background: 'var(--cream)', cursor: 'pointer',
+        }}
+      >
+        {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+      </select>
+    </label>
   );
 }
