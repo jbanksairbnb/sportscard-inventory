@@ -564,10 +564,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Priority-seller hits: skip the condition filter. These sellers (e.g.
+  // GMCards) are explicitly trusted; if they have a card on the want list,
+  // the user almost always wants to see it regardless of grade. The condition
+  // badge still renders so the user can decide.
   for (const { item, want } of prioritySellerListings) {
     if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
     const detected = detectListingCondition(item.title, mappings)
-    if (!matchesCondition(detected, want)) continue
     allHits.push({
       ...item,
       matched_set_slug: want.setSlug,
