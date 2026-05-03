@@ -225,6 +225,7 @@ export default function HomePage() {
   const [sets, setSets] = useState<SetRow[]>([]);
   const [userEmail, setUserEmail] = useState('');
   const [loading, setLoading] = useState(true);
+  const [scansPickerOpen, setScansPickerOpen] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -285,6 +286,7 @@ export default function HomePage() {
           </div>
           <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
             <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
+            <button onClick={() => setScansPickerOpen(true)} className="btn btn-ghost btn-sm">📷 Scans</button>
             <Link href="/set/new" className="btn btn-primary btn-sm">+ New Upload</Link>
           </div>
         </div>
@@ -328,6 +330,70 @@ export default function HomePage() {
           <span>Keep on collectin&apos;</span>
         </div>
       </footer>
+
+      {scansPickerOpen && (
+        <ScansPicker
+          onClose={() => setScansPickerOpen(false)}
+          onSingleCards={() => { setScansPickerOpen(false); router.push('/listings/scan-inbox'); }}
+          onSetInventory={() => { setScansPickerOpen(false); router.push('/listings/scan-from-set'); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ScansPicker({ onClose, onSingleCards, onSetInventory }: {
+  onClose: () => void;
+  onSingleCards: () => void;
+  onSetInventory: () => void;
+}) {
+  const choices = [
+    {
+      icon: '📷',
+      label: 'Add Scans to Single Cards',
+      hint: 'Match scans to individual listings — front and back per card.',
+      onClick: onSingleCards,
+    },
+    {
+      icon: '📚',
+      label: 'Add Scans to Set Inventory',
+      hint: 'Bulk attach scans to rows in one of your sets.',
+      onClick: onSetInventory,
+    },
+  ];
+  return (
+    <div onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(42,20,52,0.82)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '60px 20px', overflowY: 'auto',
+      }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Add Scans</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>
+          Pick where you want to attach card scans.
+        </p>
+        <div style={{ display: 'grid', gap: 12 }}>
+          {choices.map(c => (
+            <button key={c.label} type="button" onClick={c.onClick}
+              className="panel-bordered"
+              style={{
+                padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+                cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+              }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
+                {c.icon} {c.label}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>{c.hint}</div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
