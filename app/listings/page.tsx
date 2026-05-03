@@ -575,7 +575,7 @@ function ListingsPageContent() {
             <button onClick={() => setImportOpen(true)} className="btn btn-ghost btn-sm">📁 Bulk Upload</button>
             <button onClick={() => router.push('/listings/scan-inbox')} className="btn btn-ghost btn-sm">📷 Scan Inbox</button>
             <button onClick={() => router.push('/listings/scan-from-set')} className="btn btn-ghost btn-sm">📚 Scan from Set</button>
-            <button onClick={() => router.push('/fb-auctions')} className="btn btn-ghost btn-sm">📣 FB Auctions</button>
+            <button onClick={() => router.push('/fb-sales')} className="btn btn-ghost btn-sm">📣 FB Sales</button>
             <button onClick={() => setDefaultsOpen(true)} className="btn btn-ghost btn-sm">⚙ Default Shipping</button>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>
           </div>
