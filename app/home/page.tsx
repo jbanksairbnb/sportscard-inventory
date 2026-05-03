@@ -116,7 +116,7 @@ function LogoShowcase() {
         <div style={{ position: 'relative', display: 'flex', gap: 6, alignItems: 'center' }}>
           <span className="chip chip-rust">Collect</span>
           <span className="chip chip-gold">Trade</span>
-          <span className="chip chip-forest">Connect</span>
+          <Link href="/members" className="chip chip-forest" style={{ textDecoration: 'none', cursor: 'pointer' }}>Connect</Link>
         </div>
       </div>
     </section>
@@ -1338,6 +1338,13 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
               ? <Link key={label} href="/" style={style}>{label}</Link>
               : <span key={label} style={style}>{label}</span>;
           })}
+          <Link href="/members" style={{
+            color: 'inherit',
+            cursor: 'pointer',
+            textDecoration: 'none',
+          }}>
+            Members
+          </Link>
           <Link href="/marketplace" style={{
             color: 'inherit',
             cursor: 'pointer',
