@@ -1046,9 +1046,36 @@ function FavoritesShowcase({ userId }: { userId: string }) {
 
 const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
 
-function SetsInProgress({ sets }: { sets: SetRow[] }) {
+function SetsInProgress({ sets, onShareToggle }: { sets: SetRow[]; onShareToggle: (slug: string, shareToken: string | null) => void }) {
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
+  const [busySlug, setBusySlug] = useState<string | null>(null);
   if (sets.length === 0) return null;
   const sorted = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
+
+  async function handleShare(e: React.MouseEvent, s: SetRow) {
+    e.preventDefault();
+    e.stopPropagation();
+    setBusySlug(s.slug);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setBusySlug(null); return; }
+    let token = s.share_token;
+    if (!token) {
+      token = crypto.randomUUID();
+      await supabase.from('sets').update({ share_token: token }).eq('user_id', user.id).eq('slug', s.slug);
+      onShareToggle(s.slug, token);
+    }
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/share/${token}`);
+      setCopiedSlug(s.slug);
+      setTimeout(() => setCopiedSlug(prev => prev === s.slug ? null : prev), 1800);
+    } catch {
+      // clipboard blocked — fall back to a prompt so the user can still copy
+      window.prompt('Copy this share link', `${window.location.origin}/share/${token}`);
+    }
+    setBusySlug(null);
+  }
+
   return (
     <section style={{ marginBottom: 32 }}>
       <div className="section-head">
@@ -1059,6 +1086,8 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
           const color = SET_COLORS[i % SET_COLORS.length];
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
+          const isCopied = copiedSlug === s.slug;
+          const isBusy = busySlug === s.slug;
           const inner = (
               <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
                 <div style={{
@@ -1085,6 +1114,21 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
                         padding: '2px 6px', borderRadius: 100, flexShrink: 0,
                       }}>SHARED</span>
                     )}
+                    <button type="button"
+                      onClick={(e) => handleShare(e, s)}
+                      disabled={isBusy}
+                      title={s.share_token ? 'Copy share link' : 'Create & copy share link'}
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+                        padding: '3px 9px', borderRadius: 100,
+                        border: '1.5px solid var(--plum)',
+                        background: isCopied ? 'var(--teal)' : 'var(--cream)',
+                        color: isCopied ? 'var(--cream)' : 'var(--plum)',
+                        cursor: isBusy ? 'wait' : 'pointer',
+                      }}>
+                      {isCopied ? '✓ Copied' : (isBusy ? '…' : '🔗 Share')}
+                    </button>
                   </div>
                   <div className="progress">
                     <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
@@ -1513,7 +1557,9 @@ export default function HomePage() {
       {showWantList && <WantListModal onClose={() => setShowWantList(false)} />}
       <div className="home-grid">
         <main style={{ minWidth: 0 }}>
-          <SetsInProgress sets={sets} />
+          <SetsInProgress sets={sets} onShareToggle={(slug, token) => {
+            setSets(prev => prev.map(s => s.slug === slug ? { ...s, share_token: token } : s));
+          }} />
           <FavoritesShowcase userId={userId} />
           <FeedSection />
         </main>
