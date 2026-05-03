@@ -382,6 +382,14 @@ function BuyModal({
     if (!res.ok) {
       console.error('Email send failed:', await res.text());
     }
+    // Pull the card out of the seller's inventory now that the order is
+    // confirmed (purchase row exists). Server route handles authorization
+    // and the seller-side update via service-role.
+    await fetch('/api/inventory/mark-row', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchase_id: purchaseId, owned: false }),
+    }).catch(() => {});
     setSubmitting(false);
     alert('Purchase confirmed! Check your email for details. The seller will reach out about payment.');
     onComplete(listing.id);
