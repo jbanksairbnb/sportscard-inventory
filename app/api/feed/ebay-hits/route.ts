@@ -11,9 +11,11 @@ const RAW_GRADE_RANKS: Record<string, number> = {
   'EX': 4, 'EXCELLENT': 4,
   'EX+': 5, 'EX-PLUS': 5,
   'EXMT': 6, 'EX-MT': 6, 'EX-MINT': 6, 'EXMINT': 6, 'EXCELLENT-MINT': 6,
-  'NM': 7, 'NEAR MINT': 7,
+  // "NR-MINT" / "NRMT" / "NR MT" all mean Near Mint in collector shorthand,
+  // not "Mint". Important: must match before MINT in RAW_TOKEN_REGEX.
+  'NM': 7, 'NEAR MINT': 7, 'NR-MINT': 7, 'NR MINT': 7, 'NRMT': 7, 'NR-MT': 7, 'NR MT': 7,
   'NM+': 8,
-  'NM-MT': 9, 'NMMT': 9, 'NEAR MINT-MINT': 9,
+  'NM-MT': 9, 'NMMT': 9, 'NEAR MINT-MINT': 9, 'NR-MINT+': 9,
   'MINT': 10, 'MT': 10,
   'GEM MINT': 11, 'GEMMINT': 11, 'GEM-MINT': 11, 'GM': 11, 'GEM': 11,
 }
@@ -27,8 +29,22 @@ function rawRank(label: string | null | undefined): number | null {
 
 const NAME_SUFFIXES = new Set(['JR', 'JR.', 'SR', 'SR.', 'II', 'III', 'IV'])
 
+// Strip team / position annotations that often follow the player name in
+// set rows, e.g. "Mike Schmidt – Philadelphia Phillies", "Hank Aaron - HOF",
+// "Bob Gibson (HOF)", "Tom Seaver, P". The eBay listing titles rarely
+// include those bits, so we should match against the raw player name only.
+function cleanPlayer(player: string): string {
+  return player
+    .replace(/[–—].*$/, '')   // en-dash / em-dash and everything after
+    .replace(/\s-\s.*$/, '')             // " - " hyphen and everything after
+    .replace(/\(.*?\)/g, '')             // parenthesized aside
+    .replace(/,.*$/, '')                 // comma and everything after
+    .trim()
+}
+
 function lastNameOf(player: string): string {
-  const parts = player.trim().split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
+  const cleaned = cleanPlayer(player)
+  const parts = cleaned.split(/\s+/).filter(p => !NAME_SUFFIXES.has(p.toUpperCase()))
   return parts[parts.length - 1] || ''
 }
 
@@ -155,17 +171,21 @@ function buildQuery(want: WantRow): string {
   const parts = [
     String(want.year),
     want.brand,
-    want.player,
+    cleanPlayer(want.player),
   ].filter(Boolean)
   return parts.join(' ').trim()
 }
 
+// v2: switched to cleanPlayer-based queries (was including " - Team Name" in
+// the search). Bumped to invalidate stale cache entries from v1.
 function cacheKey(want: WantRow): string {
-  return `${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${want.player.toLowerCase()}|${want.setSport || 'any'}`
+  return `v2|${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${cleanPlayer(want.player).toLowerCase()}|${want.setSport || 'any'}`
 }
 
 const GRADED_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA)\s*[:#]?\s*(\d+(?:\.\d)?)/i
-const RAW_TOKEN_REGEX = /\b(GEM\s*MINT|GEM-MINT|GEMMINT|GM|MINT|MT|NM-MT|NMMT|NEAR\s*MINT|NM\+|NM|EXMT|EX-MT|EXMINT|EXCELLENT-MINT|EX\+|EX|VG-EX|VGEX|VG|G|GOOD|POOR|PR|P)\b/i
+// Order matters — alternation is left-to-right. Compound tokens like "NR-MINT"
+// must come before MINT/MT so the substring "MINT" inside them doesn't win.
+const RAW_TOKEN_REGEX = /\b(GEM\s*MINT|GEM-MINT|GEMMINT|GM|NR-MINT|NR\s*MINT|NRMT|NR-MT|NR\s*MT|NM-MT|NMMT|NEAR\s*MINT-MINT|NEAR\s*MINT|MINT|MT|NM\+|NM|EXMT|EX-MT|EXMINT|EXCELLENT-MINT|EX\+|EX|VG-EX|VGEX|VG|G|GOOD|POOR|PR|P)\b/i
 
 function detectListingCondition(title: string, mappings: RawGradeMapping[]): ConditionDetection {
   const gMatch = title.match(GRADED_REGEX)
@@ -548,10 +568,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Priority-seller hits: skip the condition filter. These sellers (e.g.
+  // GMCards) are explicitly trusted; if they have a card on the want list,
+  // the user almost always wants to see it regardless of grade. The condition
+  // badge still renders so the user can decide.
   for (const { item, want } of prioritySellerListings) {
     if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
     const detected = detectListingCondition(item.title, mappings)
-    if (!matchesCondition(detected, want)) continue
     allHits.push({
       ...item,
       matched_set_slug: want.setSlug,
