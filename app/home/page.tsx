@@ -355,7 +355,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   );
 }
 
-type WantCard = { year: number; brand: string; cardNumber: string; description: string; targetPrice: string; targetConditionLow: string; targetConditionHigh: string };
+type WantCard = { year: number; brand: string; cardNumber: string; description: string; targetType: string; targetCondition: string; targetPrice: string };
 type StatItem = { label: string; value: string; sub: string; onClick?: () => void };
 
 function StatsStrip({ stats }: { stats: StatItem[] }) {
@@ -397,21 +397,34 @@ function WantListModal({ onClose }: { onClose: () => void }) {
       if (!setsData) { setLoading(false); return; }
       const unowned: WantCard[] = [];
       for (const s of setsData) {
-        const dt = (s.default_target || {}) as { low?: string; high?: string };
+        const dt = (s.default_target || {}) as { type?: string; low?: string; high?: string; companies?: string };
+        const defaultType = String(dt.type || '');
         const defaultLow = String(dt.low || '');
         const defaultHigh = String(dt.high || '');
+        const defaultCompanies = String(dt.companies || '');
         for (const row of (s.rows || [])) {
           if (String(row['Owned'] || '') !== 'Yes') {
+            const rowType = String(row['Target Type'] || '').trim();
             const rowLow = String(row['Target Condition - Low'] || row['Target Condition'] || '').trim();
             const rowHigh = String(row['Target Condition - High'] || '').trim();
+            const rowCompanies = String(row['Target Grading Companies'] || '').trim();
+            const type = rowType || defaultType;
+            const low = rowLow || defaultLow;
+            const high = rowHigh || defaultHigh;
+            const companies = rowCompanies || defaultCompanies;
+            const range = low && high ? (low === high ? low : `${low}-${high}`) : (low || high || '');
+            let typeLabel = '';
+            if (type === 'Graded') typeLabel = companies ? `Graded · ${companies.replace(/,\s*/g, ', ')}` : 'Graded';
+            else if (type === 'Raw') typeLabel = 'Raw';
+            else typeLabel = type;
             unowned.push({
               year: s.year || 0,
               brand: s.brand || '',
               cardNumber: String(row['Card #'] || ''),
               description: String(row['Player'] || row['Description'] || ''),
+              targetType: typeLabel,
+              targetCondition: range,
               targetPrice: String(row['Target Price'] || ''),
-              targetConditionLow: rowLow || defaultLow,
-              targetConditionHigh: rowHigh || defaultHigh,
             });
           }
         }
@@ -430,6 +443,8 @@ function WantListModal({ onClose }: { onClose: () => void }) {
           c.brand.toLowerCase().includes(q) ||
           c.cardNumber.toLowerCase().includes(q) ||
           c.description.toLowerCase().includes(q) ||
+          c.targetType.toLowerCase().includes(q) ||
+          c.targetCondition.toLowerCase().includes(q) ||
           c.targetPrice.toLowerCase().includes(q)
         );
       })
@@ -485,7 +500,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--plum)' }}>
-                    {['Year', 'Brand', 'Card #', 'Player', 'Target Price', 'Target Condition - Low', 'Target Condition - High'].map((h) => (
+                    {['Year', 'Brand', 'Card #', 'Player', 'Graded / Raw', 'Target Condition', 'Target Price'].map((h) => (
                     <th key={h} style={{
                       padding: '10px 14px', textAlign: 'left',
                       fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
@@ -505,9 +520,9 @@ function WantListModal({ onClose }: { onClose: () => void }) {
                     <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.brand || '—'}</td>
                     <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--plum)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.cardNumber ? `#${c.cardNumber}` : '—'}</td>
                     <td className="display" style={{ padding: '9px 14px', fontSize: 13, color: 'var(--plum)' }}>{c.description || '—'}</td>
+                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetType || '—'}</td>
+                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetCondition || '—'}</td>
                     <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.targetPrice || '—'}</td>
-                     <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetConditionLow || '—'}</td>
-                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetConditionHigh || '—'}</td>
                   </tr>
                 ))}
               </tbody>
