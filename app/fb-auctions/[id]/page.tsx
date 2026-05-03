@@ -20,6 +20,8 @@ type Listing = {
   raw_grade: string | null;
   grading_company: string | null;
   grade: string | null;
+  source_set_slug: string | null;
+  source_card_number: string | null;
 };
 
 type Lot = {
@@ -115,7 +117,7 @@ export default function ManageFbAuctionPage() {
           .select('*, fb_groups(name, url), fb_auction_templates(name, post_footer)')
           .eq('id', auctionId).eq('user_id', user.id).maybeSingle(),
         supabase.from('fb_auction_lots')
-          .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade)')
+          .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade, source_set_slug, source_card_number)')
           .eq('auction_id', auctionId).order('lot_number'),
         supabase.from('fb_bidders').select('id, name, fb_handle, member_user_id').eq('user_id', user.id).order('name'),
       ]);
@@ -128,7 +130,7 @@ export default function ManageFbAuctionPage() {
       if (missing.length > 0) {
         const { data: listingRows } = await supabase
           .from('listings')
-          .select('id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade')
+          .select('id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade, source_set_slug, source_card_number')
           .in('id', missing);
         const byId = new Map((listingRows || []).map((r: { id: string }) => [r.id, r]));
         lotsRaw = lotsRaw.map(l => l.listing
@@ -269,12 +271,68 @@ export default function ManageFbAuctionPage() {
     setSavingLots(prev => { const next = new Set(prev); next.delete(id); return next; });
   }
 
+  // Mark each lot's source set row Owned=Yes/No. Uses the requesting user's
+  // own auth (they are the seller) and updates their own sets directly.
+  async function markLotsInventory(targetLots: Lot[], owned: boolean) {
+    if (!userId) return;
+    const supabase = createClient();
+    // Group source rows by set slug so we update each set once.
+    const bySet = new Map<string, { rowsToTouch: Set<string>; }>();
+    for (const l of targetLots) {
+      const slug = l.listing?.source_set_slug;
+      const card = l.listing?.source_card_number;
+      if (!slug || !card) continue;
+      const entry = bySet.get(slug) || { rowsToTouch: new Set() };
+      entry.rowsToTouch.add(card);
+      bySet.set(slug, entry);
+    }
+    for (const [slug, { rowsToTouch }] of bySet.entries()) {
+      const { data: setRow } = await supabase
+        .from('sets')
+        .select('rows, row_count')
+        .eq('user_id', userId)
+        .eq('slug', slug)
+        .maybeSingle();
+      if (!setRow) continue;
+      const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
+      const desired = owned ? 'Yes' : 'No';
+      let touched = false;
+      const nextRows = rows.map(r => {
+        const card = String(r['Card #'] ?? '').trim();
+        if (!rowsToTouch.has(card)) return r;
+        if (String(r['Owned'] ?? '') === desired) return r;
+        touched = true;
+        return { ...r, Owned: desired };
+      });
+      if (!touched) continue;
+      const total = nextRows.length;
+      const ownedCount = nextRows.filter(r => String(r['Owned'] ?? '') === 'Yes').length;
+      const ownedPct = total > 0 ? (ownedCount / total) * 100 : 0;
+      await supabase
+        .from('sets')
+        .update({ rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now() })
+        .eq('user_id', userId)
+        .eq('slug', slug);
+    }
+  }
+
   async function setStatus(s: Status) {
     if (!auction) return;
+    const prev = auction.status;
     const supabase = createClient();
     const { error } = await supabase.from('fb_auctions').update({ status: s }).eq('id', auction.id);
     if (error) { alert(error.message); return; }
     setAuction(a => a ? { ...a, status: s } : a);
+
+    // Inventory side-effects: when the auction goes live, every lot's source
+    // row is removed from the seller's inventory. If the seller reverts to
+    // draft (or back from settled), open lots are restored.
+    if (prev !== 'live' && s === 'live') {
+      await markLotsInventory(lots.filter(l => l.status === 'open'), false);
+    } else if (prev === 'live' && s !== 'live') {
+      // Restore the lots that ended unsold; sold/paid lots stay removed.
+      await markLotsInventory(lots.filter(l => l.status === 'open' || l.status === 'no_sale'), true);
+    }
   }
 
   async function setPostUrl(url: string) {
@@ -289,16 +347,23 @@ export default function ManageFbAuctionPage() {
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
+    // Sold lot stays out of inventory — no further change.
   }
   async function quickSetNoSale(lot: Lot) {
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'no_sale' }).eq('id', lot.id);
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'no_sale' } : l));
+    // Unsold lot — restore to inventory (the card is still ours).
+    await markLotsInventory([lot], true);
   }
   async function quickReopen(lot: Lot) {
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'open' }).eq('id', lot.id);
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'open' } : l));
+    // Reopened lot — pull back out of inventory only if the auction is live.
+    if (auction?.status === 'live') {
+      await markLotsInventory([lot], false);
+    }
   }
 
   async function markBuyerPaid(bidderName: string) {

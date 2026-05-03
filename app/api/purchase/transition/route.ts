@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { markSourceRowOwned } from '@/lib/inventory'
 
 const PLUM = '#3d1f4a'
 const ORANGE = '#e8742c'
@@ -151,6 +152,22 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     const { data } = await admin.from('purchases').select('*').eq('id', purchaseId).single()
     updated = data
+    // Restore the card to the seller's inventory now that the order is cancelled.
+    if (purchase.listing_id) {
+      const { data: listing } = await admin
+        .from('listings')
+        .select('user_id, source_set_slug, source_card_number')
+        .eq('id', purchase.listing_id)
+        .maybeSingle()
+      if (listing?.source_set_slug && listing?.source_card_number) {
+        await markSourceRowOwned(admin, {
+          sellerUserId: listing.user_id,
+          setSlug: listing.source_set_slug,
+          cardNumber: listing.source_card_number,
+          owned: true,
+        })
+      }
+    }
   }
 
   if (action === 'paid' && buyerEmail) {

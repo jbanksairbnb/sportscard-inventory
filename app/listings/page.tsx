@@ -33,6 +33,8 @@ type Listing = {
   status: Status;
   sold_at: string | null;
   sold_price: number | null;
+  source_set_slug: string | null;
+  source_card_number: string | null;
   created_at: string;
 };
 
@@ -1538,6 +1540,8 @@ function InventoryListingWizard({
     const draft: Partial<Listing> = {
       user_id: userId,
       set_id: chosenSet?.id || null,
+      source_set_slug: chosenSet?.slug || null,
+      source_card_number: String(row['Card #'] || '') || null,
       title: '',
       description: '',
       year: chosenSet?.year || null,
