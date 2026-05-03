@@ -2,34 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://sports-collective.com'),
-  title: {
-    default: 'Sports Collective — Built by a collector, for the collection',
-    template: '%s · Sports Collective',
-  },
-  description:
-    "A community-curated platform for vintage sports card collectors. Inventory intelligence, want-list matching, and Facebook sales tools designed for the vintage workflow.",
-  keywords: [
-    'vintage sports cards',
-    'sports card collection manager',
-    'baseball card inventory',
-    'want list tracker',
-    'facebook auction tools',
-    'card collectors community',
-  ],
-  authors: [{ name: 'Sports Collective' }],
-  openGraph: {
-    type: 'website',
-    siteName: 'Sports Collective',
-    locale: 'en_US',
-  },
-  twitter: {
-    card: 'summary_large_image',
-  },
-  robots: {
-    index: true,
-    follow: true,
-  },
+  title: "Sports Collective",
+  description: "Sports Collective — manage and analyze your card sets",
 };
 
 export default function RootLayout({
