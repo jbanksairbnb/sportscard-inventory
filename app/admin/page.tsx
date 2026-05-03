@@ -176,6 +176,20 @@ export default function AdminPage() {
             </div>
           </div>
 
+          <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: '18px 22px', marginBottom: 28 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 6 }}>Set Headers</div>
+                <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55, margin: 0 }}>
+                  Add a hero image and description for any canonical set. Shows up at the top of every user&apos;s set page that matches.
+                </p>
+              </div>
+              <button onClick={() => router.push('/admin/set-headers')} className="btn btn-primary">
+                Manage Headers →
+              </button>
+            </div>
+          </div>
+
           <div className="section-head" style={{ marginBottom: 16 }}>
             <span className="eyebrow" style={{ fontSize: 14 }}>★ Membership Applications ★</span>
           </div>
