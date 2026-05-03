@@ -2,6 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
@@ -239,6 +240,8 @@ function ListingsPageContent() {
   const [formError, setFormError] = useState('');
    const [importOpen, setImportOpen] = useState(false);
   const [newPickerOpen, setNewPickerOpen] = useState(false);
+  const [scansPickerOpen, setScansPickerOpen] = useState(false);
+  const [fbSalesPickerOpen, setFbSalesPickerOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
@@ -562,20 +565,18 @@ function ListingsPageContent() {
         borderBottom: '3px solid var(--plum)',
       }}>
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Link href="/home" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flexShrink: 0 }}>
             <SCLogo size={40} />
             <div style={{ lineHeight: 0.95 }}>
               <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
               <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
             </div>
-          </div>
+          </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ My Listings ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={openNew} className="btn btn-primary btn-sm">+ New Listing</button>
-            <button onClick={() => setImportOpen(true)} className="btn btn-ghost btn-sm">📁 Bulk Upload</button>
-            <button onClick={() => router.push('/listings/scan-inbox')} className="btn btn-ghost btn-sm">📷 Scan Inbox</button>
-            <button onClick={() => router.push('/listings/scan-from-set')} className="btn btn-ghost btn-sm">📚 Scan from Set</button>
-            <button onClick={() => router.push('/fb-auctions')} className="btn btn-ghost btn-sm">📣 FB Auctions</button>
+            <button onClick={() => setScansPickerOpen(true)} className="btn btn-ghost btn-sm">📷 Scans</button>
+            <button onClick={() => setFbSalesPickerOpen(true)} className="btn btn-ghost btn-sm">📣 FB Sales</button>
             <button onClick={() => setDefaultsOpen(true)} className="btn btn-ghost btn-sm">⚙ Default Shipping</button>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>
           </div>
@@ -586,7 +587,7 @@ function ListingsPageContent() {
         <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, marginBottom: 24 }}>
           <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
           <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
-            <li>Click <strong>+ New Listing</strong> to add one card at a time, or <strong>📁 Bulk Upload</strong> to import a bunch at once from a CSV.</li>
+            <li>Click <strong>+ New Listing</strong> to add one card at a time, pick from your inventory, or bulk-import from a CSV.</li>
             <li>Hit <strong>⚙ Default Shipping</strong> to set the shipping options you offer — these get applied automatically to every new listing you create.</li>
             <li>Listings start out as <strong>Draft</strong> while you finish details and add photos. When you&apos;re ready to sell, switch them to <strong>Active</strong> so they appear in the Marketplace.</li>
             <li>Use the tabs below to filter by status. Tick the checkboxes on multiple listings and you can <strong>Activate</strong>, <strong>Pause</strong> (move back to Draft), or <strong>Delete</strong> them in bulk.</li>
@@ -814,6 +815,51 @@ function ListingsPageContent() {
           onClose={() => setNewPickerOpen(false)}
           onChooseBlank={openBlankNew}
           onChooseInventory={openInventoryNew}
+          onChooseBulk={() => { setNewPickerOpen(false); setImportOpen(true); }}
+        />
+      )}
+
+      {scansPickerOpen && (
+        <ChoicePicker
+          title="Add Scans"
+          subtitle="Pick where you want to attach card scans."
+          choices={[
+            {
+              icon: '📷',
+              label: 'Add Scans to Single Cards',
+              hint: 'Match scans to individual listings — front and back per card.',
+              onClick: () => { setScansPickerOpen(false); router.push('/listings/scan-inbox'); },
+            },
+            {
+              icon: '📚',
+              label: 'Add Scans to Set Inventory',
+              hint: 'Bulk attach scans to rows in one of your sets.',
+              onClick: () => { setScansPickerOpen(false); router.push('/listings/scan-from-set'); },
+            },
+          ]}
+          onClose={() => setScansPickerOpen(false)}
+        />
+      )}
+
+      {fbSalesPickerOpen && (
+        <ChoicePicker
+          title="FB Sales"
+          subtitle="Which kind of Facebook sale do you want to manage?"
+          choices={[
+            {
+              icon: '🔨',
+              label: 'Auctions',
+              hint: 'Bidding-style sales with current high bid per lot.',
+              onClick: () => { setFbSalesPickerOpen(false); router.push('/fb-auctions'); },
+            },
+            {
+              icon: '🏷',
+              label: 'Claim Sales',
+              hint: 'Fixed-price multi-lot posts where buyers claim in the comments.',
+              onClick: () => { setFbSalesPickerOpen(false); router.push('/fb-claim-sales'); },
+            },
+          ]}
+          onClose={() => setFbSalesPickerOpen(false)}
         />
       )}
 
@@ -1386,11 +1432,51 @@ function DefaultShippingModal({
 }
 
 function NewListingPicker({
-  onClose, onChooseBlank, onChooseInventory,
+  onClose, onChooseBlank, onChooseInventory, onChooseBulk,
 }: {
   onClose: () => void;
   onChooseBlank: () => void;
   onChooseInventory: () => void;
+  onChooseBulk: () => void;
+}) {
+  return (
+    <ChoicePicker
+      title="New Listing"
+      subtitle="How would you like to start?"
+      onClose={onClose}
+      choices={[
+        {
+          icon: '✏️',
+          label: 'Blank listing',
+          hint: 'Type in a single card from scratch.',
+          onClick: onChooseBlank,
+        },
+        {
+          icon: '📚',
+          label: 'From my inventory',
+          hint: 'Pick one or many cards from a set you already track.',
+          onClick: onChooseInventory,
+        },
+        {
+          icon: '📁',
+          label: 'Bulk Load (CSV)',
+          hint: 'Import a bunch of listings at once from a CSV file.',
+          onClick: onChooseBulk,
+        },
+      ]}
+    />
+  );
+}
+
+type Choice = { icon: string; label: string; hint: string; onClick: () => void };
+
+function ChoicePicker({
+  title, subtitle, choices, onClose,
+}: {
+  title: string;
+  subtitle?: string;
+  choices: Choice[];
+  onClose: () => void;
 }) {
   return (
     <div onClick={onClose}
@@ -1403,29 +1489,24 @@ function NewListingPicker({
       <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
         style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>New Listing</div>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>{title}</div>
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
-        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>How would you like to start?</p>
+        {subtitle && <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>{subtitle}</p>}
         <div style={{ display: 'grid', gap: 12 }}>
-          <button type="button" onClick={onChooseBlank}
-            className="panel-bordered"
-            style={{
-              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
-              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
-            }}>
-            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>✏️ Blank listing</div>
-            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Type in a single card from scratch.</div>
-          </button>
-          <button type="button" onClick={onChooseInventory}
-            className="panel-bordered"
-            style={{
-              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
-              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
-            }}>
-            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>📚 From my inventory</div>
-            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Pick one or many cards from a set you already track.</div>
-          </button>
+          {choices.map(c => (
+            <button key={c.label} type="button" onClick={c.onClick}
+              className="panel-bordered"
+              style={{
+                padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+                cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+              }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
+                {c.icon} {c.label}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>{c.hint}</div>
+            </button>
+          ))}
         </div>
       </div>
     </div>
