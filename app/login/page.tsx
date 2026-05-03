@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import SCLogo from '@/components/SCLogo'
@@ -8,6 +8,14 @@ import SCLogo from '@/components/SCLogo'
 type Mode = 'login' | 'register' | 'forgot'
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh' }} />}>
+      <LoginPageInner />
+    </Suspense>
+  )
+}
+
+function LoginPageInner() {
   const searchParams = useSearchParams()
   const initialMode: Mode = searchParams?.get('mode') === 'register' ? 'register' : 'login'
   const [mode, setMode] = useState<Mode>(initialMode)
