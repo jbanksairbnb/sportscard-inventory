@@ -330,6 +330,15 @@ function ListingsPageContent() {
     active: listings.filter(l => l.status === 'active').length,
     sold: listings.filter(l => l.status === 'sold').length,
   };
+  const metrics = useMemo(() => {
+    let activeTotal = 0;
+    let soldTotal = 0;
+    for (const l of listings) {
+      if (l.status === 'active' && l.asking_price) activeTotal += l.asking_price;
+      if (l.status === 'sold' && l.sold_price) soldTotal += l.sold_price;
+    }
+    return { activeTotal, soldTotal };
+  }, [listings]);
   const filtered = useMemo(() => {
     let arr = filter === 'all' ? listings : listings.filter(l => l.status === filter);
     const q = searchQuery.trim();
@@ -578,6 +587,7 @@ function ListingsPageContent() {
             <button onClick={() => setScansPickerOpen(true)} className="btn btn-ghost btn-sm">📷 Scans</button>
             <button onClick={() => setFbSalesPickerOpen(true)} className="btn btn-ghost btn-sm">📣 FB Sales</button>
             <button onClick={() => setDefaultsOpen(true)} className="btn btn-ghost btn-sm">⚙ Default Shipping</button>
+            <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
             <button onClick={() => router.push('/home')} className="btn btn-outline btn-sm">← Home</button>
           </div>
         </div>
@@ -594,6 +604,12 @@ function ListingsPageContent() {
             <li>When a card sells, it moves to the <strong>Sold</strong> tab automatically and the buyer&apos;s order shows up in their Purchases.</li>
           </ol>
         </section>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18,
+        }}>
+          <ListingsMetricCard label="Active total" value={fmtMoney(metrics.activeTotal)} />
+          <ListingsMetricCard label="Sold total" value={fmtMoney(metrics.soldTotal)} accent />
+        </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 24 }}>
           {(['active', 'draft', 'sold', 'all'] as const).map(f => (
             <button
@@ -2067,5 +2083,14 @@ function LabeledSelect({ label, value, options, onChange }: {
         {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
       </select>
     </label>
+  );
+}
+
+function ListingsMetricCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="panel-bordered" style={{ padding: '12px 16px' }}>
+      <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 4 }}>{label}</div>
+      <div className="display" style={{ fontSize: 22, color: accent ? 'var(--orange)' : 'var(--plum)', fontWeight: 700 }}>{value}</div>
+    </div>
   );
 }
