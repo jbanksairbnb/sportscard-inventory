@@ -6,56 +6,87 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-type Listing = {
-  id: string;
-  title: string;
-  year: number | null;
-  brand: string | null;
-  card_number: string | null;
-  player: string | null;
-  photos: string[];
-};
-
 type PairMode = 'fronts-only' | 'fronts-then-backs' | 'interleaved';
+type ConditionType = 'raw' | 'graded';
+type ShippingOption = { label: string; cost: number };
+
+const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
+const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
+const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
+const GRADE_LABELS: Record<string, string> = {
+  '10': 'GEM MT', '9.5': 'GEM MT', '9': 'MINT',
+  '8.5': 'NM-MT+', '8': 'NM-MT', '7.5': 'NM+', '7': 'NM',
+  '6.5': 'EX-MT+', '6': 'EX-MT', '5.5': 'EX+', '5': 'EX',
+  '4.5': 'VG-EX+', '4': 'VG-EX', '3.5': 'VG+', '3': 'VG',
+  '2.5': 'GOOD+', '2': 'GOOD', '1.5': 'FAIR', '1': 'POOR',
+};
+const DEFAULT_SHIPPING_OPTIONS: ShippingOption[] = [
+  { label: 'PWE (Plain White Envelope)', cost: 1.0 },
+  { label: 'Bubble Mailer with Tracking', cost: 5.0 },
+];
 
 type Pair = {
   id: string;
   front: File | null;
   back: File | null;
-  status: 'pending' | 'saved' | 'skipped';
-  listingId?: string;
-  listingLabel?: string;
 };
 
-function listingLabel(l: Listing): string {
-  const parts = [
-    l.year ? String(l.year) : '',
-    l.brand || '',
-    l.card_number ? `#${l.card_number}` : '',
-    l.player || '',
-  ].filter(Boolean);
-  return parts.join(' ').trim() || l.title;
+type PairForm = {
+  year: string;
+  brand: string;
+  card_number: string;
+  player: string;
+  condition_type: ConditionType;
+  raw_grade: string;
+  grading_company: string;
+  grade: string;
+  asking_price: string;
+  cost: string;
+  description: string;
+  shipping_options: ShippingOption[];
+};
+
+type PairResult = { listingId: string; title: string };
+
+function emptyForm(defaults: ShippingOption[]): PairForm {
+  return {
+    year: '', brand: '', card_number: '', player: '',
+    condition_type: 'raw', raw_grade: '', grading_company: '', grade: '',
+    asking_price: '', cost: '', description: '',
+    shipping_options: defaults.length ? [...defaults] : [...DEFAULT_SHIPPING_OPTIONS],
+  };
+}
+
+function buildTitle(d: PairForm): string {
+  let condition = '';
+  if (d.condition_type === 'graded' && d.grading_company && d.grade) {
+    const label = GRADE_LABELS[String(d.grade)] || '';
+    condition = label ? `${d.grading_company} ${d.grade} ${label}` : `${d.grading_company} ${d.grade}`;
+  } else if (d.condition_type === 'raw' && d.raw_grade) {
+    condition = d.raw_grade;
+  }
+  return [
+    d.year, d.brand,
+    d.card_number ? `#${d.card_number}` : '',
+    d.player, condition,
+  ].filter(Boolean).join(' ').trim();
 }
 
 export default function ScanInboxPage() {
   const router = useRouter();
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  const [listings, setListings] = useState<Listing[]>([]);
+  const [defaultShipping, setDefaultShipping] = useState<ShippingOption[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<PairMode>('fronts-then-backs');
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [pairStatuses, setPairStatuses] = useState<Record<number, 'saved' | 'skipped' | 'pending'>>({});
-  const [pairListings, setPairListings] = useState<Record<number, { id: string; label: string }>>({});
-
-  const [searchQuery, setSearchQuery] = useState('');
-  const [highlightIdx, setHighlightIdx] = useState(0);
-  const [onlyMissing, setOnlyMissing] = useState(true);
+  const [pairForms, setPairForms] = useState<Record<number, PairForm>>({});
+  const [pairResults, setPairResults] = useState<Record<number, PairResult>>({});
+  const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const searchRef = useRef<HTMLInputElement>(null);
-  const dropRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const dropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -63,12 +94,13 @@ export default function ScanInboxPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const { data } = await supabase.from('listings')
-        .select('id, title, year, brand, card_number, player, photos')
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('default_shipping')
         .eq('user_id', user.id)
-        .neq('status', 'sold')
-        .order('created_at', { ascending: false });
-      setListings((data || []) as Listing[]);
+        .maybeSingle();
+      const dShip = (profile?.default_shipping as ShippingOption[] | null) || [];
+      setDefaultShipping(dShip.length ? dShip : DEFAULT_SHIPPING_OPTIONS);
       setLoading(false);
     }
     load();
@@ -78,44 +110,35 @@ export default function ScanInboxPage() {
     if (files.length === 0) return [];
     const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     if (mode === 'fronts-only') {
-      return sorted.map((f, i) => ({ id: `p${i}`, front: f, back: null, status: 'pending' }));
+      return sorted.map((f, i) => ({ id: `p${i}`, front: f, back: null }));
     }
     if (mode === 'interleaved') {
       const out: Pair[] = [];
       for (let i = 0; i < sorted.length; i += 2) {
-        out.push({ id: `p${i}`, front: sorted[i], back: sorted[i + 1] || null, status: 'pending' });
+        out.push({ id: `p${i}`, front: sorted[i], back: sorted[i + 1] || null });
       }
       return out;
     }
     const half = Math.ceil(sorted.length / 2);
     const fronts = sorted.slice(0, half);
     const backs = sorted.slice(half).reverse();
-    return fronts.map((f, i) => ({ id: `p${i}`, front: f, back: backs[i] || null, status: 'pending' }));
+    return fronts.map((f, i) => ({ id: `p${i}`, front: f, back: backs[i] || null }));
   }, [files, mode]);
 
-  const filteredListings = useMemo(() => {
-    let arr = onlyMissing ? listings.filter(l => !l.photos || l.photos.length === 0) : listings;
-    const q = searchQuery.trim();
-    if (q) {
-      const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
-      arr = arr.filter(l => {
-        const hay = [l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : ''].filter(Boolean).join(' ').toLowerCase();
-        return terms.every(t => hay.includes(t));
-      });
-    }
-    return arr.slice(0, 12);
-  }, [listings, searchQuery, onlyMissing]);
-
-  useEffect(() => {
-    setHighlightIdx(0);
-  }, [searchQuery, currentIdx, onlyMissing]);
-
+  // Reset state when files / mode change.
   useEffect(() => {
     setCurrentIdx(0);
-    setPairStatuses({});
-    setPairListings({});
-    setSearchQuery('');
+    setPairForms({});
+    setPairResults({});
+    setSkipped(new Set());
+    setError('');
   }, [files, mode]);
+
+  // Make sure the current pair always has a form initialized.
+  useEffect(() => {
+    if (pairs.length === 0) return;
+    setPairForms(prev => prev[currentIdx] ? prev : { ...prev, [currentIdx]: emptyForm(defaultShipping) });
+  }, [currentIdx, pairs.length, defaultShipping]);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -131,16 +154,28 @@ export default function ScanInboxPage() {
 
   const totalPairs = pairs.length;
   const currentPair = pairs[currentIdx];
-  const savedCount = Object.values(pairStatuses).filter(s => s === 'saved').length;
-  const skippedCount = Object.values(pairStatuses).filter(s => s === 'skipped').length;
-  const remaining = totalPairs - savedCount - skippedCount;
+  const currentForm = pairForms[currentIdx] || emptyForm(defaultShipping);
+  const savedCount = Object.keys(pairResults).length;
+  const skippedCount = skipped.size;
 
-  function swapPair(idx: number) {
-    const p = pairs[idx];
-    if (!p) return;
+  function patchForm(patch: Partial<PairForm>) {
+    setPairForms(prev => ({ ...prev, [currentIdx]: { ...(prev[currentIdx] || emptyForm(defaultShipping)), ...patch } }));
+  }
+  function patchShip(idx: number, val: Partial<ShippingOption>) {
+    const ships = [...currentForm.shipping_options];
+    ships[idx] = { ...ships[idx], ...val };
+    patchForm({ shipping_options: ships });
+  }
+  function addShip() { patchForm({ shipping_options: [...currentForm.shipping_options, { label: '', cost: 0 }] }); }
+  function removeShip(idx: number) {
+    patchForm({ shipping_options: currentForm.shipping_options.filter((_, i) => i !== idx) });
+  }
+
+  function swapPair() {
+    if (!currentPair) return;
     const newFiles = [...files];
-    const fIdx = p.front ? newFiles.indexOf(p.front) : -1;
-    const bIdx = p.back ? newFiles.indexOf(p.back) : -1;
+    const fIdx = currentPair.front ? newFiles.indexOf(currentPair.front) : -1;
+    const bIdx = currentPair.back ? newFiles.indexOf(currentPair.back) : -1;
     if (fIdx >= 0 && bIdx >= 0) {
       [newFiles[fIdx], newFiles[bIdx]] = [newFiles[bIdx], newFiles[fIdx]];
       setFiles(newFiles);
@@ -148,75 +183,88 @@ export default function ScanInboxPage() {
   }
 
   function advance() {
-    setSearchQuery('');
-    setHighlightIdx(0);
     if (currentIdx < totalPairs - 1) setCurrentIdx(currentIdx + 1);
   }
   function goBack() {
-    setSearchQuery('');
-    setHighlightIdx(0);
     if (currentIdx > 0) setCurrentIdx(currentIdx - 1);
   }
   function skipPair() {
-    setPairStatuses(prev => ({ ...prev, [currentIdx]: 'skipped' }));
+    setSkipped(prev => { const next = new Set(prev); next.add(currentIdx); return next; });
     advance();
   }
 
-  async function saveCurrent(useListingId?: string) {
-    if (!currentPair) return;
-    const listingId = useListingId || filteredListings[highlightIdx]?.id;
-    if (!listingId) { setError('Pick a listing first.'); return; }
-    const listing = listings.find(l => l.id === listingId);
-    if (!listing) return;
+  async function saveCurrent() {
+    if (!currentPair || !userId) return;
     setError('');
+    const f = currentForm;
+    const yearNum = Number(f.year);
+    if (!f.year || Number.isNaN(yearNum)) { setError('Year is required.'); return; }
+    if (!f.brand.trim()) { setError('Brand is required.'); return; }
+    if (!f.card_number.trim()) { setError('Card # is required.'); return; }
+    if (!f.player.trim()) { setError('Player is required.'); return; }
+    if (f.condition_type === 'graded' && (!f.grading_company || !f.grade)) {
+      setError('Graded cards need grading company + grade.'); return;
+    }
+    if (f.condition_type === 'raw' && !f.raw_grade) {
+      setError('Raw cards need a raw grade.'); return;
+    }
+
     setSaving(true);
-
     const supabase = createClient();
+    const payload = {
+      user_id: userId,
+      title: buildTitle(f) || 'Untitled card',
+      year: yearNum,
+      brand: f.brand.trim(),
+      card_number: f.card_number.trim(),
+      player: f.player.trim(),
+      condition_type: f.condition_type,
+      raw_grade: f.condition_type === 'raw' ? f.raw_grade : null,
+      grading_company: f.condition_type === 'graded' ? f.grading_company : null,
+      grade: f.condition_type === 'graded' ? f.grade : null,
+      asking_price: f.asking_price === '' ? null : Number(f.asking_price) || null,
+      cost: f.cost === '' ? null : Number(f.cost) || null,
+      description: f.description.trim() || null,
+      shipping_options: f.shipping_options,
+      photos: [] as string[],
+      status: 'draft',
+    };
+    const { data: ins, error: insErr } = await supabase.from('listings').insert(payload).select('id, title').single();
+    if (insErr || !ins) { setError(insErr?.message || 'Insert failed'); setSaving(false); return; }
+
+    // Upload photos and update the listing.
     const ts = Date.now();
-    const newUrls: string[] = [];
-
-    async function uploadOne(file: File, suffix: string) {
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = `${userId}/listings/${listing!.id}/${ts}-${suffix}.${ext}`;
-      const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
-      if (upErr) { throw new Error(`Upload failed: ${upErr.message}`); }
-      const { data } = supabase.storage.from('card-images').getPublicUrl(path);
-      return data.publicUrl;
-    }
-
+    const photoUrls: string[] = [];
     try {
-      if (currentPair.front) newUrls.push(await uploadOne(currentPair.front, 'front'));
-      if (currentPair.back) newUrls.push(await uploadOne(currentPair.back, 'back'));
-
-      const newPhotos = [...(listing.photos || []), ...newUrls];
-      const { error: updErr } = await supabase.from('listings').update({ photos: newPhotos }).eq('id', listing.id);
-      if (updErr) throw new Error(updErr.message);
-
-      setListings(prev => prev.map(l => l.id === listing.id ? { ...l, photos: newPhotos } : l));
-      setPairStatuses(prev => ({ ...prev, [currentIdx]: 'saved' }));
-      setPairListings(prev => ({ ...prev, [currentIdx]: { id: listing.id, label: listingLabel(listing) } }));
-      advance();
+      async function up(file: File, suffix: string) {
+        const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const path = `${userId}/listings/${ins!.id}/${ts}-${suffix}.${ext}`;
+        const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
+        if (upErr) throw new Error(upErr.message);
+        const { data } = supabase.storage.from('card-images').getPublicUrl(path);
+        return data.publicUrl;
+      }
+      if (currentPair.front) photoUrls.push(await up(currentPair.front, 'front'));
+      if (currentPair.back) photoUrls.push(await up(currentPair.back, 'back'));
+      if (photoUrls.length > 0) {
+        await supabase.from('listings').update({ photos: photoUrls }).eq('id', ins.id);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setSaving(false);
+      setError('Listing was created but photo upload failed: ' + (e instanceof Error ? e.message : ''));
     }
+    setPairResults(prev => ({ ...prev, [currentIdx]: { listingId: ins.id, title: ins.title } }));
+    setSkipped(prev => { const next = new Set(prev); next.delete(currentIdx); return next; });
+    setSaving(false);
+    advance();
   }
 
-  function onSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setHighlightIdx(i => Math.min(i + 1, filteredListings.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlightIdx(i => Math.max(0, i - 1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (filteredListings[highlightIdx]) saveCurrent(filteredListings[highlightIdx].id);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      skipPair();
-    }
+  function clearAll() {
+    setFiles([]);
+    setPairForms({});
+    setPairResults({});
+    setSkipped(new Set());
+    setCurrentIdx(0);
+    setError('');
   }
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
@@ -249,214 +297,244 @@ export default function ScanInboxPage() {
         <section style={{ padding: '18px 22px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, marginBottom: 24 }}>
           <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
           <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
-            <li>Scan your stack of cards on the Ricoh fi-8170. Output one folder of JPGs (e.g. 25 fronts, then flip the stack and scan 25 backs).</li>
-            <li>Pick the matching <strong>Pair Mode</strong> below: <em>Fronts then Backs</em> if you scan all fronts first then all backs (recommended; the back stack is reversed automatically). <em>Interleaved</em> if you used duplex mode (front, back, front, back). <em>Fronts only</em> if you didn&apos;t scan backs.</li>
-            <li>Drop the folder of JPGs into the box. The app sorts by filename and pairs them.</li>
-            <li>For each pair: type a few letters of the player name → top match highlights → press <span className="mono">Enter</span> to save and advance. <span className="mono">Esc</span> skips. <span className="mono">↑↓</span> navigates suggestions.</li>
+            <li>Drop a folder of card scans (JPG / PNG). Pick the matching <strong>Pair Mode</strong> below.</li>
+            <li>For each pair (or single front), fill in the listing form and click <strong>Save & Next</strong>.</li>
+            <li>Each save creates a <strong>draft listing</strong> with the scanned photos already attached. You can polish in My Listings later.</li>
           </ol>
         </section>
 
-        {/* Mode + drop */}
-        {pairs.length === 0 && (
-          <>
-            <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 24 }}>
-              <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>1. Pair Mode</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {(['fronts-then-backs', 'interleaved', 'fronts-only'] as const).map(m => (
-                  <button key={m} onClick={() => setMode(m)}
-                    className={mode === m ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}>
-                    {m === 'fronts-then-backs' ? 'Fronts then Backs (recommended)' : m === 'interleaved' ? 'Interleaved (F/B/F/B)' : 'Fronts only'}
-                  </button>
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 8, fontStyle: 'italic' }}>
-                {mode === 'fronts-then-backs' && 'Files 1..N/2 are fronts; files N/2+1..N are backs (in reverse order from the flip).'}
-                {mode === 'interleaved' && 'Odd-numbered files are fronts; even-numbered are backs (e.g. duplex output: 001=front1, 002=back1, 003=front2…).'}
-                {mode === 'fronts-only' && 'Each file is one card front; no backs.'}
-              </div>
-            </section>
+        {/* Step 1: Pair Mode */}
+        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>1. Pair Mode</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {([
+              ['fronts-then-backs', 'Fronts then Backs (recommended)'],
+              ['interleaved', 'Interleaved (F/B/F/B)'],
+              ['fronts-only', 'Fronts only'],
+            ] as const).map(([m, label]) => (
+              <button key={m} onClick={() => setMode(m)}
+                className={`btn btn-sm ${mode === m ? 'btn-primary' : 'btn-ghost'}`}>{label}</button>
+            ))}
+          </div>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 8 }}>
+            {mode === 'fronts-then-backs' && 'Files 1..N/2 are fronts; files N/2+1..N are backs (in reverse order from the flip).'}
+            {mode === 'interleaved' && 'Files alternate: front, back, front, back...'}
+            {mode === 'fronts-only' && 'Each file is a single card with no back.'}
+          </div>
+        </section>
 
-            <section className="panel-bordered" style={{ padding: '20px 24px' }}>
-              <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>2. Drop Scans</div>
-              <div ref={dropRef}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-                style={{
-                  border: `2px dashed ${dragOver ? 'var(--orange)' : 'var(--plum)'}`,
-                  borderRadius: 12,
-                  background: dragOver ? 'rgba(218, 121, 64, 0.08)' : 'var(--paper)',
-                  padding: '40px 24px', textAlign: 'center',
-                  transition: 'all 0.15s ease',
-                }}>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>📥</div>
-                <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 6 }}>
-                  Drag & drop scan files here
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginBottom: 12 }}>
-                  JPG or PNG, sorted by filename. You can also pick from your computer:
-                </div>
-                <input type="file" multiple accept="image/jpeg,image/png" onChange={handleFiles}
-                  style={{ display: 'inline-block', padding: '8px 12px', border: '2px solid var(--plum)', borderRadius: 10, background: 'var(--cream)', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', cursor: 'pointer' }} />
+        {/* Step 2: Drop scans */}
+        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>2. Drop Scans</div>
+          <div ref={dropRef}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            style={{
+              border: `2px dashed ${dragOver ? 'var(--orange)' : 'var(--plum)'}`,
+              borderRadius: 12, padding: '30px 20px', textAlign: 'center',
+              background: dragOver ? 'rgba(232,116,44,0.08)' : 'var(--paper)',
+              transition: 'border-color 120ms, background 120ms',
+            }}>
+            <div style={{ fontSize: 26, marginBottom: 6 }}>📥</div>
+            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>Drag & drop scan files here</div>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--ink-soft)' }}>
+              JPG or PNG, sorted by filename. {files.length > 0 && <strong>{files.length} file{files.length === 1 ? '' : 's'} loaded ({totalPairs} pair{totalPairs === 1 ? '' : 's'}).</strong>}
+            </p>
+            <label style={{ display: 'inline-block' }}>
+              <input type="file" multiple accept="image/*" onChange={handleFiles} style={{ display: 'none' }} />
+              <span className="btn btn-outline btn-sm" style={{ cursor: 'pointer' }}>Choose Files</span>
+            </label>
+            {files.length > 0 && (
+              <button onClick={clearAll} className="btn btn-ghost btn-sm" style={{ marginLeft: 8 }}>↺ Clear all</button>
+            )}
+          </div>
+        </section>
+
+        {/* Step 3: Per-pair form */}
+        {totalPairs > 0 && currentPair && (
+          <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1 }}>
+                Pair {currentIdx + 1} of {totalPairs}
               </div>
-            </section>
-          </>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                {savedCount} saved · {skippedCount} skipped · {totalPairs - savedCount - skippedCount} remaining
+              </span>
+            </div>
+            <div style={{ height: 4, background: 'var(--rule)', borderRadius: 2, marginBottom: 18, overflow: 'hidden' }}>
+              <div style={{ width: `${((savedCount + skippedCount) / totalPairs) * 100}%`, height: '100%', background: 'var(--orange)', transition: 'width 200ms' }} />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 2fr', gap: 24, alignItems: 'flex-start' }}>
+              {/* LEFT — images */}
+              <div>
+                <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 10 }}>
+                  <div style={{ flex: 1, textAlign: 'center' }}>
+                    <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 }}>Front</div>
+                    {currentPair.front ? (
+                      <img src={URL.createObjectURL(currentPair.front)} alt="Front"
+                        style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8, border: '2px solid var(--plum)', background: 'var(--cream)' }} />
+                    ) : (
+                      <div style={{ height: 200, background: 'var(--paper)', border: '2px dashed var(--rule)', borderRadius: 8 }} />
+                    )}
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center' }}>
+                    <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 }}>Back</div>
+                    {currentPair.back ? (
+                      <img src={URL.createObjectURL(currentPair.back)} alt="Back"
+                        style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8, border: '2px solid var(--plum)', background: 'var(--cream)' }} />
+                    ) : (
+                      <div style={{ height: 200, background: 'var(--paper)', border: '2px dashed var(--rule)', borderRadius: 8, display: 'grid', placeItems: 'center', color: 'var(--ink-mute)', fontSize: 11 }}>No back</div>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                  {currentPair.front && currentPair.back && (
+                    <button type="button" onClick={swapPair} className="btn btn-ghost btn-sm">↔ Swap front/back</button>
+                  )}
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginTop: 8, textAlign: 'center' }}>
+                  {currentPair.front?.name}
+                  {currentPair.back && <><br />{currentPair.back.name}</>}
+                </div>
+              </div>
+
+              {/* RIGHT — listing form */}
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, marginBottom: 10 }}>
+                  <Field label="Year *">
+                    <input type="number" value={currentForm.year} onChange={e => patchForm({ year: e.target.value })} className="input-sc" />
+                  </Field>
+                  <Field label="Brand *">
+                    <input value={currentForm.brand} onChange={e => patchForm({ brand: e.target.value })} className="input-sc" placeholder="Topps" />
+                  </Field>
+                  <Field label="Card # *">
+                    <input value={currentForm.card_number} onChange={e => patchForm({ card_number: e.target.value })} className="input-sc" />
+                  </Field>
+                </div>
+                <Field label="Player *">
+                  <input value={currentForm.player} onChange={e => patchForm({ player: e.target.value })} className="input-sc" placeholder="Mickey Mantle" />
+                </Field>
+                <p className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', margin: '4px 0 12px' }}>
+                  Title preview: <strong>{buildTitle(currentForm) || '—'}</strong>
+                </p>
+
+                <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700, marginBottom: 4 }}>Condition Type *</div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                  <button type="button" onClick={() => patchForm({ condition_type: 'raw' })}
+                    className={`btn btn-sm ${currentForm.condition_type === 'raw' ? 'btn-primary' : 'btn-outline'}`} style={{ flex: 1 }}>Raw</button>
+                  <button type="button" onClick={() => patchForm({ condition_type: 'graded' })}
+                    className={`btn btn-sm ${currentForm.condition_type === 'graded' ? 'btn-primary' : 'btn-outline'}`} style={{ flex: 1 }}>Graded</button>
+                </div>
+
+                {currentForm.condition_type === 'raw' ? (
+                  <Field label="Raw Grade *">
+                    <select value={currentForm.raw_grade} onChange={e => patchForm({ raw_grade: e.target.value })} className="input-sc">
+                      <option value="">— Select —</option>
+                      {RAW_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </Field>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <Field label="Grading Company *">
+                      <select value={currentForm.grading_company} onChange={e => patchForm({ grading_company: e.target.value })} className="input-sc">
+                        <option value="">— Select —</option>
+                        {COMPANIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Grade *">
+                      <select value={currentForm.grade} onChange={e => patchForm({ grade: e.target.value })} className="input-sc">
+                        <option value="">— Select —</option>
+                        {NUMERIC_GRADES.map(g => <option key={g} value={g}>{g}{GRADE_LABELS[g] ? ` · ${GRADE_LABELS[g]}` : ''}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+                  <Field label="Asking Price ($)">
+                    <input type="number" step="0.01" value={currentForm.asking_price} onChange={e => patchForm({ asking_price: e.target.value })} className="input-sc" placeholder="0.00" />
+                  </Field>
+                  <Field label="Cost ($) — private">
+                    <input type="number" step="0.01" value={currentForm.cost} onChange={e => patchForm({ cost: e.target.value })} className="input-sc" placeholder="0.00" />
+                  </Field>
+                </div>
+
+                <Field label="Description (optional)">
+                  <textarea value={currentForm.description} onChange={e => patchForm({ description: e.target.value })}
+                    rows={2} className="input-sc" style={{ resize: 'vertical' }}
+                    placeholder="Additional details — centering, surface, any flaws…" />
+                </Field>
+
+                <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700, margin: '14px 0 6px' }}>Shipping Options</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {currentForm.shipping_options.map((s, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input value={s.label} onChange={e => patchShip(i, { label: e.target.value })}
+                        placeholder="PWE / Bubble Mailer / etc." className="input-sc" style={{ flex: 1 }} />
+                      <span style={{ fontWeight: 700, color: 'var(--ink-mute)' }}>$</span>
+                      <input type="number" step="0.01" value={s.cost}
+                        onChange={e => patchShip(i, { cost: Number(e.target.value) || 0 })}
+                        className="input-sc" style={{ width: 80 }} />
+                      <button onClick={() => removeShip(i)} className="btn btn-ghost btn-sm">✕</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addShip} className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-start' }}>+ Add option</button>
+                </div>
+
+                {error && (
+                  <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(192,57,43,0.12)', border: '1.5px solid var(--rust)', borderRadius: 8, color: 'var(--rust)', fontSize: 12.5, fontWeight: 600 }}>
+                    {error}
+                  </div>
+                )}
+
+                {pairResults[currentIdx] && (
+                  <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(45,122,110,0.10)', border: '1.5px solid var(--teal)', borderRadius: 8, color: 'var(--teal)', fontSize: 12.5, fontWeight: 600 }}>
+                    ✓ Saved — listing &quot;{pairResults[currentIdx].title}&quot; created.
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 16, flexWrap: 'wrap' }}>
+                  <button onClick={goBack} disabled={currentIdx === 0} className="btn btn-ghost btn-sm">◀ Prev</button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={skipPair} className="btn btn-outline btn-sm">Skip ▶</button>
+                    <button onClick={saveCurrent} disabled={saving} className="btn btn-primary">
+                      {saving ? 'Saving…' : pairResults[currentIdx] ? '✓ Re-save & Next' : '💾 Save & Next →'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
         )}
 
-        {/* Pair matcher */}
-        {pairs.length > 0 && (
-          <>
-            <section className="panel-bordered" style={{ padding: '14px 18px', marginBottom: 18 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                <div className="display" style={{ fontSize: 16, color: 'var(--plum)' }}>
-                  Pair {currentIdx + 1} of {totalPairs}
-                </div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
-                  {savedCount} saved · {skippedCount} skipped · {remaining} remaining
-                </div>
-                <div style={{ flex: 1 }} />
-                <button onClick={() => { setFiles([]); }} className="btn btn-ghost btn-sm">Clear all & restart</button>
-              </div>
-              <div style={{ marginTop: 8, height: 6, background: 'var(--rule)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{ width: `${totalPairs > 0 ? (savedCount / totalPairs) * 100 : 0}%`, height: '100%', background: 'var(--teal)', transition: 'width 0.2s ease' }} />
-              </div>
-            </section>
-
-            {currentPair && (
-              <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
-                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-                  {/* Thumbnails */}
-                  <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
-                    {currentPair.front && (
-                      <div style={{ textAlign: 'center' }}>
-                        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 4 }}>FRONT</div>
-                        <img src={URL.createObjectURL(currentPair.front)} alt="Front"
-                          style={{ width: 200, height: 280, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)' }} />
-                        <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginTop: 4, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {currentPair.front.name}
-                        </div>
-                      </div>
-                    )}
-                    {currentPair.back && (
-                      <div style={{ textAlign: 'center' }}>
-                        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 4 }}>BACK</div>
-                        <img src={URL.createObjectURL(currentPair.back)} alt="Back"
-                          style={{ width: 200, height: 280, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)' }} />
-                        <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginTop: 4, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {currentPair.back.name}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Search + match */}
-                  <div style={{ flex: 1, minWidth: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <label className="input-label" style={{ marginBottom: 0 }}>Match to listing</label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={onlyMissing} onChange={e => setOnlyMissing(e.target.checked)} />
-                        Only listings without photos
-                      </label>
-                      {currentPair.front && currentPair.back && (
-                        <button onClick={() => swapPair(currentIdx)} className="btn btn-ghost btn-sm" type="button">↔ Swap front/back</button>
-                      )}
-                    </div>
-                    <input ref={searchRef} autoFocus
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                      onKeyDown={onSearchKeyDown}
-                      placeholder="Type player name, year, brand…"
-                      className="input-sc" style={{ width: '100%', fontSize: 14 }} />
-                    {filteredListings.length === 0 ? (
-                      <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13, background: 'var(--paper)', border: '1px dashed var(--rule)', borderRadius: 8 }}>
-                        {searchQuery.trim() ? 'No listings match.' : (onlyMissing ? 'No listings without photos. Uncheck the filter to see all.' : 'No listings.')}
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, overflow: 'hidden' }}>
-                        {filteredListings.map((l, i) => {
-                          const isHi = i === highlightIdx;
-                          return (
-                            <button key={l.id} onClick={() => saveCurrent(l.id)}
-                              onMouseEnter={() => setHighlightIdx(i)}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
-                                background: isHi ? 'rgba(184,146,58,0.18)' : 'transparent',
-                                border: 'none', textAlign: 'left', cursor: 'pointer',
-                                borderTop: i > 0 ? '1px solid var(--rule)' : 'none',
-                              }}>
-                              {l.photos?.[0]
-                                ? <img src={l.photos[0]} alt="" style={{ width: 28, height: 40, objectFit: 'cover', borderRadius: 3, border: '1px solid var(--plum)', flexShrink: 0 }} />
-                                : <div style={{ width: 28, height: 40, borderRadius: 3, background: 'var(--cream)', border: '1px dashed var(--rule)', flexShrink: 0 }} />}
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {listingLabel(l)}
-                                </div>
-                                <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
-                                  {l.photos?.length ? `${l.photos.length} photo${l.photos.length === 1 ? '' : 's'} already` : 'No photos yet'}
-                                </div>
-                              </div>
-                              {isHi && <span className="mono" style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 700 }}>↵ Enter</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {error && (
-                      <div style={{ padding: '8px 12px', background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)', borderRadius: 8, fontSize: 12, color: 'var(--rust)', fontWeight: 600 }}>
-                        {error}
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                      <button onClick={() => saveCurrent()} disabled={saving || filteredListings.length === 0}
-                        className="btn btn-primary">
-                        {saving ? 'Saving…' : '✓ Save & Next'}
-                      </button>
-                      <button onClick={skipPair} disabled={saving} className="btn btn-outline btn-sm">Skip ▶</button>
-                      <button onClick={goBack} disabled={currentIdx === 0 || saving} className="btn btn-ghost btn-sm">◀ Prev</button>
-                      {pairStatuses[currentIdx] === 'saved' && pairListings[currentIdx] && (
-                        <span style={{ fontSize: 11, color: 'var(--teal)', fontWeight: 700, alignSelf: 'center', marginLeft: 'auto' }}>
-                          ✓ Saved to {pairListings[currentIdx].label}
-                        </span>
-                      )}
-                      {pairStatuses[currentIdx] === 'skipped' && (
-                        <span style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700, alignSelf: 'center', marginLeft: 'auto' }}>
-                          (skipped)
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* Per-pair status list */}
-            <section className="panel-bordered" style={{ padding: '16px 20px' }}>
-              <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 8 }}>All pairs</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {pairs.map((_, i) => {
-                  const s = pairStatuses[i] || 'pending';
-                  const isCurrent = i === currentIdx;
-                  return (
-                    <button key={i} onClick={() => { setCurrentIdx(i); setSearchQuery(''); }}
-                      style={{
-                        padding: '4px 10px', borderRadius: 6,
-                        border: isCurrent ? '2px solid var(--orange)' : '1.5px solid var(--rule)',
-                        background: s === 'saved' ? 'var(--teal)' : s === 'skipped' ? 'var(--ink-mute)' : 'var(--paper)',
-                        color: s === 'pending' ? 'var(--plum)' : 'var(--cream)',
-                        fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-                        cursor: 'pointer',
-                      }}>
-                      #{i + 1}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          </>
+        {/* Done summary */}
+        {totalPairs > 0 && savedCount > 0 && (
+          <section className="panel-bordered" style={{ padding: '14px 18px', background: 'var(--paper)' }}>
+            <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ Created drafts ★</div>
+            <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
+              {Object.entries(pairResults).map(([k, v]) => (
+                <li key={k}>
+                  Pair #{Number(k) + 1}: <Link href={`/listings`} style={{ color: 'var(--orange)', fontWeight: 600 }}>{v.title}</Link>
+                </li>
+              ))}
+            </ul>
+            <div style={{ marginTop: 10 }}>
+              <Link href="/listings" className="btn btn-primary btn-sm">Go to My Listings →</Link>
+            </div>
+          </section>
         )}
       </div>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>{label}</span>
+      {children}
+    </label>
   );
 }
