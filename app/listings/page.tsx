@@ -1584,6 +1584,7 @@ function InventoryListingWizard({
   onClose: () => void;
   onComplete: (newListings: Listing[]) => void;
 }) {
+  const [researchIdx, setResearchIdx] = useState<number | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sets, setSets] = useState<InventorySet[]>([]);
   const [setsLoading, setSetsLoading] = useState(true);
@@ -2020,8 +2021,18 @@ function InventoryListingWizard({
                             onChange={(v) => updateDraft(i, { grade: v || null })} />
                         </>
                       )}
-                      <LabeledInput label="Asking Price" type="number" value={d.asking_price ?? ''}
-                        onChange={(v) => updateDraft(i, { asking_price: v === '' ? null : Number(v) })} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>Asking Price</span>
+                          <button type="button" onClick={() => setResearchIdx(i)}
+                            style={{ background: 'transparent', border: 0, color: 'var(--teal)', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                            📈 Research
+                          </button>
+                        </div>
+                        <input type="number" value={d.asking_price ?? ''}
+                          onChange={(e) => updateDraft(i, { asking_price: e.target.value === '' ? null : Number(e.target.value) })}
+                          style={{ padding: '6px 8px', border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--paper)', color: 'var(--plum)', fontFamily: 'var(--font-body)', fontSize: 13 }} />
+                      </div>
                       <LabeledInput label="Cost" type="number" value={d.cost ?? ''}
                         onChange={(v) => updateDraft(i, { cost: v === '' ? null : Number(v) })} />
                     </div>
@@ -2060,6 +2071,22 @@ function InventoryListingWizard({
           </div>
         )}
       </div>
+      <MarketResearchModal
+        open={researchIdx !== null && researchIdx < drafts.length}
+        onClose={() => setResearchIdx(null)}
+        card={researchIdx !== null && drafts[researchIdx] ? {
+          year: drafts[researchIdx].year ?? null,
+          brand: drafts[researchIdx].brand ?? null,
+          card_number: drafts[researchIdx].card_number ?? null,
+          player: drafts[researchIdx].player ?? null,
+          grade: drafts[researchIdx].grade ?? null,
+          grading_company: drafts[researchIdx].grading_company ?? null,
+          raw_grade: drafts[researchIdx].raw_grade ?? null,
+        } : { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null }}
+        onApply={(value) => {
+          if (researchIdx !== null) updateDraft(researchIdx, { asking_price: Math.round(value * 100) / 100 });
+        }}
+      />
     </div>
   );
 }

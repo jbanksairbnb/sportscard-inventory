@@ -172,10 +172,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autoSaveTick, setAutoSaveTick] = useState<'idle' | 'pending' | 'saving' | 'saved'>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const cardDefaults = useMemo(() => defaultsFor(card), [card]);
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 5 }, (_, i) => emptyRow(i, defaultsFor(card))));
   const [notes, setNotes] = useState('');
+  const [latestSession, setLatestSession] = useState<{ session: SessionRow; data_points: DataPointRow[] } | null>(null);
   const [history, setHistory] = useState<{ session: SessionRow; data_points: DataPointRow[] }[]>([]);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
 
@@ -206,16 +208,18 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       const own = all.filter(s => s.user_id === user.id);
       const others = all.filter(s => s.user_id !== user.id);
 
+      // Always open with a blank form. The user's latest analysis (if any) is
+      // surfaced as a "Use most recent analysis" link, and the full archive is
+      // visible in the history panel below the form.
+      setSessionId(null);
+      setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
+      setNotes('');
+      setAutoSaveTick('idle');
       if (own.length > 0) {
-        const latest = own[0];
-        setSessionId(latest.id);
-        setRows(rowsFromDataPoints(latest.market_research_data_points || [], cardDefaults));
-        setNotes(latest.notes || '');
+        setLatestSession({ session: own[0], data_points: own[0].market_research_data_points || [] });
         setHistory(own.slice(1).map(s => ({ session: s, data_points: s.market_research_data_points || [] })));
       } else {
-        setSessionId(null);
-        setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
-        setNotes('');
+        setLatestSession(null);
         setHistory([]);
       }
 
@@ -265,13 +269,11 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setSessionId(null); // Treat as new session for the current user
   }
 
-  async function save() {
-    if (!userId) return;
-    if (!totals.weightOk) {
-      alert('Weights must total 100% with at least one row that has a price filled in.');
-      return;
-    }
-    setSaving(true);
+  // Persist current session + data points. Returns true on success. The UI
+  // wrapper functions below decide whether to alert on errors / require
+  // weights = 100% / etc.
+  async function persistSession(opts: { silent?: boolean } = {}): Promise<boolean> {
+    if (!userId) return false;
     const supabase = createClient();
     const payload = {
       user_id: userId,
@@ -285,20 +287,18 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       listing_id: card.listing_id ?? null,
       set_slug: card.set_slug ?? null,
       set_card_number: card.set_card_number ?? null,
-      market_value: totals.marketValue,
+      market_value: totals.weightOk ? totals.marketValue : null,
       notes: notes.trim() || null,
       updated_at: new Date().toISOString(),
     };
     let activeSessionId = sessionId;
     if (sessionId) {
       const { error } = await supabase.from('market_research_sessions').update(payload).eq('id', sessionId);
-      if (error) { setSaving(false); alert('Could not save: ' + error.message); return; }
-      // Wipe old data points and re-insert. Old data is kept via the immutable
-      // archive view below if we add one — for MVP we just overwrite.
+      if (error) { if (!opts.silent) alert('Could not save: ' + error.message); return false; }
       await supabase.from('market_research_data_points').delete().eq('session_id', sessionId);
     } else {
       const { data, error } = await supabase.from('market_research_sessions').insert(payload).select('id').single();
-      if (error || !data) { setSaving(false); alert('Could not save: ' + error?.message); return; }
+      if (error || !data) { if (!opts.silent) alert('Could not save: ' + error?.message); return false; }
       activeSessionId = data.id as string;
       setSessionId(activeSessionId);
     }
@@ -320,17 +320,58 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       }));
     if (dpRows.length > 0) {
       const { error: dpErr } = await supabase.from('market_research_data_points').insert(dpRows);
-      if (dpErr) { setSaving(false); alert('Saved session but data points failed: ' + dpErr.message); return; }
+      if (dpErr) { if (!opts.silent) alert('Saved session but data points failed: ' + dpErr.message); return false; }
     }
+    return true;
+  }
+
+  async function save() {
+    if (!totals.weightOk) {
+      alert('Weights must total 100% with at least one row that has a price filled in.');
+      return;
+    }
+    setSaving(true);
+    await persistSession();
     setSaving(false);
   }
 
   async function saveAndApply() {
-    await save();
-    if (!totals.weightOk) return;
+    if (!totals.weightOk) {
+      alert('Weights must total 100% with at least one row that has a price filled in.');
+      return;
+    }
+    setSaving(true);
+    const ok = await persistSession();
+    setSaving(false);
+    if (!ok) return;
     if (onApply) onApply(totals.marketValue);
     onClose();
   }
+
+  function loadFromLatest() {
+    if (!latestSession) return;
+    setRows(rowsFromDataPoints(latestSession.data_points, cardDefaults));
+    setNotes(latestSession.session.notes || '');
+    setSessionId(latestSession.session.id);
+    setAutoSaveTick('idle');
+  }
+
+  // Autosave: 1.5s after the last edit, persist silently. We only kick in once
+  // there's at least one row with meaningful content so an empty/blank-open
+  // session isn't created on every focus.
+  useEffect(() => {
+    if (!open || loading) return;
+    const meaningful = rows.some(r => r.price || r.weight_pct || r.grade_company || r.grade_value || r.source_label.trim() || r.url.trim() || r.notes.trim());
+    if (!meaningful && !notes.trim()) return;
+    setAutoSaveTick('pending');
+    const t = setTimeout(async () => {
+      setAutoSaveTick('saving');
+      const ok = await persistSession({ silent: true });
+      setAutoSaveTick(ok ? 'saved' : 'idle');
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, notes, open, loading]);
 
   if (!open) return null;
 
@@ -372,7 +413,19 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 
-        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 14px' }}>{INSTRUCTIONS}</p>
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px' }}>{INSTRUCTIONS}</p>
+        {latestSession && !sessionId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+              You analyzed this card on <strong>{new Date(latestSession.session.created_at).toLocaleDateString()}</strong>
+              {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}.
+            </span>
+            <button type="button" onClick={loadFromLatest}
+              className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11 }}>
+              ↳ Use most recent analysis
+            </button>
+          </div>
+        )}
 
         {loading ? (
           <div style={{ padding: 30, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
@@ -489,13 +542,18 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1.5px solid var(--plum)', borderRadius: 6, background: 'var(--paper)', color: 'var(--plum)', fontFamily: 'var(--font-body)', fontSize: 13, resize: 'vertical' }} />
             </div>
 
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 22 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 22 }}>
               <button type="button" onClick={save} disabled={saving || !totals.weightOk}
                 className="btn btn-ghost btn-sm">{saving ? 'Saving…' : '💾 Save research'}</button>
               <button type="button" onClick={saveAndApply} disabled={saving || !totals.weightOk || !onApply}
                 className="btn btn-primary btn-sm">
                 {saving ? 'Saving…' : `→ Use ${totals.weightOk ? fmtMoney(totals.marketValue) : 'value'}`}
               </button>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                {autoSaveTick === 'pending' && '· autosave pending…'}
+                {autoSaveTick === 'saving' && '· autosaving…'}
+                {autoSaveTick === 'saved' && '· autosaved ✓'}
+              </span>
             </div>
 
             {/* Past research on this card (you only) */}

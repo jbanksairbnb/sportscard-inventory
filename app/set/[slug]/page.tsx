@@ -1252,8 +1252,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
         onApply={(value) => {
           if (!researchTarget) return;
           const idx = researchTarget.rowIndex;
-          onChangeCell(idx, 'Value', value.toFixed(2));
-          onBlurCurrency(idx, 'Value');
+          // Write the formatted currency string in a single state update so we
+          // don't lose the change to a stale-rows blur formatter on the next tick.
+          onChangeCell(idx, 'Value', toCurrency(value.toFixed(2)));
         }}
       />
     </div>
