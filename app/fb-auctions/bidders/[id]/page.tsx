@@ -59,6 +59,31 @@ type ActivityItem = {
   listing: ListingRef | null;
 };
 
+type ClaimItemRow = {
+  id: string;
+  lot_id: string;
+  position: number;
+  listing_id: string | null;
+  price: number | null;
+  claim_buyer_id: string | null;
+  claim_buyer_name: string | null;
+  claim_status: 'open' | 'claimed' | 'sold' | 'paid';
+};
+
+type ClaimLotRow = { id: string; sale_id: string; lot_number: number };
+type ClaimSaleRef = { id: string; title: string | null; status: string | null };
+
+type ClaimActivityItem = {
+  itemId: string;
+  saleId: string;
+  saleTitle: string | null;
+  lotNumber: number | null;
+  price: number | null;
+  claimStatus: ClaimItemRow['claim_status'];
+  isPaid: boolean;
+  listing: ListingRef | null;
+};
+
 function fmtMoney(n: number | null): string {
   if (n === null || n === undefined) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
@@ -94,6 +119,7 @@ export default function BidderProfilePage() {
   const [loading, setLoading] = useState(true);
   const [bidder, setBidder] = useState<Bidder | null>(null);
   const [items, setItems] = useState<ActivityItem[]>([]);
+  const [claimItems, setClaimItems] = useState<ClaimActivityItem[]>([]);
   const [edit, setEdit] = useState({
     name: '', fb_handle: '', email: '', phone: '',
     address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '',
@@ -187,6 +213,69 @@ export default function BidderProfilePage() {
         return (b1.bid ?? 0) - (a.bid ?? 0);
       });
       setItems(activityItems);
+
+      // Pull claim sale items for this buyer (by id OR fallback by typed name).
+      const { data: byIdClaims } = await supabase
+        .from('fb_claim_sale_items')
+        .select('id, lot_id, position, listing_id, price, claim_buyer_id, claim_buyer_name, claim_status')
+        .eq('user_id', user.id)
+        .eq('claim_buyer_id', bidderId);
+      const claims = (byIdClaims || []) as ClaimItemRow[];
+      const seenClaim = new Set(claims.map(c => c.id));
+      if (nameMatch) {
+        const { data: byNameClaims } = await supabase
+          .from('fb_claim_sale_items')
+          .select('id, lot_id, position, listing_id, price, claim_buyer_id, claim_buyer_name, claim_status')
+          .eq('user_id', user.id)
+          .ilike('claim_buyer_name', nameMatch);
+        for (const c of ((byNameClaims || []) as ClaimItemRow[])) {
+          if (!seenClaim.has(c.id) && (!c.claim_buyer_id || c.claim_buyer_id === bidderId)) {
+            claims.push(c);
+            seenClaim.add(c.id);
+          }
+        }
+      }
+      const claimLotIds = Array.from(new Set(claims.map(c => c.lot_id).filter(Boolean)));
+      const claimListingIds = Array.from(new Set(claims.map(c => c.listing_id).filter(Boolean) as string[]));
+      const [claimLotRes, claimSaleListingRes] = await Promise.all([
+        claimLotIds.length > 0
+          ? supabase.from('fb_claim_sale_lots').select('id, sale_id, lot_number').in('id', claimLotIds)
+          : Promise.resolve({ data: [] as ClaimLotRow[] }),
+        claimListingIds.length > 0
+          ? supabase.from('listings').select('id, title, year, brand, card_number, player').in('id', claimListingIds)
+          : Promise.resolve({ data: [] as ListingRef[] }),
+      ]);
+      const claimLotsById = new Map(((claimLotRes.data || []) as ClaimLotRow[]).map(l => [l.id, l]));
+      const claimListingsById = new Map(((claimSaleListingRes.data || []) as ListingRef[]).map(l => [l.id, l]));
+      const saleIds = Array.from(new Set(((claimLotRes.data || []) as ClaimLotRow[]).map(l => l.sale_id)));
+      const { data: claimSaleRows } = saleIds.length > 0
+        ? await supabase.from('fb_claim_sales').select('id, title, status').in('id', saleIds)
+        : { data: [] };
+      const claimSalesById = new Map(((claimSaleRows || []) as ClaimSaleRef[]).map(s => [s.id, s]));
+
+      const claimActivityItems: ClaimActivityItem[] = claims.map(c => {
+        const lot = claimLotsById.get(c.lot_id);
+        const sale = lot ? claimSalesById.get(lot.sale_id) : undefined;
+        return {
+          itemId: c.id,
+          saleId: lot?.sale_id || '',
+          saleTitle: sale?.title || null,
+          lotNumber: lot?.lot_number ?? null,
+          price: c.price,
+          claimStatus: c.claim_status,
+          isPaid: c.claim_status === 'paid',
+          listing: c.listing_id ? claimListingsById.get(c.listing_id) || null : null,
+        };
+      });
+      claimActivityItems.sort((a, b1) => {
+        const order = { paid: 0, sold: 1, claimed: 2, open: 3 } as const;
+        const oa = order[a.claimStatus];
+        const ob = order[b1.claimStatus];
+        if (oa !== ob) return oa - ob;
+        return (b1.price ?? 0) - (a.price ?? 0);
+      });
+      setClaimItems(claimActivityItems);
+
       setLoading(false);
     }
     load();
@@ -202,8 +291,16 @@ export default function BidderProfilePage() {
         if (i.bid) totalSpend += i.bid;
       }
     }
-    return { bidCount, wonCount, paidCount, totalSpend };
-  }, [items]);
+    let claimCount = 0;
+    for (const c of claimItems) {
+      if (c.claimStatus === 'claimed' || c.claimStatus === 'sold' || c.claimStatus === 'paid') claimCount += 1;
+      if (c.isPaid) {
+        paidCount += 1;
+        if (c.price) totalSpend += c.price;
+      }
+    }
+    return { bidCount, wonCount, paidCount, totalSpend, claimCount };
+  }, [items, claimItems]);
 
   async function saveProfile() {
     if (!bidder) return;
@@ -294,9 +391,10 @@ export default function BidderProfilePage() {
                   <button onClick={copyAddress} className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 8px' }}>📋 Copy mailing address</button>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginTop: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginTop: 14 }}>
                 <Stat label="Bids" value={String(stats.bidCount)} />
                 <Stat label="Won" value={String(stats.wonCount)} />
+                <Stat label="Claims" value={String(stats.claimCount)} />
                 <Stat label="Paid" value={String(stats.paidCount)} />
                 <Stat label="$ Spent" value={fmtMoney(stats.totalSpend)} accent />
               </div>
@@ -306,6 +404,13 @@ export default function BidderProfilePage() {
               <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
                 <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>🏆 Won ({winning.length})</div>
                 <ActivityList items={winning} />
+              </section>
+            )}
+
+            {claimItems.length > 0 && (
+              <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
+                <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>🎯 Claims ({claimItems.length})</div>
+                <ClaimActivityList items={claimItems} />
               </section>
             )}
 
@@ -401,6 +506,49 @@ function ActivityList({ items }: { items: ActivityItem[] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function ClaimActivityList({ items }: { items: ClaimActivityItem[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {items.map(item => {
+        const r = item.listing;
+        const cardLabel = r
+          ? [r.year ? String(r.year) : '', r.brand || '', r.card_number ? `#${r.card_number}` : '', r.player || '']
+              .filter(Boolean).join(' ').trim()
+          : '(card details missing)';
+        return (
+          <div key={item.itemId} style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr 90px 90px',
+            gap: 10, padding: '8px 10px', alignItems: 'center',
+            background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
+          }}>
+            <div style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {cardLabel || r?.title || '(card)'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.saleId ? (
+                <Link href={`/fb-claim-sales/${item.saleId}`} style={{ color: 'var(--teal)', textDecoration: 'underline', fontWeight: 600 }}>
+                  {item.saleTitle || 'View claim sale'}{item.lotNumber ? ` · Lot ${item.lotNumber}` : ''}
+                </Link>
+              ) : (item.saleTitle || '—')}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, textAlign: 'right' }}>
+              {fmtMoney(item.price)}
+            </div>
+            <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {item.isPaid && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--plum)', color: 'var(--cream)', textTransform: 'uppercase' }}>PAID</span>}
+              {!item.isPaid && (
+                <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)', textTransform: 'uppercase' }}>
+                  {item.claimStatus.toUpperCase()}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

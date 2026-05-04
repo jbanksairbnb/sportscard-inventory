@@ -42,8 +42,9 @@ type Group = { id: string; name: string; url: string | null };
 
 type BidderRow = { id: string; name: string; fb_handle: string | null };
 
-type ActivityRow = {
+type LiveActivity = {
   bidder_id: string;
+  source: 'auction' | 'claim';
   is_winner: boolean;
   is_paid: boolean;
   bid_amount: number | null;
@@ -55,7 +56,8 @@ type ActivityRow = {
 type BidderSuggestion = {
   bidder: BidderRow;
   matchCount: number;
-  wonCount: number;
+  wonCount: number;       // auction wins on matched listings
+  claimCount: number;     // claim wins on matched listings
   totalSpend: number;
   matchedListingIds: string[];
 };
@@ -174,7 +176,8 @@ export default function NewFbAuctionPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [bidders, setBidders] = useState<BidderRow[]>([]);
-  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [activity, setActivity] = useState<LiveActivity[]>([]);
+  const [bidderTotals, setBidderTotals] = useState<Map<string, { auctionWins: number; claimCount: number }>>(new Map());
   const [generated, setGenerated] = useState<{ auctionId: string; type: TemplateType; postBody: string; lots: Array<{ id: string; lot_number: number; listing: Listing; text: string; }> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [goingLive, setGoingLive] = useState(false);
@@ -228,20 +231,67 @@ export default function NewFbAuctionPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [listingsRes, templatesRes, groupsRes, biddersRes, activityRes] = await Promise.all([
+      const [listingsRes, templatesRes, groupsRes, biddersRes, lotsRes, claimsRes] = await Promise.all([
         supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
         supabase.from('fb_auction_templates').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
-        supabase.from('fb_bidder_activity').select('bidder_id, is_winner, is_paid, bid_amount, listing_year, listing_brand, listing_player').eq('user_id', user.id),
+        supabase.from('fb_auction_lots')
+          .select('bidder_id, current_bid, status, listing:listings(year, brand, player)')
+          .eq('user_id', user.id)
+          .not('bidder_id', 'is', null),
+        supabase.from('fb_claim_sale_items')
+          .select('claim_buyer_id, price, claim_status, listing:listings(year, brand, player)')
+          .eq('user_id', user.id)
+          .not('claim_buyer_id', 'is', null),
       ]);
       setListings((listingsRes.data || []) as Listing[]);
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
       if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
-      if (activityRes.error) console.warn('fb_bidder_activity not available:', activityRes.error.message);
       setBidders((biddersRes.data || []) as BidderRow[]);
-      setActivity((activityRes.data || []) as ActivityRow[]);
+
+      // Fold both auction lots and claim items into a unified activity stream so
+      // the matching logic can score by player / brand+year regardless of source.
+      type LotRowJoin = { bidder_id: string; current_bid: number | null; status: 'open' | 'sold' | 'no_sale' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null };
+      type ClaimRowJoin = { claim_buyer_id: string; price: number | null; claim_status: 'open' | 'claimed' | 'sold' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null };
+      const lotRows = (lotsRes.data || []) as unknown as LotRowJoin[];
+      const claimRows = (claimsRes.data || []) as unknown as ClaimRowJoin[];
+      const liveActivity: LiveActivity[] = [
+        ...lotRows.map(l => ({
+          bidder_id: l.bidder_id,
+          source: 'auction' as const,
+          is_winner: l.status === 'sold' || l.status === 'paid',
+          is_paid: l.status === 'paid',
+          bid_amount: l.current_bid,
+          listing_year: l.listing?.year ?? null,
+          listing_brand: l.listing?.brand ?? null,
+          listing_player: l.listing?.player ?? null,
+        })),
+        ...claimRows.map(c => ({
+          bidder_id: c.claim_buyer_id,
+          source: 'claim' as const,
+          is_winner: c.claim_status === 'claimed' || c.claim_status === 'sold' || c.claim_status === 'paid',
+          is_paid: c.claim_status === 'paid',
+          bid_amount: c.price,
+          listing_year: c.listing?.year ?? null,
+          listing_brand: c.listing?.brand ?? null,
+          listing_player: c.listing?.player ?? null,
+        })),
+      ];
+      setActivity(liveActivity);
+
+      // Per-bidder totals across ALL their history (not just matched listings).
+      // Used to skip recommendations for buyers who only ever do claim sales.
+      const totals = new Map<string, { auctionWins: number; claimCount: number }>();
+      for (const a of liveActivity) {
+        const e = totals.get(a.bidder_id) || { auctionWins: 0, claimCount: 0 };
+        if (a.source === 'auction' && a.is_winner) e.auctionWins += 1;
+        if (a.source === 'claim' && a.is_winner) e.claimCount += 1;
+        totals.set(a.bidder_id, e);
+      }
+      setBidderTotals(totals);
+
       setLoading(false);
     }
     load();
@@ -323,21 +373,31 @@ export default function NewFbAuctionPage() {
         if (!bidder) continue;
         let entry = byBidder.get(bidder.id);
         if (!entry) {
-          entry = { bidder, matchCount: 0, wonCount: 0, totalSpend: 0, matchedListingIds: [] };
+          entry = { bidder, matchCount: 0, wonCount: 0, claimCount: 0, totalSpend: 0, matchedListingIds: [] };
           byBidder.set(bidder.id, entry);
         }
         entry.matchCount += 1;
-        if (a.is_winner) entry.wonCount += 1;
+        if (a.source === 'auction' && a.is_winner) entry.wonCount += 1;
+        if (a.source === 'claim' && a.is_winner) entry.claimCount += 1;
         if (a.is_paid && a.bid_amount) entry.totalSpend += a.bid_amount;
         if (!entry.matchedListingIds.includes(l.id)) entry.matchedListingIds.push(l.id);
       }
     }
-    return Array.from(byBidder.values()).sort((a, b) => {
+    // Filter out bidders who never bid in an auction but have racked up claim
+    // sale activity — they're claim-only buyers and an auction tag is noise.
+    const CLAIM_ONLY_THRESHOLD = 3;
+    const filteredEntries = Array.from(byBidder.values()).filter(entry => {
+      const totals = bidderTotals.get(entry.bidder.id);
+      if (!totals) return true;
+      if (totals.auctionWins === 0 && totals.claimCount >= CLAIM_ONLY_THRESHOLD) return false;
+      return true;
+    });
+    return filteredEntries.sort((a, b) => {
       if (b.wonCount !== a.wonCount) return b.wonCount - a.wonCount;
       if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
       return b.totalSpend - a.totalSpend;
     }).slice(0, 12);
-  }, [suggestionListings, activity, bidders]);
+  }, [suggestionListings, activity, bidders, bidderTotals]);
 
   const canGenerate = type === 'single'
     ? !!templateId && !!singleListingId && singleAuctionTitle.trim().length > 0
