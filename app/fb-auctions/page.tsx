@@ -451,6 +451,7 @@ export default function FbAuctionsPage() {
             <Link href="/fb-auctions/templates" className="btn btn-ghost btn-sm">Templates</Link>
             <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Bidders</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
+            <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
         </div>

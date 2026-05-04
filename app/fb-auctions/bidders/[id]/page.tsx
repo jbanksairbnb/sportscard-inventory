@@ -372,6 +372,7 @@ export default function BidderProfilePage() {
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">← All Bidders</Link>
             <Link href="/fb-auctions" className="btn btn-ghost btn-sm">FB Auctions</Link>
+            <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
           </div>
         </div>
       </header>

@@ -983,6 +983,7 @@ function Header() {
           <Link href="/fb-auctions" className="btn btn-ghost btn-sm">All Auctions</Link>
           <Link href="/fb-auctions/templates" className="btn btn-ghost btn-sm">Templates</Link>
           <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
+          <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
           <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
         </div>
       </div>
