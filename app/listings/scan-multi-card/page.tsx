@@ -50,9 +50,11 @@ export default function ScanMultiCardPage() {
     1: null, 2: null, 3: null, 4: null, 5: null, 6: null,
   });
   // backOrder[p-1] = which back image (0..5 or null) is paired with front at position p.
-  // Defaults to identity (back N pairs with front N), but the user can rearrange
-  // because flipping a 2x3 sheet often mirrors the back layout.
+  // Defaults to identity (back N pairs with front N), but the user can rearrange via
+  // drag-and-drop because flipping a 2x3 sheet often mirrors the back layout.
   const [backOrder, setBackOrder] = useState<(number | null)[]>([0, 1, 2, 3, 4, 5]);
+  const [draggingPos, setDraggingPos] = useState<number | null>(null);
+  const [hoverPos, setHoverPos] = useState<number | null>(null);
   const [savedSummary, setSavedSummary] = useState('');
 
   useEffect(() => {
@@ -360,6 +362,7 @@ export default function ScanMultiCardPage() {
             </div>
             <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 14 }}>
               Pick the card row for each grid position. Skip a position by leaving it blank.
+              {backSplit && <> The backs start in their split order — <strong>drag a back onto another back to swap them</strong> if your back scan was flipped.</>}
             </p>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14 }}>
@@ -367,6 +370,8 @@ export default function ScanMultiCardPage() {
                 const frontSrc = frontSplit.previews[p - 1];
                 const backIdx = backOrder[p - 1];
                 const backSrc = (backSplit && backIdx !== null && backIdx !== undefined) ? backSplit.previews[backIdx] : null;
+                const isDragging = draggingPos === p;
+                const isHover = hoverPos === p && draggingPos !== null && draggingPos !== p;
                 return (
                   <div key={p} className="panel" style={{ padding: 16, border: '1.5px solid var(--rule)' }}>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
@@ -392,37 +397,102 @@ export default function ScanMultiCardPage() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                         <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>Back</div>
-                        {backSrc ? (
-                          <img src={backSrc} alt={`Back for position ${p}`} style={{
-                            width: 110, height: 154, objectFit: 'cover', borderRadius: 6,
-                            border: '2px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
-                          }} />
-                        ) : (
-                          <div style={{
-                            width: 110, height: 154, borderRadius: 6,
-                            border: '2px dashed var(--rule)', background: 'var(--paper)',
-                            display: 'grid', placeItems: 'center',
-                            fontSize: 10, color: 'var(--ink-mute)', textAlign: 'center', padding: 8,
-                          }}>
-                            {backSplit ? 'No back picked' : 'No backs uploaded'}
-                          </div>
-                        )}
-                        {backSplit && (
-                          <select value={backIdx ?? ''}
-                            onChange={e => {
-                              const v = e.target.value === '' ? null : Number(e.target.value);
+                        {backSrc && backSplit ? (
+                          <div
+                            draggable
+                            onDragStart={(e) => {
+                              setDraggingPos(p);
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('text/plain', String(p));
+                            }}
+                            onDragEnd={() => { setDraggingPos(null); setHoverPos(null); }}
+                            onDragOver={(e) => {
+                              if (draggingPos === null || draggingPos === p) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              setHoverPos(p);
+                            }}
+                            onDragLeave={() => { if (hoverPos === p) setHoverPos(null); }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = Number(e.dataTransfer.getData('text/plain') || draggingPos || 0);
+                              if (!from || from === p) return;
                               setBackOrder(prev => {
                                 const next = [...prev];
-                                next[p - 1] = v;
+                                const a = next[from - 1];
+                                const b = next[p - 1];
+                                next[from - 1] = b;
+                                next[p - 1] = a;
                                 return next;
                               });
+                              setDraggingPos(null);
+                              setHoverPos(null);
                             }}
-                            className="input-sc" style={{ width: 110, fontSize: 11, padding: '4px 6px' }}>
-                            <option value="">— No back —</option>
-                            {[0, 1, 2, 3, 4, 5].map(i => (
-                              <option key={i} value={i}>Back #{i + 1}</option>
-                            ))}
-                          </select>
+                            title="Drag onto another back to swap"
+                            style={{
+                              position: 'relative', cursor: 'grab',
+                              borderRadius: 6, overflow: 'hidden',
+                              border: isHover ? '3px dashed var(--teal)' : '2px solid var(--plum)',
+                              boxShadow: isDragging ? 'none' : '0 2px 0 var(--plum)',
+                              opacity: isDragging ? 0.4 : 1,
+                              transition: 'opacity 100ms',
+                            }}
+                          >
+                            <img src={backSrc} alt={`Back at position ${p}`} style={{
+                              width: 110, height: 154, objectFit: 'cover', display: 'block',
+                              pointerEvents: 'none',
+                            }} />
+                            <div style={{
+                              position: 'absolute', top: 4, left: 4,
+                              background: 'var(--plum)', color: 'var(--mustard)',
+                              padding: '1px 6px', borderRadius: 100,
+                              fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em',
+                              fontFamily: 'var(--font-display)',
+                              pointerEvents: 'none',
+                            }}>
+                              from B{(backIdx as number) + 1}
+                            </div>
+                            <div style={{
+                              position: 'absolute', bottom: 4, right: 4,
+                              background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+                              padding: '1px 5px', borderRadius: 4,
+                              fontSize: 9, fontWeight: 700,
+                              pointerEvents: 'none',
+                            }}>↔ drag</div>
+                          </div>
+                        ) : (
+                          <div
+                            onDragOver={(e) => {
+                              if (draggingPos === null || draggingPos === p) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              setHoverPos(p);
+                            }}
+                            onDragLeave={() => { if (hoverPos === p) setHoverPos(null); }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = Number(e.dataTransfer.getData('text/plain') || draggingPos || 0);
+                              if (!from || from === p) return;
+                              setBackOrder(prev => {
+                                const next = [...prev];
+                                const a = next[from - 1];
+                                const b = next[p - 1];
+                                next[from - 1] = b;
+                                next[p - 1] = a;
+                                return next;
+                              });
+                              setDraggingPos(null);
+                              setHoverPos(null);
+                            }}
+                            style={{
+                              width: 110, height: 154, borderRadius: 6,
+                              border: isHover ? '3px dashed var(--teal)' : '2px dashed var(--rule)',
+                              background: 'var(--paper)',
+                              display: 'grid', placeItems: 'center',
+                              fontSize: 10, color: 'var(--ink-mute)', textAlign: 'center', padding: 8,
+                            }}>
+                            {backSplit ? 'Empty — drop a back here' : 'No backs uploaded'}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -447,7 +517,7 @@ export default function ScanMultiCardPage() {
             </div>
             {backSplit && (
               <p className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 10, textAlign: 'center' }}>
-                Tip: if your back-side scan was flipped, use the &quot;Back&quot; dropdown to swap which back image pairs with each front.
+                The badge on each back shows its original split index. Drag any back card onto another to swap them.
               </p>
             )}
 
