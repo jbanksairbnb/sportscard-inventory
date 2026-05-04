@@ -6,11 +6,12 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-// A single sale event — either a paid auction lot or a paid claim sale item.
-// Date is the parent auction/sale's created_at as a heuristic; precise per-lot
-// payment timestamps are out of scope until we add a sold_at column.
+// A single sale event — a paid auction lot, a paid claim sale item, or a
+// marketplace listing that was marked sold. Date is the parent auction/sale's
+// created_at for FB events (precise per-lot paid_at not yet stored) and
+// listings.sold_at for marketplace.
 type SaleEvent = {
-  source: 'auction' | 'claim';
+  source: 'auction' | 'claim' | 'marketplace';
   date: string;       // ISO timestamp
   revenue: number;
   cost: number;       // 0 if unknown (per the agreed rule: missing cost => 0 profit contribution)
@@ -60,7 +61,7 @@ export default function SalesMetricsPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      const [aucsRes, lotsRes, salesRes, itemsRes] = await Promise.all([
+      const [aucsRes, lotsRes, salesRes, itemsRes, marketRes] = await Promise.all([
         supabase.from('fb_auctions').select('id, created_at').eq('user_id', user.id),
         supabase.from('fb_auction_lots')
           .select('auction_id, current_bid, status, bidder_id, bidder_name, listing:listings(cost)')
@@ -69,6 +70,10 @@ export default function SalesMetricsPage() {
         supabase.from('fb_claim_sale_items')
           .select('lot_id, price, claim_status, claim_buyer_id, claim_buyer_name, listing:listings(cost)')
           .eq('user_id', user.id),
+        supabase.from('listings')
+          .select('sold_at, sold_price, cost, status')
+          .eq('user_id', user.id)
+          .eq('status', 'sold'),
       ]);
 
       type AucRow = { id: string; created_at: string };
@@ -131,6 +136,18 @@ export default function SalesMetricsPage() {
           });
         }
       }
+      type MarketRow = { sold_at: string | null; sold_price: number | null; cost: number | null; status: string };
+      for (const row of (marketRes.data || []) as MarketRow[]) {
+        if (!row.sold_price) continue;
+        evs.push({
+          source: 'marketplace',
+          date: row.sold_at || new Date().toISOString(),
+          revenue: row.sold_price,
+          cost: row.cost ?? 0,
+          buyerKey: null,
+          buyerName: null,
+        });
+      }
       setEvents(evs);
       setBidEvents(bids);
       setLoading(false);
@@ -154,39 +171,42 @@ export default function SalesMetricsPage() {
 
   // KPI rollups
   const kpis = useMemo(() => {
-    let revenue = 0, cost = 0, auctionRev = 0, claimRev = 0;
+    let revenue = 0, cost = 0, auctionRev = 0, claimRev = 0, marketRev = 0;
     const buyers = new Set<string>();
     for (const e of filteredEvents) {
       revenue += e.revenue;
       cost += e.cost;
       if (e.source === 'auction') auctionRev += e.revenue;
-      else claimRev += e.revenue;
+      else if (e.source === 'claim') claimRev += e.revenue;
+      else marketRev += e.revenue;
       if (e.buyerKey) buyers.add(e.buyerKey);
     }
     const profit = revenue - cost;
-    return { revenue, cost, profit, auctionRev, claimRev, uniqueBuyers: buyers.size, sales: filteredEvents.length };
+    return { revenue, cost, profit, auctionRev, claimRev, marketRev, uniqueBuyers: buyers.size, sales: filteredEvents.length };
   }, [filteredEvents]);
 
   // Monthly buckets — for the current range plus a previous matching window
   // (so we can compute MoM delta on revenue/profit).
   const monthly = useMemo(() => {
-    const buckets = new Map<string, { revenue: number; profit: number; auction: number; claim: number; bidders: Set<string>; bids: number }>();
+    const buckets = new Map<string, { revenue: number; profit: number; auction: number; claim: number; marketplace: number; bidders: Set<string>; bids: number }>();
+    function bucket(k: string) {
+      let b = buckets.get(k);
+      if (!b) { b = { revenue: 0, profit: 0, auction: 0, claim: 0, marketplace: 0, bidders: new Set<string>(), bids: 0 }; buckets.set(k, b); }
+      return b;
+    }
     for (const e of filteredEvents) {
-      const k = monthKey(e.date);
-      const b = buckets.get(k) || { revenue: 0, profit: 0, auction: 0, claim: 0, bidders: new Set<string>(), bids: 0 };
+      const b = bucket(monthKey(e.date));
       b.revenue += e.revenue;
       b.profit += (e.revenue - e.cost);
       if (e.source === 'auction') b.auction += e.revenue;
-      else b.claim += e.revenue;
+      else if (e.source === 'claim') b.claim += e.revenue;
+      else b.marketplace += e.revenue;
       if (e.buyerKey) b.bidders.add(e.buyerKey);
-      buckets.set(k, b);
     }
     for (const bd of filteredBids) {
-      const k = monthKey(bd.date);
-      const b = buckets.get(k) || { revenue: 0, profit: 0, auction: 0, claim: 0, bidders: new Set<string>(), bids: 0 };
+      const b = bucket(monthKey(bd.date));
       b.bids += 1;
       if (bd.bidderKey) b.bidders.add(bd.bidderKey);
-      buckets.set(k, b);
     }
     return Array.from(buckets.entries())
       .map(([key, b]) => ({ key, ...b, biddersCount: b.bidders.size }))
@@ -267,6 +287,7 @@ export default function SalesMetricsPage() {
           <Kpi label="Profit" value={fmtMoneyLong(kpis.profit)} sub={kpis.cost > 0 ? `${fmtMoney(kpis.cost)} cost` : 'no cost data'} />
           <Kpi label="Auction $" value={fmtMoney(kpis.auctionRev)} />
           <Kpi label="Claim sale $" value={fmtMoney(kpis.claimRev)} />
+          <Kpi label="Marketplace $" value={fmtMoney(kpis.marketRev)} />
           <Kpi label="Sales (count)" value={String(kpis.sales)} />
           <Kpi label="Unique buyers" value={String(kpis.uniqueBuyers)} />
         </div>
@@ -296,13 +317,15 @@ export default function SalesMetricsPage() {
               {monthly.map(m => {
                 const aucH = (m.auction / maxRev) * 160;
                 const claimH = (m.claim / maxRev) * 160;
+                const mktH = (m.marketplace / maxRev) * 160;
                 return (
                   <div key={m.key} style={{ flex: 1, minWidth: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
-                    title={`${monthLabel(m.key)} · Revenue ${fmtMoneyLong(m.revenue)} · Profit ${fmtMoneyLong(m.profit)} · Auctions ${fmtMoney(m.auction)} · Claims ${fmtMoney(m.claim)}`}>
+                    title={`${monthLabel(m.key)} · Revenue ${fmtMoneyLong(m.revenue)} · Profit ${fmtMoneyLong(m.profit)} · Auctions ${fmtMoney(m.auction)} · Claims ${fmtMoney(m.claim)} · Marketplace ${fmtMoney(m.marketplace)}`}>
                     <div className="mono" style={{ fontSize: 10, color: 'var(--ink-soft)', fontWeight: 700 }}>
                       {fmtMoney(m.revenue)}
                     </div>
                     <div style={{ height: 160, width: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', borderBottom: '1.5px solid var(--rule)' }}>
+                      {mktH > 0 && <div style={{ height: mktH, background: 'var(--teal)' }} />}
                       {claimH > 0 && <div style={{ height: claimH, background: 'var(--mustard)' }} />}
                       {aucH > 0 && <div style={{ height: aucH, background: 'var(--orange)' }} />}
                     </div>
@@ -315,6 +338,7 @@ export default function SalesMetricsPage() {
           <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--ink-soft)', marginTop: 8 }}>
             <span><span style={{ display: 'inline-block', width: 12, height: 12, background: 'var(--orange)', borderRadius: 2, verticalAlign: 'middle', marginRight: 4 }} />Auctions</span>
             <span><span style={{ display: 'inline-block', width: 12, height: 12, background: 'var(--mustard)', borderRadius: 2, verticalAlign: 'middle', marginRight: 4 }} />Claim sales</span>
+            <span><span style={{ display: 'inline-block', width: 12, height: 12, background: 'var(--teal)', borderRadius: 2, verticalAlign: 'middle', marginRight: 4 }} />Marketplace</span>
           </div>
         </section>
 
