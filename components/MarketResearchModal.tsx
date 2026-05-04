@@ -205,8 +205,19 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       if (error) console.warn('[research] load error:', error.message);
       type SessionWithDP = SessionRow & { market_research_data_points: DataPointRow[] };
       const all = ((matches || []) as unknown as SessionWithDP[]);
-      const own = all.filter(s => s.user_id === user.id);
-      const others = all.filter(s => s.user_id !== user.id);
+      const ownAll = all.filter(s => s.user_id === user.id);
+      // Garbage-collect: silently delete the user's own sessions that ended up
+      // with no data points and no notes (e.g. abandoned modal opens before
+      // the tightened autosave landed). Keeps the history panel clean.
+      const empties = ownAll.filter(s =>
+        (s.market_research_data_points || []).length === 0 && !(s.notes || '').trim()
+      );
+      if (empties.length > 0) {
+        await supabase.from('market_research_sessions').delete().in('id', empties.map(s => s.id));
+      }
+      const own = ownAll.filter(s => !empties.includes(s));
+      const others = all.filter(s => s.user_id !== user.id
+        && (s.market_research_data_points || []).length > 0);
 
       // Always open with a blank form. The user's latest analysis (if any) is
       // surfaced as a "Use most recent analysis" link, and the full archive is
