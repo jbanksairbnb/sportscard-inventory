@@ -350,25 +350,29 @@ export default function ManageFbAuctionPage() {
 
   async function quickSetSold(lot: Lot) {
     const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
+    const { error } = await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
+    if (error) { alert('Could not mark ended: ' + error.message); return; }
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
     // Ended lot stays out of inventory — no further change.
   }
   async function quickSetPaid(lot: Lot) {
     const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'paid' }).eq('id', lot.id);
+    const { error } = await supabase.from('fb_auction_lots').update({ status: 'paid' }).eq('id', lot.id);
+    if (error) { alert('Could not mark sold: ' + error.message); return; }
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'paid' } : l));
   }
   async function quickSetNoSale(lot: Lot) {
     const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'no_sale' }).eq('id', lot.id);
+    const { error } = await supabase.from('fb_auction_lots').update({ status: 'no_sale' }).eq('id', lot.id);
+    if (error) { alert('Could not mark no sale: ' + error.message); return; }
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'no_sale' } : l));
     // Unsold lot — restore to inventory (the card is still ours).
     await markLotsInventory([lot], true);
   }
   async function quickReopen(lot: Lot) {
     const supabase = createClient();
-    await supabase.from('fb_auction_lots').update({ status: 'open' }).eq('id', lot.id);
+    const { error } = await supabase.from('fb_auction_lots').update({ status: 'open' }).eq('id', lot.id);
+    if (error) { alert('Could not reopen: ' + error.message); return; }
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'open' } : l));
     // Reopened lot — pull back out of inventory only if the auction is live.
     if (auction?.status === 'live') {
