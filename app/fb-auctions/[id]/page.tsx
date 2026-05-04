@@ -348,34 +348,50 @@ export default function ManageFbAuctionPage() {
     setAuction(a => a ? { ...a, post_url: trimmed } : a);
   }
 
-  async function quickSetSold(lot: Lot) {
+  // Once the auction is live, the auction-level status follows the lot states:
+  // any lot still open → live · any lot sold-but-unpaid → ended · all paid or
+  // no-sale → settled. We never auto-leave draft (the seller has to flip that
+  // manually once their post is up).
+  function deriveAuctionStatus(currentStatus: Status, ls: Lot[]): Status {
+    if (currentStatus === 'draft') return 'draft';
+    if (ls.length === 0) return currentStatus;
+    if (ls.some(l => l.status === 'open')) return 'live';
+    if (ls.some(l => l.status === 'sold')) return 'ended';
+    return 'settled';
+  }
+  async function syncAuctionStatusFromLots(nextLots: Lot[]) {
+    if (!auction) return;
+    const desired = deriveAuctionStatus(auction.status, nextLots);
+    if (desired === auction.status) return;
     const supabase = createClient();
-    const { error } = await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
-    if (error) { alert('Could not mark ended: ' + error.message); return; }
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
+    const { error } = await supabase.from('fb_auctions').update({ status: desired }).eq('id', auction.id);
+    if (error) { console.warn('auction status auto-advance failed:', error.message); return; }
+    setAuction(a => a ? { ...a, status: desired } : a);
+  }
+
+  async function applyLotStatus(lot: Lot, next: Lot['status'], failureLabel: string) {
+    const supabase = createClient();
+    const { error } = await supabase.from('fb_auction_lots').update({ status: next }).eq('id', lot.id);
+    if (error) { alert(failureLabel + ': ' + error.message); return null; }
+    const nextLots = lots.map(l => l.id === lot.id ? { ...l, status: next } : l);
+    setLots(nextLots);
+    await syncAuctionStatusFromLots(nextLots);
+    return nextLots;
+  }
+  async function quickSetSold(lot: Lot) {
+    await applyLotStatus(lot, 'sold', 'Could not mark ended');
     // Ended lot stays out of inventory — no further change.
   }
   async function quickSetPaid(lot: Lot) {
-    const supabase = createClient();
-    const { error } = await supabase.from('fb_auction_lots').update({ status: 'paid' }).eq('id', lot.id);
-    if (error) { alert('Could not mark sold: ' + error.message); return; }
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'paid' } : l));
+    await applyLotStatus(lot, 'paid', 'Could not mark sold');
   }
   async function quickSetNoSale(lot: Lot) {
-    const supabase = createClient();
-    const { error } = await supabase.from('fb_auction_lots').update({ status: 'no_sale' }).eq('id', lot.id);
-    if (error) { alert('Could not mark no sale: ' + error.message); return; }
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'no_sale' } : l));
-    // Unsold lot — restore to inventory (the card is still ours).
-    await markLotsInventory([lot], true);
+    const next = await applyLotStatus(lot, 'no_sale', 'Could not mark no sale');
+    if (next) await markLotsInventory([lot], true);
   }
   async function quickReopen(lot: Lot) {
-    const supabase = createClient();
-    const { error } = await supabase.from('fb_auction_lots').update({ status: 'open' }).eq('id', lot.id);
-    if (error) { alert('Could not reopen: ' + error.message); return; }
-    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'open' } : l));
-    // Reopened lot — pull back out of inventory only if the auction is live.
-    if (auction?.status === 'live') {
+    const next = await applyLotStatus(lot, 'open', 'Could not reopen');
+    if (next && auction?.status === 'live') {
       await markLotsInventory([lot], false);
     }
   }
@@ -385,8 +401,11 @@ export default function ManageFbAuctionPage() {
     const supabase = createClient();
     const ids = lots.filter(l => (l.bidder_name || '').trim().toLowerCase() === bidderName.toLowerCase() && l.status === 'sold').map(l => l.id);
     if (ids.length === 0) return;
-    await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', ids);
-    setLots(prev => prev.map(l => ids.includes(l.id) ? { ...l, status: 'paid' } : l));
+    const { error } = await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', ids);
+    if (error) { alert('Could not mark paid: ' + error.message); return; }
+    const nextLots = lots.map(l => ids.includes(l.id) ? { ...l, status: 'paid' as const } : l);
+    setLots(nextLots);
+    await syncAuctionStatusFromLots(nextLots);
   }
 
   const buyerGroups = useMemo(() => {
