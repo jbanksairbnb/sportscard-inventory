@@ -52,6 +52,22 @@ type BidderRow = { id: string; name: string; fb_handle: string | null };
 const STATUS_FILTERS = ['all', 'draft', 'live', 'closed', 'settled'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
+const DATE_RANGES = ['all', 'day', 'week', 'month'] as const;
+type DateRange = typeof DATE_RANGES[number];
+
+function dateRangeLabel(r: DateRange): string {
+  if (r === 'day') return 'Past day';
+  if (r === 'week') return 'Past week';
+  if (r === 'month') return 'Past month';
+  return 'All time';
+}
+function dateRangeMs(r: DateRange): number | null {
+  if (r === 'day') return 24 * 60 * 60 * 1000;
+  if (r === 'week') return 7 * 24 * 60 * 60 * 1000;
+  if (r === 'month') return 30 * 24 * 60 * 60 * 1000;
+  return null;
+}
+
 function statusBg(s: SaleStatus) {
   if (s === 'live') return 'var(--teal)';
   if (s === 'closed') return 'var(--mustard)';
@@ -76,6 +92,7 @@ export default function ClaimSalesPage() {
   const [groupsById, setGroupsById] = useState<Record<string, GroupRow>>({});
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [dateRange, setDateRange] = useState<DateRange>('all');
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -134,7 +151,63 @@ export default function ClaimSalesPage() {
     return c;
   }, [sales]);
 
-  const visibleSales = filter === 'all' ? sales : sales.filter(s => s.status === filter);
+  const visibleSales = useMemo(() => {
+    const cutoff = dateRangeMs(dateRange);
+    const since = cutoff ? Date.now() - cutoff : null;
+    return sales.filter(s => {
+      if (filter !== 'all' && s.status !== filter) return false;
+      if (since !== null) {
+        const t = s.created_at ? new Date(s.created_at).getTime() : 0;
+        if (t < since) return false;
+      }
+      return true;
+    });
+  }, [sales, filter, dateRange]);
+
+  const itemsBySaleId = useMemo(() => {
+    const lotsBySale = new Map<string, Set<string>>();
+    for (const l of lots) {
+      const set = lotsBySale.get(l.sale_id) || new Set<string>();
+      set.add(l.id);
+      lotsBySale.set(l.sale_id, set);
+    }
+    const map = new Map<string, ItemRow[]>();
+    for (const it of items) {
+      // Find the sale this item belongs to (via its lot).
+      for (const [saleId, lotIds] of lotsBySale) {
+        if (lotIds.has(it.lot_id)) {
+          const arr = map.get(saleId) || [];
+          arr.push(it);
+          map.set(saleId, arr);
+          break;
+        }
+      }
+    }
+    return map;
+  }, [items, lots]);
+
+  // Listed shows what's still up-for-grabs (open). Claimed = claimed/sold but
+  // not yet paid (outstanding invoices). Sales = paid revenue.
+  const metrics = useMemo(() => {
+    let listedOpen = 0;
+    let claimedOutstanding = 0;
+    let totalSales = 0;
+    const buyerKeys = new Set<string>();
+    for (const s of visibleSales) {
+      const its = itemsBySaleId.get(s.id) || [];
+      for (const it of its) {
+        const v = it.price || 0;
+        if (it.claim_status === 'open') listedOpen += v;
+        if (it.claim_status === 'claimed' || it.claim_status === 'sold') claimedOutstanding += v;
+        if (it.claim_status === 'paid') totalSales += v;
+        if (it.claim_status !== 'open') {
+          if (it.claim_buyer_id) buyerKeys.add(`id:${it.claim_buyer_id}`);
+          else if (it.claim_buyer_name && it.claim_buyer_name.trim()) buyerKeys.add(`name:${it.claim_buyer_name.trim().toLowerCase()}`);
+        }
+      }
+    }
+    return { listedOpen, claimedOutstanding, totalSales, uniqueBuyers: buyerKeys.size };
+  }, [visibleSales, itemsBySaleId]);
 
   const biddersByLowerName = useMemo(() => {
     const m = new Map<string, BidderRow>();
@@ -235,6 +308,23 @@ export default function ClaimSalesPage() {
             sale&apos;s Manage page for FB URLs, status changes, and per-buyer invoices.
           </p>
         </section>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          <span className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>★ Snapshot ★</span>
+          <select value={dateRange} onChange={e => setDateRange(e.target.value as DateRange)}
+            style={{ padding: '4px 10px', fontSize: 12, fontWeight: 700, border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)', cursor: 'pointer' }}>
+            {DATE_RANGES.map(r => <option key={r} value={r}>{dateRangeLabel(r)}</option>)}
+          </select>
+        </div>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 18,
+        }}>
+          <MetricCard label={`${filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)} · Sales`} value={String(visibleSales.length)} />
+          <MetricCard label="Listed (open) $" value={fmtMoney(metrics.listedOpen)} />
+          <MetricCard label="Claimed, unpaid $" value={fmtMoney(metrics.claimedOutstanding)} />
+          <MetricCard label="Sales $" value={fmtMoney(metrics.totalSales)} accent />
+          <MetricCard label="Unique buyers" value={String(metrics.uniqueBuyers)} />
+        </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
           {STATUS_FILTERS.map(f => (
@@ -385,6 +475,15 @@ export default function ClaimSalesPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="panel-bordered" style={{ padding: "12px 16px" }}>
+      <div className="eyebrow" style={{ fontSize: 10, color: "var(--orange)", marginBottom: 4 }}>{label}</div>
+      <div className="display" style={{ fontSize: 22, color: accent ? "var(--orange)" : "var(--plum)", fontWeight: 700 }}>{value}</div>
     </div>
   );
 }
