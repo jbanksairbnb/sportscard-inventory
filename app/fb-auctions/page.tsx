@@ -231,7 +231,9 @@ export default function FbAuctionsPage() {
   }
 
   const filtered = useMemo(
-    () => filter === 'all' ? auctions : auctions.filter(a => a.status === filter),
+    () => filter === 'all'
+      ? auctions.filter(a => a.status !== 'settled')
+      : auctions.filter(a => a.status === filter),
     [auctions, filter]
   );
   const counts: Record<string, number> = { draft: 0, live: 0, ended: 0, settled: 0 };
@@ -426,7 +428,7 @@ export default function FbAuctionsPage() {
               className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-ghost'}`}>
               {f === 'all' ? 'All' : statusLabel(f)}
               <span style={{ marginLeft: 6, opacity: 0.8 }}>
-                ({f === 'all' ? auctions.length : (counts[f] || 0)})
+                ({f === 'all' ? (auctions.length - (counts.settled || 0)) : (counts[f] || 0)})
               </span>
             </button>
           ))}
