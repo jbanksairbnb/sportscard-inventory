@@ -836,6 +836,12 @@ function ListingsPageContent() {
               hint: 'Bulk attach scans to rows in one of your sets.',
               onClick: () => { setScansPickerOpen(false); router.push('/listings/scan-from-set'); },
             },
+            {
+              icon: '🪟',
+              label: 'Multi-Card Scan (2×3 grid)',
+              hint: 'Upload one image of 6 fronts + one of 6 backs. Splits losslessly into 6 cards and assigns each to a row.',
+              onClick: () => { setScansPickerOpen(false); router.push('/listings/scan-multi-card'); },
+            },
           ]}
           onClose={() => setScansPickerOpen(false)}
         />
