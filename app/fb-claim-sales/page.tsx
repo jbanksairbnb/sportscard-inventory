@@ -136,6 +136,46 @@ export default function ClaimSalesPage() {
 
   const visibleSales = filter === 'all' ? sales : sales.filter(s => s.status === filter);
 
+  const itemsBySaleId = useMemo(() => {
+    const lotsBySale = new Map<string, Set<string>>();
+    for (const l of lots) {
+      const set = lotsBySale.get(l.sale_id) || new Set<string>();
+      set.add(l.id);
+      lotsBySale.set(l.sale_id, set);
+    }
+    const map = new Map<string, ItemRow[]>();
+    for (const it of items) {
+      // Find the sale this item belongs to (via its lot).
+      for (const [saleId, lotIds] of lotsBySale) {
+        if (lotIds.has(it.lot_id)) {
+          const arr = map.get(saleId) || [];
+          arr.push(it);
+          map.set(saleId, arr);
+          break;
+        }
+      }
+    }
+    return map;
+  }, [items, lots]);
+
+  const metrics = useMemo(() => {
+    let totalListed = 0;
+    let totalSales = 0;
+    const buyerKeys = new Set<string>();
+    for (const s of visibleSales) {
+      const its = itemsBySaleId.get(s.id) || [];
+      for (const it of its) {
+        if (it.price) totalListed += it.price;
+        if (it.claim_status === 'paid' && it.price) totalSales += it.price;
+        if (it.claim_status !== 'open') {
+          if (it.claim_buyer_id) buyerKeys.add(`id:${it.claim_buyer_id}`);
+          else if (it.claim_buyer_name && it.claim_buyer_name.trim()) buyerKeys.add(`name:${it.claim_buyer_name.trim().toLowerCase()}`);
+        }
+      }
+    }
+    return { totalListed, totalSales, uniqueBuyers: buyerKeys.size };
+  }, [visibleSales, itemsBySaleId]);
+
   const biddersByLowerName = useMemo(() => {
     const m = new Map<string, BidderRow>();
     for (const b of bidders) m.set(b.name.toLowerCase(), b);
@@ -235,6 +275,15 @@ export default function ClaimSalesPage() {
             sale&apos;s Manage page for FB URLs, status changes, and per-buyer invoices.
           </p>
         </section>
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18,
+        }}>
+          <MetricCard label={`${filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)} · Sales`} value={String(visibleSales.length)} />
+          <MetricCard label="Unique buyers" value={String(metrics.uniqueBuyers)} />
+          <MetricCard label="Listed value" value={fmtMoney(metrics.totalListed)} />
+          <MetricCard label="Sales $" value={fmtMoney(metrics.totalSales)} accent />
+        </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
           {STATUS_FILTERS.map(f => (
@@ -385,6 +434,15 @@ export default function ClaimSalesPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="panel-bordered" style={{ padding: "12px 16px" }}>
+      <div className="eyebrow" style={{ fontSize: 10, color: "var(--orange)", marginBottom: 4 }}>{label}</div>
+      <div className="display" style={{ fontSize: 22, color: accent ? "var(--orange)" : "var(--plum)", fontWeight: 700 }}>{value}</div>
     </div>
   );
 }

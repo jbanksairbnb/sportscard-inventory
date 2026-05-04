@@ -239,6 +239,22 @@ export default function FbAuctionsPage() {
   const counts: Record<string, number> = { draft: 0, live: 0, ended: 0, settled: 0 };
   auctions.forEach(a => { counts[a.status] = (counts[a.status] || 0) + 1; });
 
+  // Quick-glance metrics across whatever's currently filtered.
+  const metrics = useMemo(() => {
+    let totalLots = 0;
+    let salesTotal = 0;
+    const bidderKeys = new Set<string>();
+    for (const a of filtered) {
+      totalLots += a.fb_auction_lots.length;
+      for (const l of a.fb_auction_lots) {
+        if (l.status === 'paid' && l.current_bid) salesTotal += l.current_bid;
+        if (l.bidder_id) bidderKeys.add(`id:${l.bidder_id}`);
+        else if (l.bidder_name && l.bidder_name.trim()) bidderKeys.add(`name:${l.bidder_name.trim().toLowerCase()}`);
+      }
+    }
+    return { totalLots, salesTotal, uniqueBidders: bidderKeys.size };
+  }, [filtered]);
+
   function toggleDraftSelect(id: string) {
     setSelectedDrafts(prev => {
       const next = new Set(prev);
@@ -421,6 +437,15 @@ export default function FbAuctionsPage() {
             <li>When the auction ends, click <strong>Manage →</strong> to settle: get Messenger-ready combined invoices per buyer.</li>
           </ol>
         </section>
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18,
+        }}>
+          <MetricCard label={`${filter === 'all' ? 'All' : statusLabel(filter)} · Auctions`} value={String(filtered.length)} />
+          <MetricCard label="Lots" value={String(metrics.totalLots)} />
+          <MetricCard label="Sales $" value={fmtMoney(metrics.salesTotal)} accent />
+          <MetricCard label="Unique bidders" value={String(metrics.uniqueBidders)} />
+        </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
           {STATUS_FILTERS.map(f => (
@@ -641,5 +666,14 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     }} className="btn btn-primary btn-sm">
       {copied ? '✓ Copied' : label}
     </button>
+  );
+}
+
+function MetricCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="panel-bordered" style={{ padding: "12px 16px" }}>
+      <div className="eyebrow" style={{ fontSize: 10, color: "var(--orange)", marginBottom: 4 }}>{label}</div>
+      <div className="display" style={{ fontSize: 22, color: accent ? "var(--orange)" : "var(--plum)", fontWeight: 700 }}>{value}</div>
+    </div>
   );
 }
