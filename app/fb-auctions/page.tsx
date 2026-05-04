@@ -324,6 +324,32 @@ export default function FbAuctionsPage() {
     setAuctions(prev => prev.map(a => a.id === auctionId ? { ...a, post_url: trimmed } : a));
   }
 
+  // Mirror the detail-page derivation: once an auction is past draft, its
+  // top-level status follows the lot states.
+  function deriveAuctionStatus(currentStatus: Status, ls: LotRow[]): Status {
+    if (currentStatus === 'draft') return currentStatus;
+    if (ls.length === 0) return currentStatus;
+    if (ls.some(l => l.status === 'open')) return 'live';
+    if (ls.some(l => l.status === 'sold')) return 'ended';
+    return 'settled';
+  }
+  async function setLotStatus(auctionId: string, lotId: string, next: LotRow['status']) {
+    const supabase = createClient();
+    const target = auctions.find(a => a.id === auctionId);
+    if (!target) return;
+    const { error } = await supabase.from('fb_auction_lots').update({ status: next }).eq('id', lotId);
+    if (error) { alert('Could not update lot status: ' + error.message); return; }
+    const nextLots = target.fb_auction_lots.map(l => l.id === lotId ? { ...l, status: next } : l);
+    const desiredAuctionStatus = deriveAuctionStatus(target.status, nextLots);
+    setAuctions(prev => prev.map(a => a.id === auctionId
+      ? { ...a, fb_auction_lots: nextLots, status: desiredAuctionStatus }
+      : a));
+    if (desiredAuctionStatus !== target.status) {
+      const { error: aErr } = await supabase.from('fb_auctions').update({ status: desiredAuctionStatus }).eq('id', auctionId);
+      if (aErr) console.warn('auction status auto-advance failed:', aErr.message);
+    }
+  }
+
   function buildBidUpdate(auction: AuctionRow): string {
     const lines = auction.fb_auction_lots
       .sort((a, b) => a.lot_number - b.lot_number)
@@ -449,6 +475,8 @@ export default function FbAuctionsPage() {
               const isLive = a.status === 'live';
               const expanded = isLive;
               const isSelected = selectedDrafts.has(a.id);
+              const endedUnpaid = a.fb_auction_lots.filter(l => l.status === 'sold').length;
+              const soldPaid = a.fb_auction_lots.filter(l => l.status === 'paid').length;
               return (
                 <div key={a.id} className="panel-bordered" style={{ padding: '14px 18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -465,9 +493,19 @@ export default function FbAuctionsPage() {
                           fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
                           background: statusBg(a.status), color: statusFg(a.status), textTransform: 'uppercase',
                         }}>{statusLabel(a.status)}</span>
+                        {endedUnpaid > 0 && (
+                          <Link href={`/fb-auctions/${a.id}#settlement`} style={{
+                            fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', padding: '2px 8px', borderRadius: 100,
+                            background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)',
+                            textDecoration: 'none', textTransform: 'uppercase', whiteSpace: 'nowrap',
+                          }}>★ {endedUnpaid} ended → settle</Link>
+                        )}
                       </div>
                       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
-                        {a.fb_auction_lots.length} lot{a.fb_auction_lots.length === 1 ? '' : 's'} · created {new Date(a.created_at).toLocaleDateString()}
+                        {a.fb_auction_lots.length} lot{a.fb_auction_lots.length === 1 ? '' : 's'}
+                        {endedUnpaid > 0 && <> · <span style={{ color: 'var(--rust)' }}>{endedUnpaid} ended unpaid</span></>}
+                        {soldPaid > 0 && <> · <span style={{ color: 'var(--teal)' }}>{soldPaid} sold</span></>}
+                        {' · '}created {new Date(a.created_at).toLocaleDateString()}
                         {a.ends_at && ` · ends ${new Date(a.ends_at).toLocaleString()}`}
                       </div>
                     </div>
@@ -504,11 +542,18 @@ export default function FbAuctionsPage() {
                           const isSaving = savingLots.has(lot.id);
                           const buf = editBuffer[lot.id];
                           const dirty = !!buf && Object.keys(buf).length > 0;
+                          const statusBgCol = lot.status === 'paid' ? 'var(--teal)'
+                            : lot.status === 'sold' ? 'var(--orange)'
+                            : lot.status === 'no_sale' ? 'var(--rust)'
+                            : 'var(--cream)';
+                          const statusFgCol = lot.status === 'open' ? 'var(--plum)' : 'var(--cream)';
                           return (
                             <div key={lot.id} style={{
-                              display: 'grid', gridTemplateColumns: '60px 1fr 110px 1fr 80px',
+                              display: 'grid', gridTemplateColumns: '60px 1fr 110px 1fr 110px 70px',
                               gap: 8, alignItems: 'center', padding: '6px 8px',
-                              background: 'var(--paper)', borderRadius: 6, border: '1px solid var(--rule)',
+                              background: 'var(--paper)', borderRadius: 6,
+                              border: lot.status === 'open' ? '1px solid var(--rule)'
+                                : `1.5px solid ${statusBgCol}`,
                             }}>
                               <div className="mono" style={{ fontSize: 11, fontWeight: 700, color: 'var(--plum)' }}>#{lot.lot_number}</div>
                               <div style={{ fontSize: 12, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -536,6 +581,22 @@ export default function FbAuctionsPage() {
                                   </div>
                                 )}
                               </div>
+                              <select
+                                value={lot.status}
+                                onChange={e => setLotStatus(a.id, lot.id, e.target.value as LotRow['status'])}
+                                title="Lot status"
+                                style={{
+                                  width: '100%', padding: '4px 8px', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
+                                  border: `1.5px solid ${statusBgCol === 'var(--cream)' ? 'var(--plum)' : statusBgCol}`,
+                                  borderRadius: 4,
+                                  background: statusBgCol, color: statusFgCol,
+                                  fontFamily: 'var(--font-body)', cursor: 'pointer',
+                                }}>
+                                <option value="open">LIVE</option>
+                                <option value="sold">ENDED</option>
+                                <option value="paid">SOLD</option>
+                                <option value="no_sale">NO SALE</option>
+                              </select>
                               <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)', textAlign: 'right' }}>
                                 {isSaving ? 'Saving…' : dirty ? 'Unsaved' : ''}
                               </div>
