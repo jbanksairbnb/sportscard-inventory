@@ -303,7 +303,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setSessionId(activeSessionId);
     }
     const dpRows = rows
-      .filter(r => r.price !== '' || r.weight_pct !== '' || r.source_label.trim() || r.grade_company || r.grade_value)
+      .filter(rowHasUserContent)
       .map(r => ({
         session_id: activeSessionId,
         user_id: userId,
@@ -356,12 +356,19 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setAutoSaveTick('idle');
   }
 
-  // Autosave: 1.5s after the last edit, persist silently. We only kick in once
-  // there's at least one row with meaningful content so an empty/blank-open
-  // session isn't created on every focus.
+  // Autosave: 1.5s after the last edit, persist silently. We only kick in
+  // once there's at least one row with user-entered content (price, weight,
+  // URL, row notes, or a custom source label) — pre-populated grade defaults
+  // alone don't count, so a freshly-opened modal never creates an empty row.
+  function rowHasUserContent(r: Row): boolean {
+    if (r.price !== '' || r.weight_pct !== '') return true;
+    if (r.url.trim() || r.notes.trim()) return true;
+    if (r.source === 'other' && r.source_label.trim()) return true;
+    return false;
+  }
   useEffect(() => {
     if (!open || loading) return;
-    const meaningful = rows.some(r => r.price || r.weight_pct || r.grade_company || r.grade_value || r.source_label.trim() || r.url.trim() || r.notes.trim());
+    const meaningful = rows.some(rowHasUserContent);
     if (!meaningful && !notes.trim()) return;
     setAutoSaveTick('pending');
     const t = setTimeout(async () => {
@@ -565,6 +572,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                   marketValue: h.session.market_value,
                   rows: h.data_points,
                   notes: h.session.notes,
+                  applyButton: { label: 'Use this analysis', onClick: () => {
+                    setRows(rowsFromDataPoints(h.data_points, cardDefaults));
+                    setNotes(h.session.notes || '');
+                    setSessionId(h.session.id);
+                    setAutoSaveTick('idle');
+                  } },
                 }))} showNotes />
               </section>
             )}
