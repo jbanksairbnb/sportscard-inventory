@@ -49,6 +49,10 @@ export default function ScanMultiCardPage() {
   const [assignment, setAssignment] = useState<Record<number, number | null>>({
     1: null, 2: null, 3: null, 4: null, 5: null, 6: null,
   });
+  // backOrder[p-1] = which back image (0..5 or null) is paired with front at position p.
+  // Defaults to identity (back N pairs with front N), but the user can rearrange
+  // because flipping a 2x3 sheet often mirrors the back layout.
+  const [backOrder, setBackOrder] = useState<(number | null)[]>([0, 1, 2, 3, 4, 5]);
   const [savedSummary, setSavedSummary] = useState('');
 
   useEffect(() => {
@@ -132,7 +136,10 @@ export default function ScanMultiCardPage() {
     for (const position of assignedPositions) {
       const origIndex = assignment[position]!;
       const frontBlob = frontSplit.blobs[position - 1];
-      const backBlob = backSplit?.blobs[position - 1] || null;
+      const backIdx = backOrder[position - 1];
+      const backBlob = (backSplit && backIdx !== null && backIdx !== undefined)
+        ? backSplit.blobs[backIdx] || null
+        : null;
       try {
         const frontPath = `${userId}/${currentSet.slug}/${origIndex}/img1.png`;
         const { error: fErr } = await supabase.storage
@@ -198,6 +205,7 @@ export default function ScanMultiCardPage() {
     setFrontSplit(null);
     setBackSplit(null);
     setAssignment({ 1: null, 2: null, 3: null, 4: null, 5: null, 6: null });
+    setBackOrder([0, 1, 2, 3, 4, 5]);
     setSavedSummary('');
     setError('');
   }
@@ -354,22 +362,73 @@ export default function ScanMultiCardPage() {
               Pick the card row for each grid position. Skip a position by leaving it blank.
             </p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14 }}>
               {POSITIONS.map(p => {
                 const frontSrc = frontSplit.previews[p - 1];
-                const backSrc = backSplit?.previews[p - 1];
+                const backIdx = backOrder[p - 1];
+                const backSrc = (backSplit && backIdx !== null && backIdx !== undefined) ? backSplit.previews[backIdx] : null;
                 return (
-                  <div key={p} className="panel" style={{ padding: 14, border: '1.5px solid var(--rule)' }}>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+                  <div key={p} className="panel" style={{ padding: 16, border: '1.5px solid var(--rule)' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
                       <div style={{
-                        width: 32, height: 32, background: 'var(--plum)', color: 'var(--mustard)',
+                        width: 36, height: 36, background: 'var(--plum)', color: 'var(--mustard)',
                         display: 'grid', placeItems: 'center', borderRadius: 8,
-                        fontFamily: 'var(--font-display)', fontWeight: 700,
+                        fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16,
                       }}>{p}</div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        {frontSrc && <img src={frontSrc} alt="" style={{ width: 36, height: 50, objectFit: 'cover', borderRadius: 4, border: '1.5px solid var(--plum)' }} />}
-                        {backSrc && <img src={backSrc} alt="" style={{ width: 36, height: 50, objectFit: 'cover', borderRadius: 4, border: '1.5px solid var(--plum)' }} />}
+                      <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', letterSpacing: '0.16em' }}>
+                        Position {p}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 12, justifyContent: 'center' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>Front</div>
+                        {frontSrc && (
+                          <img src={frontSrc} alt={`Front ${p}`} style={{
+                            width: 110, height: 154, objectFit: 'cover', borderRadius: 6,
+                            border: '2px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
+                          }} />
+                        )}
                       </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>Back</div>
+                        {backSrc ? (
+                          <img src={backSrc} alt={`Back for position ${p}`} style={{
+                            width: 110, height: 154, objectFit: 'cover', borderRadius: 6,
+                            border: '2px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
+                          }} />
+                        ) : (
+                          <div style={{
+                            width: 110, height: 154, borderRadius: 6,
+                            border: '2px dashed var(--rule)', background: 'var(--paper)',
+                            display: 'grid', placeItems: 'center',
+                            fontSize: 10, color: 'var(--ink-mute)', textAlign: 'center', padding: 8,
+                          }}>
+                            {backSplit ? 'No back picked' : 'No backs uploaded'}
+                          </div>
+                        )}
+                        {backSplit && (
+                          <select value={backIdx ?? ''}
+                            onChange={e => {
+                              const v = e.target.value === '' ? null : Number(e.target.value);
+                              setBackOrder(prev => {
+                                const next = [...prev];
+                                next[p - 1] = v;
+                                return next;
+                              });
+                            }}
+                            className="input-sc" style={{ width: 110, fontSize: 11, padding: '4px 6px' }}>
+                            <option value="">— No back —</option>
+                            {[0, 1, 2, 3, 4, 5].map(i => (
+                              <option key={i} value={i}>Back #{i + 1}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 4, fontWeight: 700 }}>
+                      Assign to card
                     </div>
                     <select value={assignment[p] ?? ''}
                       onChange={e => {
@@ -386,6 +445,11 @@ export default function ScanMultiCardPage() {
                 );
               })}
             </div>
+            {backSplit && (
+              <p className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 10, textAlign: 'center' }}>
+                Tip: if your back-side scan was flipped, use the &quot;Back&quot; dropdown to swap which back image pairs with each front.
+              </p>
+            )}
 
             {error && (
               <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(192,57,43,0.12)', border: '1.5px solid var(--rust)', borderRadius: 8, color: 'var(--rust)', fontSize: 12.5, fontWeight: 600 }}>
