@@ -50,9 +50,11 @@ export default function ScanMultiCardPage() {
     1: null, 2: null, 3: null, 4: null, 5: null, 6: null,
   });
   // backOrder[p-1] = which back image (0..5 or null) is paired with front at position p.
-  // Defaults to identity (back N pairs with front N), but the user can rearrange
-  // because flipping a 2x3 sheet often mirrors the back layout.
+  // Defaults to identity (back N pairs with front N), but the user can rearrange via
+  // drag-and-drop because flipping a 2x3 sheet often mirrors the back layout.
   const [backOrder, setBackOrder] = useState<(number | null)[]>([0, 1, 2, 3, 4, 5]);
+  const [draggingPos, setDraggingPos] = useState<number | null>(null);
+  const [hoverPos, setHoverPos] = useState<number | null>(null);
   const [savedSummary, setSavedSummary] = useState('');
 
   useEffect(() => {
@@ -360,6 +362,7 @@ export default function ScanMultiCardPage() {
             </div>
             <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 14 }}>
               Pick the card row for each grid position. Skip a position by leaving it blank.
+              {backSplit && <> The backs start in their split order — <strong>drag a back onto another back to swap them</strong> if your back scan was flipped.</>}
             </p>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 14 }}>
@@ -367,6 +370,8 @@ export default function ScanMultiCardPage() {
                 const frontSrc = frontSplit.previews[p - 1];
                 const backIdx = backOrder[p - 1];
                 const backSrc = (backSplit && backIdx !== null && backIdx !== undefined) ? backSplit.previews[backIdx] : null;
+                const isDragging = draggingPos === p;
+                const isHover = hoverPos === p && draggingPos !== null && draggingPos !== p;
                 return (
                   <div key={p} className="panel" style={{ padding: 16, border: '1.5px solid var(--rule)' }}>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
@@ -392,37 +397,102 @@ export default function ScanMultiCardPage() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                         <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>Back</div>
-                        {backSrc ? (
-                          <img src={backSrc} alt={`Back for position ${p}`} style={{
-                            width: 110, height: 154, objectFit: 'cover', borderRadius: 6,
-                            border: '2px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
-                          }} />
-                        ) : (
-                          <div style={{
-                            width: 110, height: 154, borderRadius: 6,
-                            border: '2px dashed var(--rule)', background: 'var(--paper)',
-                            display: 'grid', placeItems: 'center',
-                            fontSize: 10, color: 'var(--ink-mute)', textAlign: 'center', padding: 8,
-                          }}>
-                            {backSplit ? 'No back picked' : 'No backs uploaded'}
-                          </div>
-                        )}
-                        {backSplit && (
-                          <select value={backIdx ?? ''}
-                            onChange={e => {
-                              const v = e.target.value === '' ? null : Number(e.target.value);
+                        {backSrc && backSplit ? (
+                          <div
+                            draggable
+                            onDragStart={(e) => {
+                              setDraggingPos(p);
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('text/plain', String(p));
+                            }}
+                            onDragEnd={() => { setDraggingPos(null); setHoverPos(null); }}
+                            onDragOver={(e) => {
+                              if (draggingPos === null || draggingPos === p) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              setHoverPos(p);
+                            }}
+                            onDragLeave={() => { if (hoverPos === p) setHoverPos(null); }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = Number(e.dataTransfer.getData('text/plain') || draggingPos || 0);
+                              if (!from || from === p) return;
                               setBackOrder(prev => {
                                 const next = [...prev];
-                                next[p - 1] = v;
+                                const a = next[from - 1];
+                                const b = next[p - 1];
+                                next[from - 1] = b;
+                                next[p - 1] = a;
                                 return next;
                               });
+                              setDraggingPos(null);
+                              setHoverPos(null);
                             }}
-                            className="input-sc" style={{ width: 110, fontSize: 11, padding: '4px 6px' }}>
-                            <option value="">— No back —</option>
-                            {[0, 1, 2, 3, 4, 5].map(i => (
-                              <option key={i} value={i}>Back #{i + 1}</option>
-                            ))}
-                          </select>
+                            title="Drag onto another back to swap"
+                            style={{
+                              position: 'relative', cursor: 'grab',
+                              borderRadius: 6, overflow: 'hidden',
+                              border: isHover ? '3px dashed var(--teal)' : '2px solid var(--plum)',
+                              boxShadow: isDragging ? 'none' : '0 2px 0 var(--plum)',
+                              opacity: isDragging ? 0.4 : 1,
+                              transition: 'opacity 100ms',
+                            }}
+                          >
+                            <img src={backSrc} alt={`Back at position ${p}`} style={{
+                              width: 110, height: 154, objectFit: 'cover', display: 'block',
+                              pointerEvents: 'none',
+                            }} />
+                            <div style={{
+                              position: 'absolute', top: 4, left: 4,
+                              background: 'var(--plum)', color: 'var(--mustard)',
+                              padding: '1px 6px', borderRadius: 100,
+                              fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em',
+                              fontFamily: 'var(--font-display)',
+                              pointerEvents: 'none',
+                            }}>
+                              from B{(backIdx as number) + 1}
+                            </div>
+                            <div style={{
+                              position: 'absolute', bottom: 4, right: 4,
+                              background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+                              padding: '1px 5px', borderRadius: 4,
+                              fontSize: 9, fontWeight: 700,
+                              pointerEvents: 'none',
+                            }}>↔ drag</div>
+                          </div>
+                        ) : (
+                          <div
+                            onDragOver={(e) => {
+                              if (draggingPos === null || draggingPos === p) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              setHoverPos(p);
+                            }}
+                            onDragLeave={() => { if (hoverPos === p) setHoverPos(null); }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const from = Number(e.dataTransfer.getData('text/plain') || draggingPos || 0);
+                              if (!from || from === p) return;
+                              setBackOrder(prev => {
+                                const next = [...prev];
+                                const a = next[from - 1];
+                                const b = next[p - 1];
+                                next[from - 1] = b;
+                                next[p - 1] = a;
+                                return next;
+                              });
+                              setDraggingPos(null);
+                              setHoverPos(null);
+                            }}
+                            style={{
+                              width: 110, height: 154, borderRadius: 6,
+                              border: isHover ? '3px dashed var(--teal)' : '2px dashed var(--rule)',
+                              background: 'var(--paper)',
+                              display: 'grid', placeItems: 'center',
+                              fontSize: 10, color: 'var(--ink-mute)', textAlign: 'center', padding: 8,
+                            }}>
+                            {backSplit ? 'Empty — drop a back here' : 'No backs uploaded'}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -430,24 +500,18 @@ export default function ScanMultiCardPage() {
                     <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 4, fontWeight: 700 }}>
                       Assign to card
                     </div>
-                    <select value={assignment[p] ?? ''}
-                      onChange={e => {
-                        const v = e.target.value === '' ? null : Number(e.target.value);
-                        setAssignment(prev => ({ ...prev, [p]: v }));
-                      }}
-                      className="input-sc" style={{ width: '100%', fontSize: 12 }}>
-                      <option value="">— Skip / leave blank —</option>
-                      {(currentSet.rows || []).map((r, i) => (
-                        <option key={i} value={i}>{rowLabel(r)}</option>
-                      ))}
-                    </select>
+                    <CardPicker
+                      rows={currentSet.rows || []}
+                      value={assignment[p]}
+                      onChange={(v) => setAssignment(prev => ({ ...prev, [p]: v }))}
+                    />
                   </div>
                 );
               })}
             </div>
             {backSplit && (
               <p className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 10, textAlign: 'center' }}>
-                Tip: if your back-side scan was flipped, use the &quot;Back&quot; dropdown to swap which back image pairs with each front.
+                The badge on each back shows its original split index. Drag any back card onto another to swap them.
               </p>
             )}
 
@@ -528,6 +592,140 @@ function SplitPreview({ previews, title }: { previews: string[]; title: string }
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CardPicker({ rows, value, onChange }: {
+  rows: CardRow[];
+  value: number | null | undefined;
+  onChange: (idx: number | null) => void;
+}) {
+  const [query, setQuery] = React.useState('');
+  const [open, setOpen] = React.useState(false);
+  const [highlight, setHighlight] = React.useState(0);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  const selected = (value !== null && value !== undefined) ? rows[value] : null;
+  const selectedLabel = selected ? rowLabel(selected) : '';
+
+  // Close when clicking outside.
+  React.useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const matches = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const all = rows.map((r, i) => ({ row: r, origIndex: i }));
+    if (!q) return all.slice(0, 50);
+    return all.filter(({ row }) => {
+      const num = String(row['Card #'] ?? '').toLowerCase();
+      const player = String(row['Player'] ?? row['Description'] ?? '').toLowerCase();
+      return num.includes(q) || player.includes(q);
+    }).slice(0, 50);
+  }, [rows, query]);
+
+  React.useEffect(() => { setHighlight(0); }, [query]);
+
+  function pick(idx: number | null) {
+    onChange(idx);
+    setQuery('');
+    setOpen(false);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => Math.min(h + 1, matches.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(h => Math.max(0, h - 1)); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (matches[highlight]) pick(matches[highlight].origIndex);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+      {selected && !open ? (
+        <div onClick={() => { setOpen(true); setQuery(''); setTimeout(() => inputRef.current?.focus(), 0); }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 10px',
+            border: '1.5px solid var(--plum)', borderRadius: 6,
+            background: 'rgba(45,122,110,0.10)', cursor: 'pointer',
+            fontSize: 12, color: 'var(--plum)', fontWeight: 600,
+          }}>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            ✓ {selectedLabel}
+          </span>
+          <button type="button" onClick={(e) => { e.stopPropagation(); pick(null); }}
+            title="Clear"
+            style={{
+              background: 'transparent', border: 'none',
+              color: 'var(--ink-mute)', cursor: 'pointer',
+              fontSize: 14, padding: 0, lineHeight: 1,
+            }}>✕</button>
+        </div>
+      ) : (
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          placeholder="Search by # or player…"
+          className="input-sc"
+          style={{ width: '100%', fontSize: 12 }}
+        />
+      )}
+      {open && !selected && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+          background: 'var(--cream)', border: '1.5px solid var(--plum)',
+          borderRadius: 8, boxShadow: '0 6px 16px rgba(42,20,52,0.18)',
+          maxHeight: 280, overflowY: 'auto', zIndex: 50,
+        }}>
+          <button type="button" onClick={() => pick(null)}
+            style={{
+              width: '100%', textAlign: 'left',
+              padding: '8px 12px', borderBottom: '1px solid var(--rule)',
+              background: 'transparent', cursor: 'pointer',
+              fontSize: 11.5, color: 'var(--ink-mute)', fontStyle: 'italic',
+            }}>— Skip / leave blank —</button>
+          {matches.length === 0 ? (
+            <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--ink-mute)' }}>
+              No matches.
+            </div>
+          ) : matches.map(({ row, origIndex }, i) => (
+            <button key={origIndex} type="button"
+              onMouseEnter={() => setHighlight(i)}
+              onClick={() => pick(origIndex)}
+              style={{
+                width: '100%', textAlign: 'left',
+                padding: '7px 12px',
+                background: highlight === i ? 'rgba(184, 146, 58, 0.22)' : 'transparent',
+                border: 'none', borderTop: i > 0 ? '1px solid var(--rule)' : 'none',
+                cursor: 'pointer',
+                fontSize: 12.5, color: 'var(--plum)',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+              <span className="mono" style={{ fontWeight: 700, color: 'var(--orange)', minWidth: 32 }}>
+                #{String(row['Card #'] ?? '').trim() || '—'}
+              </span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {String(row['Player'] ?? row['Description'] ?? '(unnamed)') || '(unnamed)'}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
