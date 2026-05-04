@@ -449,6 +449,8 @@ export default function FbAuctionsPage() {
               const isLive = a.status === 'live';
               const expanded = isLive;
               const isSelected = selectedDrafts.has(a.id);
+              const endedUnpaid = a.fb_auction_lots.filter(l => l.status === 'sold').length;
+              const soldPaid = a.fb_auction_lots.filter(l => l.status === 'paid').length;
               return (
                 <div key={a.id} className="panel-bordered" style={{ padding: '14px 18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -465,9 +467,19 @@ export default function FbAuctionsPage() {
                           fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
                           background: statusBg(a.status), color: statusFg(a.status), textTransform: 'uppercase',
                         }}>{statusLabel(a.status)}</span>
+                        {endedUnpaid > 0 && (
+                          <Link href={`/fb-auctions/${a.id}#settlement`} style={{
+                            fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', padding: '2px 8px', borderRadius: 100,
+                            background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)',
+                            textDecoration: 'none', textTransform: 'uppercase', whiteSpace: 'nowrap',
+                          }}>★ {endedUnpaid} ended → settle</Link>
+                        )}
                       </div>
                       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
-                        {a.fb_auction_lots.length} lot{a.fb_auction_lots.length === 1 ? '' : 's'} · created {new Date(a.created_at).toLocaleDateString()}
+                        {a.fb_auction_lots.length} lot{a.fb_auction_lots.length === 1 ? '' : 's'}
+                        {endedUnpaid > 0 && <> · <span style={{ color: 'var(--rust)' }}>{endedUnpaid} ended unpaid</span></>}
+                        {soldPaid > 0 && <> · <span style={{ color: 'var(--teal)' }}>{soldPaid} sold</span></>}
+                        {' · '}created {new Date(a.created_at).toLocaleDateString()}
                         {a.ends_at && ` · ends ${new Date(a.ends_at).toLocaleString()}`}
                       </div>
                     </div>

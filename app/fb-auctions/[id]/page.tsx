@@ -538,6 +538,18 @@ export default function ManageFbAuctionPage() {
               fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', padding: '4px 12px', borderRadius: 100,
               background: statusBg(auction.status), color: statusFg(auction.status), textTransform: 'uppercase',
             }}>{auction.status === 'settled' ? 'sold' : auction.status}</span>
+            {(endedLots > 0 || paidLots > 0) && (
+              <a href="#settlement" style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', padding: '4px 11px', borderRadius: 100,
+                background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--plum)',
+                textDecoration: 'none', textTransform: 'uppercase', whiteSpace: 'nowrap',
+              }}>
+                {endedLots > 0 && <>★ {endedLots} ended unpaid</>}
+                {endedLots > 0 && paidLots > 0 && ' · '}
+                {paidLots > 0 && <>{paidLots} sold</>}
+                {endedLots > 0 && ' → settle'}
+              </a>
+            )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 14 }}>
             <Stat label="Lots" value={String(totalLots)} />
@@ -755,7 +767,7 @@ export default function ManageFbAuctionPage() {
         </section>
 
         {(auction.status === 'ended' || auction.status === 'settled' || lots.some(l => l.status === 'sold' || l.status === 'paid')) && (
-          <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
+          <section id="settlement" className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20, scrollMarginTop: 80 }}>
             <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Settlement — Buyer Invoices</div>
             <div style={{ marginBottom: 14 }}>
               <label className="input-label">Payment Instructions (used in every invoice)</label>
