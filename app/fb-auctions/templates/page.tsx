@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-type TemplateType = 'single' | 'multi';
+type TemplateType = 'single' | 'multi' | 'winning';
 
 type Template = {
   id: string;
@@ -33,6 +33,26 @@ Bid increments of $1
 Shipping: $1 PWE or $5 BMWT
 PayPal F&F or Venmo
 Thanks and good luck!`;
+
+const WINNING_DEFAULT_HEADER = `Hi {bidder_name}!
+
+Congrats on winning these from my {auction_title}:`;
+const WINNING_DEFAULT_FOOTER = `Subtotal: {subtotal}
+Shipping: {shipping}
+Total: {total}
+
+{payment_text}
+
+Thanks!`;
+const VARIABLES_WINNING = [
+  { key: '{bidder_name}', desc: 'Buyer name' },
+  { key: '{auction_title}', desc: 'Title of the auction' },
+  { key: '{subtotal}', desc: 'Sum of winning bids' },
+  { key: '{shipping}', desc: 'Shipping cost for this buyer' },
+  { key: '{total}', desc: 'Subtotal + shipping' },
+  { key: '{payment_text}', desc: 'Your payment instructions block' },
+  { key: '{lots}', desc: 'Auto-formatted list of cards won (lot # + title + price)' },
+];
 
 const VARIABLES_SINGLE = [
   { key: '{title}', desc: 'Listing title' },
@@ -97,6 +117,16 @@ export default function FbTemplatesPage() {
       is_default: !templates.some(t => t.template_type === 'multi'),
     });
   }
+  function openNewWinning() {
+    setEditing({
+      name: 'Winning Bid Message',
+      template_type: 'winning',
+      post_header: WINNING_DEFAULT_HEADER,
+      post_footer: WINNING_DEFAULT_FOOTER,
+      lot_template: '',
+      is_default: !templates.some(t => t.template_type === 'winning'),
+    });
+  }
   function openEdit(t: Template) { setEditing({ ...t }); }
 
   async function save() {
@@ -121,10 +151,16 @@ export default function FbTemplatesPage() {
         .eq('user_id', userId)
         .eq('template_type', editing.template_type);
     }
-    if (editing.id) {
-      await supabase.from('fb_auction_templates').update(payload).eq('id', editing.id);
-    } else {
-      await supabase.from('fb_auction_templates').insert(payload);
+    const { error } = editing.id
+      ? await supabase.from('fb_auction_templates').update(payload).eq('id', editing.id)
+      : await supabase.from('fb_auction_templates').insert(payload);
+    if (error) {
+      setSaving(false);
+      const hint = /check constraint|violates check/i.test(error.message)
+        ? "\n\nIt looks like the database template_type CHECK constraint hasn't been widened to allow 'winning' yet. Run this in Supabase SQL editor:\n\nalter table fb_auction_templates drop constraint if exists fb_auction_templates_template_type_check;\nalter table fb_auction_templates add constraint fb_auction_templates_template_type_check check (template_type in ('single', 'multi', 'claim', 'winning'));"
+        : '';
+      alert('Could not save template: ' + error.message + hint);
+      return;
     }
     const { data } = await supabase
       .from('fb_auction_templates')
@@ -147,6 +183,7 @@ export default function FbTemplatesPage() {
 
   const singles = templates.filter(t => t.template_type === 'single');
   const multis = templates.filter(t => t.template_type === 'multi' || !t.template_type);
+  const winnings = templates.filter(t => t.template_type === 'winning');
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -176,6 +213,15 @@ export default function FbTemplatesPage() {
           subtitle="Many cards per post — each card pasted as a comment with its image."
           templates={multis}
           onNew={openNewMulti}
+          onEdit={openEdit}
+          onRemove={remove}
+        />
+        <div style={{ height: 28 }} />
+        <TemplateSection
+          title="Winning Bid Message Templates"
+          subtitle="The Messenger-ready note you send each buyer when an auction settles. Header is the intro greeting; footer is the closing (totals + payment)."
+          templates={winnings}
+          onNew={openNewWinning}
           onEdit={openEdit}
           onRemove={remove}
         />
@@ -270,7 +316,10 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
   onClose: () => void;
 }) {
   const isSingle = editing.template_type === 'single';
-  const variables = isSingle ? VARIABLES_SINGLE : VARIABLES_MULTI_LOT;
+  const isWinning = editing.template_type === 'winning';
+  const variables = isWinning ? VARIABLES_WINNING : isSingle ? VARIABLES_SINGLE : VARIABLES_MULTI_LOT;
+  const typeLabel = isWinning ? 'Winning Bid Message' : isSingle ? 'Single Card' : 'Multi-Card';
+  const defaultLabel = isWinning ? 'winning-bid' : isSingle ? 'single-card' : 'multi-card';
 
   const textareaStyle: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box',
@@ -290,7 +339,7 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
         style={{ width: '100%', maxWidth: 980, padding: 26, background: 'var(--cream)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
           <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>
-            {editing.id ? 'Edit Template' : 'New Template'} — <span style={{ color: 'var(--orange)' }}>{isSingle ? 'Single Card' : 'Multi-Card'}</span>
+            {editing.id ? 'Edit Template' : 'New Template'} — <span style={{ color: 'var(--orange)' }}>{typeLabel}</span>
           </div>
           <button onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
@@ -303,40 +352,68 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
                 placeholder="e.g. Vintage Baseball Cards 24h Auction" className="input-sc" style={{ width: '100%' }} />
             </div>
 
-            {isSingle ? (
-              <div>
-                <label className="input-label">Card Body Template (the FB post body) *</label>
-                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
-                  Auto-fills from the listing&apos;s data. The user can edit before posting (e.g. to add condition notes).
+            {isWinning ? (
+              <>
+                <div>
+                  <label className="input-label">Intro / greeting (header) *</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    Top of the message. Use {'{bidder_name}'} and {'{auction_title}'}. The list of cards won is appended automatically below.
+                  </div>
+                  <textarea value={editing.post_header || ''} onChange={e => setEditing({ ...editing, post_header: e.target.value })}
+                    rows={5} style={textareaStyle} />
                 </div>
-                <textarea value={editing.post_header || ''} onChange={e => setEditing({ ...editing, post_header: e.target.value })}
-                  rows={8} style={textareaStyle} />
-              </div>
+                <div>
+                  <label className="input-label">Closing / totals (footer) *</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    Appended below the cards-won list. Use {'{subtotal}'}, {'{shipping}'}, {'{total}'}, {'{payment_text}'}.
+                  </div>
+                  <textarea value={editing.post_footer || ''} onChange={e => setEditing({ ...editing, post_footer: e.target.value })}
+                    rows={6} style={textareaStyle} />
+                </div>
+              </>
+            ) : isSingle ? (
+              <>
+                <div>
+                  <label className="input-label">Card Body Template (the FB post body) *</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    Auto-fills from the listing&apos;s data. The user can edit before posting (e.g. to add condition notes).
+                  </div>
+                  <textarea value={editing.post_header || ''} onChange={e => setEditing({ ...editing, post_header: e.target.value })}
+                    rows={8} style={textareaStyle} />
+                </div>
+                <div>
+                  <label className="input-label">Auction Info (rules / shipping / payment) *</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    Appended below the card body in every auction post.
+                  </div>
+                  <textarea value={editing.post_footer || ''} onChange={e => setEditing({ ...editing, post_footer: e.target.value })}
+                    rows={6} style={textareaStyle} />
+                </div>
+              </>
             ) : (
-              <div>
-                <label className="input-label">Lot Template — per-card comment *</label>
-                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
-                  This is the format used for each card&apos;s comment under the parent post.
+              <>
+                <div>
+                  <label className="input-label">Lot Template — per-card comment *</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    This is the format used for each card&apos;s comment under the parent post.
+                  </div>
+                  <textarea value={editing.lot_template || ''} onChange={e => setEditing({ ...editing, lot_template: e.target.value })}
+                    rows={6} style={textareaStyle} />
                 </div>
-                <textarea value={editing.lot_template || ''} onChange={e => setEditing({ ...editing, lot_template: e.target.value })}
-                  rows={6} style={textareaStyle} />
-              </div>
+                <div>
+                  <label className="input-label">Auction Info (rules / shipping / payment) *</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    Appended below the user-typed title and description on the parent post.
+                  </div>
+                  <textarea value={editing.post_footer || ''} onChange={e => setEditing({ ...editing, post_footer: e.target.value })}
+                    rows={6} style={textareaStyle} />
+                </div>
+              </>
             )}
-
-            <div>
-              <label className="input-label">Auction Info (rules / shipping / payment) *</label>
-              <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
-                {isSingle
-                  ? 'Appended below the card body in every auction post.'
-                  : 'Appended below the user-typed title and description on the parent post.'}
-              </div>
-              <textarea value={editing.post_footer || ''} onChange={e => setEditing({ ...editing, post_footer: e.target.value })}
-                rows={6} style={textareaStyle} />
-            </div>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--plum)', fontWeight: 600, cursor: 'pointer' }}>
               <input type="checkbox" checked={!!editing.is_default} onChange={e => setEditing({ ...editing, is_default: e.target.checked })} />
-              Use as my default {isSingle ? 'single-card' : 'multi-card'} template
+              Use as my default {defaultLabel} template
             </label>
             <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
               <button onClick={onSave} disabled={saving} className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
@@ -349,7 +426,9 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
           <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: 16 }}>
             <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 10 }}>★ Variables ★</div>
             <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 10, lineHeight: 1.5 }}>
-              {isSingle
+              {isWinning
+                ? 'Use these in the header / footer. They get filled in per buyer when you generate the message.'
+                : isSingle
                 ? 'Use these in the Card Body Template. They auto-fill from the chosen listing.'
                 : 'Use these in the Lot Template. They auto-fill per card. The Auction Info typically has no variables.'}
             </div>
