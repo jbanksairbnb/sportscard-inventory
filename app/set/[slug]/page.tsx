@@ -7,6 +7,7 @@ import Papa from "papaparse";
 import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
+import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
@@ -488,6 +489,33 @@ export default function SetEditorPage() {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
+  function descriptorForRow(row: Record<string, unknown>): CardDescriptor {
+    const grade = String(row['Grade'] || '').trim() || null;
+    const gradingCompany = String(row['Grading Company'] || '').trim() || null;
+    const rawGrade = String(row['Raw Grade'] || '').trim() || null;
+    const isGraded = String(row['Graded'] || '').toLowerCase() === 'yes';
+    return {
+      year: year ? Number(year) || null : null,
+      brand: brand || null,
+      card_number: String(row['Card #'] || '').trim() || null,
+      player: String(row['Player'] || '').trim() || null,
+      grade: isGraded ? grade : null,
+      grading_company: isGraded ? gradingCompany : null,
+      raw_grade: !isGraded ? rawGrade : null,
+      set_slug: slug,
+      set_card_number: String(row['Card #'] || '').trim() || null,
+    };
+  }
+  const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
+  const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
+  const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage.getItem('sc-research-prompt-dismissed') === '1') {
+        setResearchPromptDismissed(true);
+      }
+    } catch {}
+  }, []);
   const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const [infoEditOpen, setInfoEditOpen] = useState(false);
@@ -1002,8 +1030,39 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Cost"])} onChange={(e) => onChangeCell(origIndex, "Cost", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Cost")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
                       </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <input value={v(row["Value"])} onChange={(e) => onChangeCell(origIndex, "Value", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Value")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
+                      <td style={{ padding: '6px 8px', verticalAlign: 'top', position: 'relative' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <input value={v(row["Value"])} onChange={(e) => onChangeCell(origIndex, "Value", e.target.value)} onBlur={() => { onBlurCurrency(origIndex, "Value"); setValueFocusPrompt(prev => prev === origIndex ? null : prev); }}
+                            onFocus={() => { if (!researchPromptDismissed) setValueFocusPrompt(origIndex); }}
+                            placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
+                          <button type="button" title="Research market price" aria-label="Research market price"
+                            onMouseDown={(e) => { e.preventDefault(); setResearchTarget({ rowIndex: origIndex, descriptor: descriptorForRow(row) }); setValueFocusPrompt(null); }}
+                            style={{ background: 'transparent', border: 0, color: 'var(--teal)', cursor: 'pointer', fontSize: 14, padding: 2 }}>📈</button>
+                        </div>
+                        {valueFocusPrompt === origIndex && !researchPromptDismissed && (
+                          <div style={{ position: 'absolute', top: '100%', left: 8, marginTop: 4, zIndex: 30, background: 'var(--paper)', border: '1.5px solid var(--plum)', borderRadius: 8, padding: '8px 10px', boxShadow: '0 6px 14px rgba(42,20,52,0.18)', width: 230 }}>
+                            <div style={{ fontSize: 12, color: 'var(--plum)', fontWeight: 700, marginBottom: 6 }}>Research market price?</div>
+                            <div style={{ fontSize: 11.5, color: 'var(--ink-soft)', marginBottom: 8 }}>
+                              Build a weighted comp from eBay / VCP / etc. — saved for future reference.
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              <button type="button" onMouseDown={(e) => { e.preventDefault(); setResearchTarget({ rowIndex: origIndex, descriptor: descriptorForRow(row) }); setValueFocusPrompt(null); }}
+                                className="btn btn-primary btn-sm" style={{ fontSize: 11 }}>📈 Open</button>
+                              <button type="button" onMouseDown={(e) => { e.preventDefault(); setValueFocusPrompt(null); }}
+                                className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Just type</button>
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11, color: 'var(--ink-mute)', cursor: 'pointer' }}>
+                              <input type="checkbox" onChange={(e) => {
+                                if (e.target.checked) {
+                                  try { window.localStorage.setItem('sc-research-prompt-dismissed', '1'); } catch {}
+                                  setResearchPromptDismissed(true);
+                                  setValueFocusPrompt(null);
+                                }
+                              }} />
+                              Don&apos;t ask again
+                            </label>
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input value={v(row["Target Price"])} onChange={(e) => onChangeCell(origIndex, "Target Price", e.target.value)} onBlur={() => onBlurCurrency(origIndex, "Target Price")} placeholder="$0.00" style={{ ...CELL_INPUT, width: 90 }} />
@@ -1186,6 +1245,17 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           <span>Keep on collectin&apos;</span>
         </div>
       </footer>
+      <MarketResearchModal
+        open={!!researchTarget}
+        onClose={() => setResearchTarget(null)}
+        card={researchTarget?.descriptor || { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null }}
+        onApply={(value) => {
+          if (!researchTarget) return;
+          const idx = researchTarget.rowIndex;
+          onChangeCell(idx, 'Value', value.toFixed(2));
+          onBlurCurrency(idx, 'Value');
+        }}
+      />
     </div>
   );
 }

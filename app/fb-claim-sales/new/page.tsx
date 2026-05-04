@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import MarketResearchModal, { CardDescriptor } from '@/components/MarketResearchModal';
 
 type Listing = {
   id: string;
@@ -106,6 +107,7 @@ export default function NewClaimSalePage() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [research, setResearch] = useState<{ descriptor: CardDescriptor; apply: (value: number) => void } | null>(null);
 
   // Sale-level
   const [title, setTitle] = useState('');
@@ -345,7 +347,7 @@ export default function NewClaimSalePage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {lots.map((lot, i) => (
-                <LotEditor key={lot.id}
+                <LotEditor key={lot.id} onResearch={(descriptor, apply) => setResearch({ descriptor, apply })}
                   lot={lot}
                   index={i}
                   isLast={i === lots.length - 1}
@@ -383,6 +385,12 @@ export default function NewClaimSalePage() {
           </button>
         </div>
       </div>
+      <MarketResearchModal
+        open={!!research}
+        onClose={() => setResearch(null)}
+        card={research?.descriptor || { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null }}
+        onApply={(value) => { research?.apply(value); }}
+      />
     </div>
   );
 }
@@ -396,7 +404,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove }: {
+function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove, onResearch }: {
   lot: LotDraft;
   index: number;
   isLast: boolean;
@@ -404,7 +412,21 @@ function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove }: 
   onPatch: (patch: Partial<LotDraft>) => void;
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
+  onResearch: (descriptor: CardDescriptor, apply: (v: number) => void) => void;
 }) {
+  function descriptorFromListing(id: string | null): CardDescriptor {
+    const l = id ? listings.find(x => x.id === id) : null;
+    return {
+      year: l?.year ?? null,
+      brand: l?.brand ?? null,
+      card_number: l?.card_number ?? null,
+      player: l?.player ?? null,
+      grade: l?.grade ?? null,
+      grading_company: l?.grading_company ?? null,
+      raw_grade: l?.raw_grade ?? null,
+      listing_id: l?.id ?? null,
+    };
+  }
   function setListingAt(pos: number, id: string) {
     const next = [...lot.listingIds];
     next[pos] = id || null;
@@ -449,10 +471,16 @@ function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove }: 
           Group price
         </label>
         {lot.pricing === 'group' && (
-          <input type="number" step="0.01" placeholder="$"
-            value={lot.groupPrice ?? ''}
-            onChange={e => onPatch({ groupPrice: e.target.value === '' ? null : Number(e.target.value) || 0 })}
-            className="input-sc" style={{ width: 100 }} />
+          <>
+            <input type="number" step="0.01" placeholder="$"
+              value={lot.groupPrice ?? ''}
+              onChange={e => onPatch({ groupPrice: e.target.value === '' ? null : Number(e.target.value) || 0 })}
+              className="input-sc" style={{ width: 100 }} />
+            <button type="button" onClick={() => onResearch(descriptorFromListing(lot.listingIds[0] || null), v => onPatch({ groupPrice: Math.round(v * 100) / 100 }))}
+              style={{ background: 'transparent', border: 0, color: 'var(--teal)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+              📈 Research
+            </button>
+          </>
         )}
         {lot.kind === 'group' && (
           <>
@@ -482,10 +510,17 @@ function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove }: 
               ))}
             </select>
             {lot.pricing === 'per_item' && (
-              <input type="number" step="0.01" placeholder="$"
-                value={lot.itemPrices[pos] ?? ''}
-                onChange={e => setPriceAt(pos, e.target.value)}
-                className="input-sc" style={{ width: 90 }} />
+              <>
+                <input type="number" step="0.01" placeholder="$"
+                  value={lot.itemPrices[pos] ?? ''}
+                  onChange={e => setPriceAt(pos, e.target.value)}
+                  className="input-sc" style={{ width: 90 }} />
+                <button type="button"
+                  onClick={() => onResearch(descriptorFromListing(id),
+                    v => setPriceAt(pos, (Math.round(v * 100) / 100).toString()))}
+                  title="Research market price" aria-label="Research market price"
+                  style={{ background: 'transparent', border: 0, color: 'var(--teal)', cursor: 'pointer', fontSize: 14, padding: 2 }}>📈</button>
+              </>
             )}
           </div>
         ))}
