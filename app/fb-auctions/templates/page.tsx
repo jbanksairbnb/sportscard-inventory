@@ -151,10 +151,16 @@ export default function FbTemplatesPage() {
         .eq('user_id', userId)
         .eq('template_type', editing.template_type);
     }
-    if (editing.id) {
-      await supabase.from('fb_auction_templates').update(payload).eq('id', editing.id);
-    } else {
-      await supabase.from('fb_auction_templates').insert(payload);
+    const { error } = editing.id
+      ? await supabase.from('fb_auction_templates').update(payload).eq('id', editing.id)
+      : await supabase.from('fb_auction_templates').insert(payload);
+    if (error) {
+      setSaving(false);
+      const hint = /check constraint|violates check/i.test(error.message)
+        ? "\n\nIt looks like the database template_type CHECK constraint hasn't been widened to allow 'winning' yet. Run this in Supabase SQL editor:\n\nalter table fb_auction_templates drop constraint if exists fb_auction_templates_template_type_check;\nalter table fb_auction_templates add constraint fb_auction_templates_template_type_check check (template_type in ('single', 'multi', 'claim', 'winning'));"
+        : '';
+      alert('Could not save template: ' + error.message + hint);
+      return;
     }
     const { data } = await supabase
       .from('fb_auction_templates')

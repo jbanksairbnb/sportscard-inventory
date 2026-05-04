@@ -352,7 +352,12 @@ export default function ManageFbAuctionPage() {
     const supabase = createClient();
     await supabase.from('fb_auction_lots').update({ status: 'sold' }).eq('id', lot.id);
     setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'sold' } : l));
-    // Sold lot stays out of inventory — no further change.
+    // Ended lot stays out of inventory — no further change.
+  }
+  async function quickSetPaid(lot: Lot) {
+    const supabase = createClient();
+    await supabase.from('fb_auction_lots').update({ status: 'paid' }).eq('id', lot.id);
+    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, status: 'paid' } : l));
   }
   async function quickSetNoSale(lot: Lot) {
     const supabase = createClient();
@@ -372,7 +377,7 @@ export default function ManageFbAuctionPage() {
   }
 
   async function markBuyerPaid(bidderName: string) {
-    if (!confirm(`Mark all of ${bidderName}'s lots as PAID?`)) return;
+    if (!confirm(`Mark all of ${bidderName}'s lots as SOLD (paid)?`)) return;
     const supabase = createClient();
     const ids = lots.filter(l => (l.bidder_name || '').trim().toLowerCase() === bidderName.toLowerCase() && l.status === 'sold').map(l => l.id);
     if (ids.length === 0) return;
@@ -448,10 +453,30 @@ export default function ManageFbAuctionPage() {
 
   const totalLots = lots.length;
   const openLots = lots.filter(l => l.status === 'open').length;
-  const soldLots = lots.filter(l => l.status === 'sold' || l.status === 'paid').length;
+  const endedLots = lots.filter(l => l.status === 'sold').length;
   const noSaleLots = lots.filter(l => l.status === 'no_sale').length;
   const paidLots = lots.filter(l => l.status === 'paid').length;
   const grossSales = lots.filter(l => l.status === 'sold' || l.status === 'paid').reduce((s, l) => s + (l.current_bid || 0), 0);
+
+  // Group lots into sections so an "ended" (closed-but-unpaid) card moves out
+  // of the Live list while its siblings keep running.
+  const liveLots = lots.filter(l => l.status === 'open');
+  const endedLotsList = lots.filter(l => l.status === 'sold');
+  const soldLotsList = lots.filter(l => l.status === 'paid');
+  const noSaleLotsList = lots.filter(l => l.status === 'no_sale');
+  const lotSections: Array<{ key: string; title: string; lots: Lot[] }> = [
+    { key: 'live', title: 'Live', lots: liveLots },
+    { key: 'ended', title: 'Ended (closed, awaiting payment)', lots: endedLotsList },
+    { key: 'sold', title: 'Sold (paid)', lots: soldLotsList },
+    { key: 'no_sale', title: 'No Sale', lots: noSaleLotsList },
+  ].filter(s => s.lots.length > 0);
+
+  function lotStatusLabel(s: Lot['status']): string {
+    if (s === 'open') return 'LIVE';
+    if (s === 'sold') return 'ENDED';
+    if (s === 'paid') return 'SOLD';
+    return 'NO SALE';
+  }
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -489,13 +514,13 @@ export default function ManageFbAuctionPage() {
             <span style={{
               fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', padding: '4px 12px', borderRadius: 100,
               background: statusBg(auction.status), color: statusFg(auction.status), textTransform: 'uppercase',
-            }}>{auction.status}</span>
+            }}>{auction.status === 'settled' ? 'sold' : auction.status}</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, marginBottom: 14 }}>
             <Stat label="Lots" value={String(totalLots)} />
-            <Stat label="Open" value={String(openLots)} />
-            <Stat label="Sold" value={String(soldLots)} />
-            <Stat label="Paid" value={String(paidLots)} />
+            <Stat label="Live" value={String(openLots)} />
+            <Stat label="Ended" value={String(endedLots)} />
+            <Stat label="Sold" value={String(paidLots)} />
             <Stat label="No Sale" value={String(noSaleLots)} />
             <Stat label="Gross" value={fmtMoney(grossSales)} />
           </div>
@@ -532,7 +557,7 @@ export default function ManageFbAuctionPage() {
                 ))}
               </div>
               <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 4, fontStyle: 'italic' }}>
-                Draft → Live (after posting) → Ended (24h up) → Settled (paid out).
+                Draft → Live (after posting) → Ended (24h up) → Sold (paid out).
               </div>
             </div>
           </div>
@@ -545,8 +570,14 @@ export default function ManageFbAuctionPage() {
           {lots.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No lots in this auction.</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {lots.map(lot => {
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {lotSections.map(section => (
+                <div key={section.key}>
+                  <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 8 }}>
+                    ★ {section.title} · {section.lots.length}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {section.lots.map(lot => {
                 const cur = getLotValue(lot, 'current_bid');
                 const bidder = getLotValue(lot, 'bidder_name');
                 const handle = getLotValue(lot, 'bidder_fb_handle');
@@ -580,7 +611,7 @@ export default function ManageFbAuctionPage() {
                             fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
                             background: lot.status === 'paid' ? 'var(--teal)' : lot.status === 'sold' ? 'var(--orange)' : lot.status === 'no_sale' ? 'var(--rust)' : 'var(--ink-mute)',
                             color: 'var(--cream)', textTransform: 'uppercase',
-                          }}>{lot.status.replace('_', ' ')}</span>
+                          }}>{lotStatusLabel(lot.status)}</span>
                         </div>
                         <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
                           {lot.listing?.year} {lot.listing?.brand} #{lot.listing?.card_number} {conditionNote(lot.listing) ? '· ' + conditionNote(lot.listing) : ''}
@@ -668,12 +699,15 @@ export default function ManageFbAuctionPage() {
                             );
                           })()}
                           {lot.status !== 'sold' && lot.status !== 'paid' && (
-                            <button onClick={() => quickSetSold(lot)} className="btn btn-sm" style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>✓ Mark Sold</button>
+                            <button onClick={() => quickSetSold(lot)} className="btn btn-sm" style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>✓ Mark Ended</button>
+                          )}
+                          {lot.status === 'sold' && (
+                            <button onClick={() => quickSetPaid(lot)} className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>✓ Mark Sold</button>
                           )}
                           {lot.status !== 'no_sale' && lot.status !== 'paid' && (
                             <button onClick={() => quickSetNoSale(lot)} className="btn btn-sm" style={{ background: 'transparent', color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>✗ No Sale</button>
                           )}
-                          {(lot.status === 'sold' || lot.status === 'no_sale') && (
+                          {(lot.status === 'sold' || lot.status === 'no_sale' || lot.status === 'paid') && (
                             <button onClick={() => quickReopen(lot)} className="btn btn-ghost btn-sm">↺ Reopen</button>
                           )}
                           {commentUrl && (
@@ -690,11 +724,14 @@ export default function ManageFbAuctionPage() {
                   </div>
                 );
               })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>
 
-        {(auction.status === 'ended' || auction.status === 'settled') && (
+        {(auction.status === 'ended' || auction.status === 'settled' || lots.some(l => l.status === 'sold' || l.status === 'paid')) && (
           <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
             <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Settlement — Buyer Invoices</div>
             <div style={{ marginBottom: 14 }}>
@@ -710,7 +747,7 @@ export default function ManageFbAuctionPage() {
 
             {buyerGroups.length === 0 ? (
               <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>
-                No sold lots with bidder names yet. Mark winning lots as <strong>Sold</strong> and fill in the bidder name on each.
+                No ended lots with bidder names yet. Mark winning lots as <strong>Ended</strong> and fill in the bidder name on each.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -727,7 +764,7 @@ export default function ManageFbAuctionPage() {
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
                         <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1, minWidth: 180 }}>
-                          {group.name} {allPaid && <span style={{ fontSize: 10, color: 'var(--teal)', fontWeight: 700, letterSpacing: '0.1em', marginLeft: 8 }}>✓ PAID</span>}
+                          {group.name} {allPaid && <span style={{ fontSize: 10, color: 'var(--teal)', fontWeight: 700, letterSpacing: '0.1em', marginLeft: 8 }}>✓ SOLD</span>}
                         </div>
                         <div className="mono" style={{ fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
                           {group.lots.length} lot{group.lots.length === 1 ? '' : 's'} · {fmtMoney(subtotal)} subtotal
@@ -763,7 +800,7 @@ export default function ManageFbAuctionPage() {
                         <CopyButton text={invoice} label="📋 Copy Messenger Invoice" />
                         {!allPaid && (
                           <button onClick={() => markBuyerPaid(group.name)} className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
-                            ✓ Mark all paid
+                            ✓ Mark all sold (paid)
                           </button>
                         )}
                       </div>
