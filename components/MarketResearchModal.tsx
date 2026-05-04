@@ -14,21 +14,24 @@ export const RESEARCH_SOURCES = [
 ] as const;
 type SourceValue = (typeof RESEARCH_SOURCES)[number]['value'];
 
-// Grade / Condition options grouped for the dropdown so users always see the
-// full menu (no autocomplete filtering). Free-text isn't allowed here — if
-// users need a one-off (e.g. "PSA 8 OC"), they can drop it in row notes.
-const GRADE_GROUPS: { label: string; options: string[] }[] = [
-  { label: 'Raw', options: ['GEM MINT', 'MINT', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'GD', 'FR', 'PR'] },
-  { label: 'PSA', options: ['PSA 10', 'PSA 9', 'PSA 8.5', 'PSA 8', 'PSA 7.5', 'PSA 7', 'PSA 6', 'PSA 5', 'PSA 4', 'PSA 3', 'PSA 2', 'PSA 1'] },
-  { label: 'SGC', options: ['SGC 10', 'SGC 9.5', 'SGC 9', 'SGC 8.5', 'SGC 8', 'SGC 7.5', 'SGC 7', 'SGC 6', 'SGC 5', 'SGC 4', 'SGC 3', 'SGC 2', 'SGC 1'] },
-  { label: 'BGS', options: ['BGS 10', 'BGS 9.5', 'BGS 9', 'BGS 8.5', 'BGS 8', 'BGS 7.5', 'BGS 7', 'BGS 6', 'BGS 5'] },
-  { label: 'CSG', options: ['CSG 10', 'CSG 9.5', 'CSG 9', 'CSG 8.5', 'CSG 8'] },
-];
+// Grading company + grade are tracked as two fields so the future pricing
+// model can group cleanly (e.g. all "PSA 8" comps from anywhere).
+const GRADING_COMPANIES = ['Raw', 'PSA', 'SGC', 'BGS', 'CSG', 'Other'] as const;
+type GradingCompany = (typeof GRADING_COMPANIES)[number];
 
-function defaultGradeFor(card: CardDescriptor): string {
-  if (card.grading_company && card.grade) return `${card.grading_company} ${card.grade}`;
-  if (card.raw_grade) return card.raw_grade;
-  return '';
+const RAW_GRADES = ['GEM MINT', 'MINT', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'GD', 'FR', 'PR'];
+const NUMERIC_GRADES = ['10', '9.5', '9', '8.5', '8', '7.5', '7', '6.5', '6', '5.5', '5', '4.5', '4', '3.5', '3', '2.5', '2', '1.5', '1'];
+
+function gradesForCompany(company: string): string[] {
+  if (company === 'Raw') return RAW_GRADES;
+  if (company === '' || company === 'Other') return [];
+  return NUMERIC_GRADES;
+}
+
+function defaultsFor(card: CardDescriptor): { company: string; grade: string } {
+  if (card.grading_company && card.grade) return { company: card.grading_company, grade: card.grade };
+  if (card.raw_grade) return { company: 'Raw', grade: card.raw_grade };
+  return { company: '', grade: '' };
 }
 
 export type CardDescriptor = {
@@ -50,7 +53,8 @@ type Row = {
   position: number;
   source: SourceValue;
   source_label: string;     // only used when source === 'other'
-  grade_condition: string;  // free text w/ datalist suggestions
+  grade_company: string;    // '' | 'Raw' | 'PSA' | ...
+  grade_value: string;      // 'NM' | '8.5' | '10' | ...
   sale_date: string;        // YYYY-MM-DD
   price: string;            // string for input handling
   weight_pct: string;       // string for input handling
@@ -64,6 +68,9 @@ type DataPointRow = {
   position: number;
   source: SourceValue;
   source_label: string | null;
+  grade_company: string | null;
+  grade_value: string | null;
+  // Legacy combined column kept for back-compat reads if older rows exist.
   grade_condition: string | null;
   sale_date: string | null;
   price: number | null;
@@ -100,12 +107,13 @@ type Props = {
   onApply?: (marketValue: number) => void;   // called when user clicks "Use this value"
 };
 
-function emptyRow(position: number, defaultGrade = ''): Row {
+function emptyRow(position: number, defaults: { company: string; grade: string } = { company: '', grade: '' }): Row {
   return {
     position,
     source: 'ebay_sold_auction',
     source_label: '',
-    grade_condition: defaultGrade,
+    grade_company: defaults.company,
+    grade_value: defaults.grade,
     sale_date: '',
     price: '',
     weight_pct: '',
@@ -114,20 +122,37 @@ function emptyRow(position: number, defaultGrade = ''): Row {
   };
 }
 
-function rowsFromDataPoints(dps: DataPointRow[], defaultGrade = ''): Row[] {
+function rowsFromDataPoints(dps: DataPointRow[], defaults: { company: string; grade: string } = { company: '', grade: '' }): Row[] {
   const sorted = dps.slice().sort((a, b) => a.position - b.position);
-  const rows: Row[] = sorted.map(d => ({
-    position: d.position,
-    source: (d.source as SourceValue) ?? 'other',
-    source_label: d.source_label ?? '',
-    grade_condition: d.grade_condition ?? '',
-    sale_date: d.sale_date ?? '',
-    price: d.price !== null && d.price !== undefined ? String(d.price) : '',
-    weight_pct: d.weight_pct !== null && d.weight_pct !== undefined ? String(d.weight_pct) : '',
-    url: d.url ?? '',
-    notes: d.notes ?? '',
-  }));
-  while (rows.length < 5) rows.push(emptyRow(rows.length, defaultGrade));
+  const rows: Row[] = sorted.map(d => {
+    // Read split columns first; if absent, fall back to splitting the legacy
+    // combined `grade_condition` field on the first space (e.g. "PSA 8" → PSA / 8).
+    let company = d.grade_company ?? '';
+    let value = d.grade_value ?? '';
+    if (!company && !value && d.grade_condition) {
+      const parts = d.grade_condition.split(/\s+/);
+      if (parts.length >= 2 && (GRADING_COMPANIES as readonly string[]).includes(parts[0])) {
+        company = parts[0];
+        value = parts.slice(1).join(' ');
+      } else {
+        company = 'Raw';
+        value = d.grade_condition;
+      }
+    }
+    return {
+      position: d.position,
+      source: (d.source as SourceValue) ?? 'other',
+      source_label: d.source_label ?? '',
+      grade_company: company,
+      grade_value: value,
+      sale_date: d.sale_date ?? '',
+      price: d.price !== null && d.price !== undefined ? String(d.price) : '',
+      weight_pct: d.weight_pct !== null && d.weight_pct !== undefined ? String(d.weight_pct) : '',
+      url: d.url ?? '',
+      notes: d.notes ?? '',
+    };
+  });
+  while (rows.length < 5) rows.push(emptyRow(rows.length, defaults));
   return rows;
 }
 
@@ -148,8 +173,8 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const defaultGrade = useMemo(() => defaultGradeFor(card), [card]);
-  const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 5 }, (_, i) => emptyRow(i, defaultGradeFor(card))));
+  const cardDefaults = useMemo(() => defaultsFor(card), [card]);
+  const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 5 }, (_, i) => emptyRow(i, defaultsFor(card))));
   const [notes, setNotes] = useState('');
   const [history, setHistory] = useState<{ session: SessionRow; data_points: DataPointRow[] }[]>([]);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
@@ -184,12 +209,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       if (own.length > 0) {
         const latest = own[0];
         setSessionId(latest.id);
-        setRows(rowsFromDataPoints(latest.market_research_data_points || [], defaultGrade));
+        setRows(rowsFromDataPoints(latest.market_research_data_points || [], cardDefaults));
         setNotes(latest.notes || '');
         setHistory(own.slice(1).map(s => ({ session: s, data_points: s.market_research_data_points || [] })));
       } else {
         setSessionId(null);
-        setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, defaultGrade)));
+        setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
         setNotes('');
         setHistory([]);
       }
@@ -229,13 +254,13 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
   }
   function addRow() {
-    setRows(prev => [...prev, emptyRow(prev.length, defaultGrade)]);
+    setRows(prev => [...prev, emptyRow(prev.length, cardDefaults)]);
   }
   function removeRow(idx: number) {
     setRows(prev => prev.filter((_, i) => i !== idx).map((r, i) => ({ ...r, position: i })));
   }
   function loadFromCommunity(s: CommunitySession) {
-    setRows(rowsFromDataPoints(s.data_points, defaultGrade));
+    setRows(rowsFromDataPoints(s.data_points, cardDefaults));
     setNotes(prev => prev || `(Started from another collector's research from ${new Date(s.created_at).toLocaleDateString()})`);
     setSessionId(null); // Treat as new session for the current user
   }
@@ -278,14 +303,15 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setSessionId(activeSessionId);
     }
     const dpRows = rows
-      .filter(r => r.price !== '' || r.weight_pct !== '' || r.source_label.trim() || r.grade_condition.trim())
+      .filter(r => r.price !== '' || r.weight_pct !== '' || r.source_label.trim() || r.grade_company || r.grade_value)
       .map(r => ({
         session_id: activeSessionId,
         user_id: userId,
         position: r.position,
         source: r.source,
         source_label: r.source === 'other' ? r.source_label.trim() || null : null,
-        grade_condition: r.grade_condition.trim() || null,
+        grade_company: r.grade_company || null,
+        grade_value: r.grade_value || null,
         sale_date: r.sale_date || null,
         price: r.price !== '' ? Number(r.price) : null,
         weight_pct: r.weight_pct !== '' ? Number(r.weight_pct) : null,
@@ -353,11 +379,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
         ) : (
           <>
             <div style={{ overflowX: 'auto', marginBottom: 10 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1060 }}>
                 <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   <tr>
-                    <th style={{ padding: '8px', textAlign: 'left', width: 180 }}>Source</th>
-                    <th style={{ padding: '8px', textAlign: 'left', width: 130 }}>Grade / Condition</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: 170 }}>Source</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: 110 }}>Company</th>
+                    <th style={{ padding: '8px', textAlign: 'left', width: 110 }}>Grade</th>
                     <th style={{ padding: '8px', textAlign: 'left', width: 130 }}>Date</th>
                     <th style={{ padding: '8px', textAlign: 'right', width: 100 }}>Price ($)</th>
                     <th style={{ padding: '8px', textAlign: 'right', width: 90 }}>Weight (%)</th>
@@ -379,16 +406,32 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                         )}
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <select value={r.grade_condition}
-                          onChange={e => updateRow(idx, { grade_condition: e.target.value })}
+                        <select value={r.grade_company}
+                          onChange={e => {
+                            const next = e.target.value;
+                            // Reset grade if it doesn't fit the new company.
+                            const fits = gradesForCompany(next).includes(r.grade_value);
+                            updateRow(idx, { grade_company: next, grade_value: fits ? r.grade_value : '' });
+                          }}
                           style={fieldStyle()}>
-                          <option value="">— select —</option>
-                          {GRADE_GROUPS.map(g => (
-                            <optgroup key={g.label} label={g.label}>
-                              {g.options.map(o => <option key={o} value={o}>{o}</option>)}
-                            </optgroup>
-                          ))}
+                          <option value="">—</option>
+                          {GRADING_COMPANIES.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
+                      </td>
+                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                        {r.grade_company === 'Other' || r.grade_company === '' ? (
+                          <input type="text" value={r.grade_value}
+                            onChange={e => updateRow(idx, { grade_value: e.target.value })}
+                            placeholder="—"
+                            style={fieldStyle()} />
+                        ) : (
+                          <select value={r.grade_value}
+                            onChange={e => updateRow(idx, { grade_value: e.target.value })}
+                            style={fieldStyle()}>
+                            <option value="">—</option>
+                            {gradesForCompany(r.grade_company).map(g => <option key={g} value={g}>{g}</option>)}
+                          </select>
+                        )}
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input type="date" value={r.sale_date} onChange={e => updateRow(idx, { sale_date: e.target.value })}
@@ -422,7 +465,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={4} style={{ padding: '8px', textAlign: 'right', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>Total weight</td>
+                    <td colSpan={5} style={{ padding: '8px', textAlign: 'right', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>Total weight</td>
                     <td style={{ padding: '8px', textAlign: 'right', fontSize: 14, fontWeight: 700, color: totals.weightOk ? 'var(--teal)' : 'var(--rust)' }}>
                       {totals.totalWeight.toFixed(1)}%
                     </td>
@@ -532,16 +575,21 @@ function PastList({ items, showNotes }: {
           </div>
           {it.rows.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)' }}>
-              {it.rows.slice().sort((a, b) => a.position - b.position).map(d => (
-                <div key={d.id}>
-                  <strong style={{ color: 'var(--plum)' }}>{sourceDisplay(d.source as SourceValue, d.source_label)}</strong>
-                  {d.grade_condition ? ` · ${d.grade_condition}` : ''}
-                  {d.sale_date ? ` · ${d.sale_date}` : ''}
-                  {' · '}
-                  <span style={{ color: 'var(--orange)', fontWeight: 700 }}>{d.price !== null ? fmtMoney(d.price) : '—'}</span>
-                  {d.weight_pct !== null ? ` (${d.weight_pct}%)` : ''}
-                </div>
-              ))}
+              {it.rows.slice().sort((a, b) => a.position - b.position).map(d => {
+                const gradeDisplay = d.grade_company || d.grade_value
+                  ? `${d.grade_company || ''}${d.grade_company && d.grade_value ? ' ' : ''}${d.grade_value || ''}`.trim()
+                  : (d.grade_condition || '');
+                return (
+                  <div key={d.id}>
+                    <strong style={{ color: 'var(--plum)' }}>{sourceDisplay(d.source as SourceValue, d.source_label)}</strong>
+                    {gradeDisplay ? ` · ${gradeDisplay}` : ''}
+                    {d.sale_date ? ` · ${d.sale_date}` : ''}
+                    {' · '}
+                    <span style={{ color: 'var(--orange)', fontWeight: 700 }}>{d.price !== null ? fmtMoney(d.price) : '—'}</span>
+                    {d.weight_pct !== null ? ` (${d.weight_pct}%)` : ''}
+                  </div>
+                );
+              })}
             </div>
           )}
           {showNotes && it.notes && (
