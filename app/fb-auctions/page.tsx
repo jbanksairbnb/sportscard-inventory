@@ -45,6 +45,22 @@ type AuctionRow = {
 const STATUS_FILTERS = ['all', 'draft', 'live', 'ended', 'settled'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
+const DATE_RANGES = ['all', 'day', 'week', 'month'] as const;
+type DateRange = typeof DATE_RANGES[number];
+
+function dateRangeLabel(r: DateRange): string {
+  if (r === 'day') return 'Past day';
+  if (r === 'week') return 'Past week';
+  if (r === 'month') return 'Past month';
+  return 'All time';
+}
+function dateRangeMs(r: DateRange): number | null {
+  if (r === 'day') return 24 * 60 * 60 * 1000;
+  if (r === 'week') return 7 * 24 * 60 * 60 * 1000;
+  if (r === 'month') return 30 * 24 * 60 * 60 * 1000;
+  return null;
+}
+
 function statusLabel(s: string) {
   if (s === 'settled') return 'Sold';
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -89,6 +105,7 @@ export default function FbAuctionsPage() {
   const [loading, setLoading] = useState(true);
   const [auctions, setAuctions] = useState<AuctionRow[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [dateRange, setDateRange] = useState<DateRange>('all');
 
   const [selectedDrafts, setSelectedDrafts] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
@@ -230,29 +247,48 @@ export default function FbAuctionsPage() {
     return bidder.id;
   }
 
-  const filtered = useMemo(
-    () => filter === 'all'
-      ? auctions.filter(a => a.status !== 'settled')
-      : auctions.filter(a => a.status === filter),
-    [auctions, filter]
-  );
+  const filtered = useMemo(() => {
+    const cutoff = dateRangeMs(dateRange);
+    const since = cutoff ? Date.now() - cutoff : null;
+    return auctions.filter(a => {
+      if (filter === 'all') {
+        if (a.status === 'settled') return false;
+      } else if (a.status !== filter) {
+        return false;
+      }
+      if (since !== null) {
+        const t = a.created_at ? new Date(a.created_at).getTime() : 0;
+        if (t < since) return false;
+      }
+      return true;
+    });
+  }, [auctions, filter, dateRange]);
   const counts: Record<string, number> = { draft: 0, live: 0, ended: 0, settled: 0 };
   auctions.forEach(a => { counts[a.status] = (counts[a.status] || 0) + 1; });
 
-  // Quick-glance metrics across whatever's currently filtered.
+  // Quick-glance metrics across whatever's currently filtered. Each $ figure
+  // answers a different question for the seller:
+  //   activeBids = $ in flight on still-open lots
+  //   outstanding = $ owed by buyers whose lots ended without payment
+  //   sales = $ that has actually been collected (paid lots)
   const metrics = useMemo(() => {
     let totalLots = 0;
-    let salesTotal = 0;
+    let activeBids = 0;
+    let outstanding = 0;
+    let sales = 0;
     const bidderKeys = new Set<string>();
     for (const a of filtered) {
       totalLots += a.fb_auction_lots.length;
       for (const l of a.fb_auction_lots) {
-        if (l.status === 'paid' && l.current_bid) salesTotal += l.current_bid;
+        const v = l.current_bid || 0;
+        if (l.status === 'open') activeBids += v;
+        if (l.status === 'sold') outstanding += v;
+        if (l.status === 'paid') sales += v;
         if (l.bidder_id) bidderKeys.add(`id:${l.bidder_id}`);
         else if (l.bidder_name && l.bidder_name.trim()) bidderKeys.add(`name:${l.bidder_name.trim().toLowerCase()}`);
       }
     }
-    return { totalLots, salesTotal, uniqueBidders: bidderKeys.size };
+    return { totalLots, activeBids, outstanding, sales, uniqueBidders: bidderKeys.size };
   }, [filtered]);
 
   function toggleDraftSelect(id: string) {
@@ -438,12 +474,27 @@ export default function FbAuctionsPage() {
           </ol>
         </section>
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          <span className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>★ Snapshot ★</span>
+          <select value={dateRange} onChange={e => setDateRange(e.target.value as DateRange)}
+            style={{ padding: '4px 10px', fontSize: 12, fontWeight: 700, border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)', cursor: 'pointer' }}>
+            {DATE_RANGES.map(r => <option key={r} value={r}>{dateRangeLabel(r)}</option>)}
+          </select>
+        </div>
         <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 18,
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 18,
         }}>
           <MetricCard label={`${filter === 'all' ? 'All' : statusLabel(filter)} · Auctions`} value={String(filtered.length)} />
           <MetricCard label="Lots" value={String(metrics.totalLots)} />
-          <MetricCard label="Sales $" value={fmtMoney(metrics.salesTotal)} accent />
+          {(filter === 'all' || filter === 'live') && (
+            <MetricCard label="Active bids $" value={fmtMoney(metrics.activeBids)} />
+          )}
+          {(filter === 'all' || filter === 'ended') && (
+            <MetricCard label="Ended, unpaid $" value={fmtMoney(metrics.outstanding)} accent={filter === 'ended'} />
+          )}
+          {(filter === 'all' || filter === 'live' || filter === 'settled') && (
+            <MetricCard label="Sales $" value={fmtMoney(metrics.sales)} accent={filter !== 'ended'} />
+          )}
           <MetricCard label="Unique bidders" value={String(metrics.uniqueBidders)} />
         </div>
 
