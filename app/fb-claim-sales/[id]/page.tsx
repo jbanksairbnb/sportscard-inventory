@@ -91,6 +91,8 @@ export default function ManageClaimSalePage() {
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
+  const [expandedBuyers, setExpandedBuyers] = useState<Set<string>>(new Set());
+  const [editedInvoices, setEditedInvoices] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const supabase = createClient();
@@ -477,20 +479,91 @@ export default function ManageClaimSalePage() {
                 const subtotal = b.items.reduce((s, i) => s + (i.price || 0), 0);
                 const shipping = sale.default_shipping_cost ?? 0;
                 const total = subtotal + shipping;
-                const tag = `inv:${b.id || b.name}`;
+                const buyerKey = b.id || `name:${b.name}`;
+                const tag = `inv:${buyerKey}`;
+                const isOpen = expandedBuyers.has(buyerKey);
+                const generated = buildBuyerInvoice(b);
+                const messageText = editedInvoices[buyerKey] ?? generated;
+                const isEdited = editedInvoices[buyerKey] !== undefined && editedInvoices[buyerKey] !== generated;
+                const sortedItems = b.items.slice().sort((x, y) => {
+                  const lx = lots.find(l => l.id === x.lot_id)?.lot_number ?? 0;
+                  const ly = lots.find(l => l.id === y.lot_id)?.lot_number ?? 0;
+                  return lx - ly || x.position - y.position;
+                });
                 return (
                   <div key={tag} className="panel" style={{ padding: 14, border: '1.5px solid var(--rule)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <button type="button" onClick={() => setExpandedBuyers(prev => {
+                        const next = new Set(prev);
+                        if (next.has(buyerKey)) next.delete(buyerKey); else next.add(buyerKey);
+                        return next;
+                      })} aria-label={isOpen ? 'Collapse' : 'Expand'}
+                        style={{ background: 'transparent', border: 0, cursor: 'pointer', fontSize: 14, color: 'var(--plum)', padding: '2px 6px' }}>
+                        {isOpen ? '▼' : '▶'}
+                      </button>
                       <div className="display" style={{ fontSize: 14, color: 'var(--plum)', flex: 1 }}>{b.name}</div>
                       <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{b.items.length} item{b.items.length === 1 ? '' : 's'}</div>
                       <div className="stat-num" style={{ fontSize: 18, color: 'var(--orange)' }}>{fmtMoney(total)}</div>
-                      <button onClick={() => copyTag(buildBuyerInvoice(b), tag)} className="btn btn-outline btn-sm">
+                      <button onClick={() => copyTag(messageText, tag)} className="btn btn-outline btn-sm">
                         {copiedTag === tag ? '✓ Copied' : '📋 Copy invoice'}
                       </button>
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
                       Subtotal {fmtMoney(subtotal)} + Shipping {fmtMoney(shipping)}
                     </div>
+                    {isOpen && (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px dashed var(--rule)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div>
+                          <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 6 }}>Items</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {sortedItems.map(it => {
+                              const lot = lots.find(l => l.id === it.lot_id);
+                              const cardLabel = it.listing
+                                ? `${it.listing.year || ''} ${it.listing.brand || ''} #${it.listing.card_number || ''} ${it.listing.player || ''}`.trim()
+                                : 'Card';
+                              return (
+                                <div key={it.id} style={{
+                                  display: 'grid', gridTemplateColumns: '90px 1fr 80px',
+                                  gap: 8, alignItems: 'center', padding: '4px 8px',
+                                  background: 'var(--paper)', borderRadius: 4, fontSize: 12, color: 'var(--plum)',
+                                }}>
+                                  <div className="mono" style={{ fontWeight: 700 }}>
+                                    Lot #{lot?.lot_number || '?'}{lot?.kind === 'group' ? ` · ${it.position}` : ''}
+                                  </div>
+                                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardLabel}</div>
+                                  <div className="mono" style={{ textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>{fmtMoney(it.price ?? 0)}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                            <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Messenger Invoice</div>
+                            {isEdited && (
+                              <>
+                                <span className="mono" style={{ fontSize: 10, color: 'var(--rust)', fontWeight: 700 }}>EDITED</span>
+                                <button type="button" onClick={() => setEditedInvoices(prev => {
+                                  const next = { ...prev }; delete next[buyerKey]; return next;
+                                })} className="btn btn-ghost btn-sm" style={{ fontSize: 10, padding: '2px 8px' }}>
+                                  ↺ Reset to template
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          <textarea
+                            value={messageText}
+                            onChange={e => setEditedInvoices(prev => ({ ...prev, [buyerKey]: e.target.value }))}
+                            rows={Math.min(20, Math.max(6, messageText.split('\n').length))}
+                            style={{
+                              width: '100%', boxSizing: 'border-box',
+                              border: '1.5px solid var(--plum)', borderRadius: 6, padding: '10px 12px',
+                              fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--plum)',
+                              background: 'var(--paper)', resize: 'vertical',
+                            }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
