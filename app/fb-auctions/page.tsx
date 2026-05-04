@@ -46,7 +46,7 @@ const STATUS_FILTERS = ['all', 'draft', 'live', 'ended', 'settled'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
 function statusLabel(s: string) {
-  if (s === 'ended') return 'Sold';
+  if (s === 'settled') return 'Sold';
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 

@@ -93,6 +93,7 @@ export default function ManageFbAuctionPage() {
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [auction, setAuction] = useState<Auction | null>(null);
+  const [winningTpl, setWinningTpl] = useState<{ post_header: string; post_footer: string } | null>(null);
   const [lots, setLots] = useState<Lot[]>([]);
 
   const [editBuffer, setEditBuffer] = useState<Record<string, Partial<Lot>>>({});
@@ -147,6 +148,19 @@ export default function ManageFbAuctionPage() {
         .select('user_id, display_name, handle, fb_handle')
         .eq('application_status', 'approved');
       setMembers(((memberData || []) as MemberOption[]).filter(m => m.user_id !== user.id));
+
+      // Pull the user's default winning-bid template (if they've made one).
+      const { data: winRows } = await supabase
+        .from('fb_auction_templates')
+        .select('post_header, post_footer, is_default')
+        .eq('user_id', user.id)
+        .eq('template_type', 'winning')
+        .order('is_default', { ascending: false })
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (winRows && winRows[0]) {
+        setWinningTpl({ post_header: winRows[0].post_header || '', post_footer: winRows[0].post_footer || '' });
+      }
       setLoading(false);
     }
     load();
@@ -382,16 +396,42 @@ export default function ManageFbAuctionPage() {
   function buildInvoice(group: { name: string; lots: Lot[] }, shipping: number): string {
     const subtotal = group.lots.reduce((s, l) => s + (l.current_bid || 0), 0);
     const total = subtotal + (Number.isFinite(shipping) ? shipping : 0);
-    const lines = group.lots.map(l => {
+    const lotLines = group.lots.map(l => {
       const ttl = l.listing?.title || `Lot #${l.lot_number}`;
       return `· ${ttl} — ${fmtMoney(l.current_bid)}`;
     });
+
+    // If the user has a default Winning Bid template, render it; otherwise
+    // fall back to the previous hardcoded format.
+    const vars: Record<string, string> = {
+      bidder_name: group.name,
+      auction_title: auction?.title || 'auction',
+      subtotal: fmtMoney(subtotal),
+      shipping: fmtMoney(shipping),
+      total: fmtMoney(total),
+      payment_text: paymentText,
+      lots: lotLines.join('\n'),
+    };
+    function fill(template: string): string {
+      return template.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
+    }
+
+    if (winningTpl && (winningTpl.post_header.trim() || winningTpl.post_footer.trim())) {
+      return [
+        fill(winningTpl.post_header).trim(),
+        '',
+        ...lotLines,
+        '',
+        fill(winningTpl.post_footer).trim(),
+      ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
+    }
+
     return [
       `Hi ${group.name}!`,
       '',
       `Congrats on winning these from my ${auction?.title || 'auction'}:`,
       '',
-      ...lines,
+      ...lotLines,
       '',
       `Subtotal: ${fmtMoney(subtotal)}`,
       `Shipping: ${fmtMoney(shipping)}`,
@@ -487,7 +527,7 @@ export default function ManageFbAuctionPage() {
                 {(['draft', 'live', 'ended', 'settled'] as const).map(s => (
                   <button key={s} onClick={() => setStatus(s)}
                     className={`btn btn-sm ${auction.status === s ? 'btn-primary' : 'btn-ghost'}`}>
-                    {s === 'ended' ? 'Sold' : s.charAt(0).toUpperCase() + s.slice(1)}
+                    {s === 'settled' ? 'Sold' : s.charAt(0).toUpperCase() + s.slice(1)}
                   </button>
                 ))}
               </div>
