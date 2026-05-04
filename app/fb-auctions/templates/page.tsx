@@ -259,6 +259,7 @@ function Header() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <Link href="/fb-auctions" className="btn btn-ghost btn-sm">Auctions</Link>
           <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
+          <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
           <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
         </div>
       </div>
