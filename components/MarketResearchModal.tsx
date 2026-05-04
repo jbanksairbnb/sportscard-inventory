@@ -14,14 +14,15 @@ export const RESEARCH_SOURCES = [
 ] as const;
 type SourceValue = (typeof RESEARCH_SOURCES)[number]['value'];
 
-// Common grade/condition picks shown as datalist suggestions. Free-text is
-// allowed so users can type "PSA 8 OC" or "raw, soft corner" or anything else.
-const GRADE_SUGGESTIONS = [
-  'GEM MINT', 'MINT', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'GD', 'FR', 'PR',
-  'PSA 10', 'PSA 9', 'PSA 8.5', 'PSA 8', 'PSA 7.5', 'PSA 7', 'PSA 6', 'PSA 5', 'PSA 4', 'PSA 3', 'PSA 2', 'PSA 1',
-  'SGC 10', 'SGC 9.5', 'SGC 9', 'SGC 8.5', 'SGC 8', 'SGC 7.5', 'SGC 7', 'SGC 6', 'SGC 5', 'SGC 4', 'SGC 3', 'SGC 2', 'SGC 1',
-  'BGS 10', 'BGS 9.5', 'BGS 9', 'BGS 8.5', 'BGS 8', 'BGS 7.5', 'BGS 7',
-  'CSG 10', 'CSG 9.5', 'CSG 9',
+// Grade / Condition options grouped for the dropdown so users always see the
+// full menu (no autocomplete filtering). Free-text isn't allowed here — if
+// users need a one-off (e.g. "PSA 8 OC"), they can drop it in row notes.
+const GRADE_GROUPS: { label: string; options: string[] }[] = [
+  { label: 'Raw', options: ['GEM MINT', 'MINT', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'GD', 'FR', 'PR'] },
+  { label: 'PSA', options: ['PSA 10', 'PSA 9', 'PSA 8.5', 'PSA 8', 'PSA 7.5', 'PSA 7', 'PSA 6', 'PSA 5', 'PSA 4', 'PSA 3', 'PSA 2', 'PSA 1'] },
+  { label: 'SGC', options: ['SGC 10', 'SGC 9.5', 'SGC 9', 'SGC 8.5', 'SGC 8', 'SGC 7.5', 'SGC 7', 'SGC 6', 'SGC 5', 'SGC 4', 'SGC 3', 'SGC 2', 'SGC 1'] },
+  { label: 'BGS', options: ['BGS 10', 'BGS 9.5', 'BGS 9', 'BGS 8.5', 'BGS 8', 'BGS 7.5', 'BGS 7', 'BGS 6', 'BGS 5'] },
+  { label: 'CSG', options: ['CSG 10', 'CSG 9.5', 'CSG 9', 'CSG 8.5', 'CSG 8'] },
 ];
 
 function defaultGradeFor(card: CardDescriptor): string {
@@ -378,11 +379,16 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                         )}
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <input type="text" list="research-grade-suggestions"
-                          value={r.grade_condition}
+                        <select value={r.grade_condition}
                           onChange={e => updateRow(idx, { grade_condition: e.target.value })}
-                          placeholder="e.g. PSA 8 or NM"
-                          style={fieldStyle()} />
+                          style={fieldStyle()}>
+                          <option value="">— select —</option>
+                          {GRADE_GROUPS.map(g => (
+                            <optgroup key={g.label} label={g.label}>
+                              {g.options.map(o => <option key={o} value={o}>{o}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <input type="date" value={r.sale_date} onChange={e => updateRow(idx, { sale_date: e.target.value })}
@@ -424,9 +430,6 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                   </tr>
                 </tfoot>
               </table>
-              <datalist id="research-grade-suggestions">
-                {GRADE_SUGGESTIONS.map(g => <option key={g} value={g} />)}
-              </datalist>
             </div>
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
