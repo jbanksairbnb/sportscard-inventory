@@ -85,6 +85,25 @@ function buildCommentBody(
   return lines.join('\n');
 }
 
+async function downloadJpeg(url: string, filename: string) {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error('fetch failed');
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    // Fallback: open the URL — user can right-click → save.
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -681,21 +700,39 @@ function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onR
             {buildingCollage ? 'Building…' : '🖼 Auto-build front + back collages'}
           </button>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', minWidth: 50 }}>Fronts</span>
-          <input value={lot.collageUrl} onChange={e => onPatch({ collageUrl: e.target.value })}
-            className="input-sc" style={{ flex: 1 }} placeholder="https://…" />
-          {lot.collageUrl && (
-            <a href={lot.collageUrl} target="_blank" rel="noopener noreferrer" className="mono" style={{ fontSize: 11, color: 'var(--teal)', textDecoration: 'underline' }}>↗</a>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', minWidth: 50 }}>Backs</span>
-          <input value={lot.backCollageUrl} onChange={e => onPatch({ backCollageUrl: e.target.value })}
-            className="input-sc" style={{ flex: 1 }} placeholder="https://…" />
-          {lot.backCollageUrl && (
-            <a href={lot.backCollageUrl} target="_blank" rel="noopener noreferrer" className="mono" style={{ fontSize: 11, color: 'var(--teal)', textDecoration: 'underline' }}>↗</a>
-          )}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {(['front', 'back'] as const).map(side => {
+            const url = side === 'front' ? lot.collageUrl : lot.backCollageUrl;
+            const setUrl = (v: string) => onPatch(side === 'front' ? { collageUrl: v } : { backCollageUrl: v });
+            const filename = `lot-${index + 1}-${side === 'front' ? 'fronts' : 'backs'}.jpg`;
+            return (
+              <div key={side} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180 }}>
+                <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {side === 'front' ? 'Fronts' : 'Backs'}
+                </div>
+                {url ? (
+                  <>
+                    <a href={url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'block', width: 180, height: 120, background: 'var(--paper)', borderRadius: 6, border: '1.5px solid var(--rule)', overflow: 'hidden' }}>
+                      <img src={url} alt={`${side} collage`}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    </a>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={() => downloadJpeg(url, filename)}
+                        className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '4px 10px' }}>
+                        ⬇ Download
+                      </button>
+                      <button type="button" onClick={() => setUrl('')}
+                        className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '4px 8px' }}>✕</button>
+                    </div>
+                  </>
+                ) : (
+                  <input value={url} onChange={e => setUrl(e.target.value)}
+                    className="input-sc" style={{ width: 220, fontSize: 11 }} placeholder="https://… or auto-build above" />
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
