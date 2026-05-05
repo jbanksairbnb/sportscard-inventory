@@ -730,7 +730,7 @@ function FeedItem({ item }: { item: FeedEntry }) {
 const FEED_FILTERS = ['All activity', 'Want-list hits', 'eBay hits', 'Comments', 'Following', 'Auctions'];
 
 function FeedSection() {
-  const [activeFilter, setActiveFilter] = useState('Want-list hits');
+  const [activeFilter, setActiveFilter] = useState('eBay hits');
   const showWantListHits = activeFilter === 'Want-list hits' || activeFilter === 'All activity';
   const showEbayHits = activeFilter === 'eBay hits' || activeFilter === 'All activity';
   const showAuctionHits = activeFilter === 'Auctions' || activeFilter === 'All activity';
