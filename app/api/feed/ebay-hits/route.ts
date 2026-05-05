@@ -182,7 +182,11 @@ function cacheKey(want: WantRow): string {
   return `v2|${want.year}|${want.brand.toLowerCase()}|${want.cardNumber}|${cleanPlayer(want.player).toLowerCase()}|${want.setSport || 'any'}`
 }
 
-const GRADED_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA)\s*[:#]?\s*(\d+(?:\.\d)?)/i
+const GRADED_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA|AGS)\s*[:#]?\s*(\d+(?:\.\d)?)/i
+// Looser match for the priority-seller bypass: just the company token, no
+// grade number required. Lets us drop a raw priority listing from a graded
+// want without needing the seller to format the grade.
+const GRADED_COMPANY_REGEX = /\b(PSA|SGC|BGS|BVG|CGC|CSG|TAG|HGA|GMA|AGS)\b/i
 // Order matters — alternation is left-to-right. Compound tokens like "NR-MINT"
 // must come before MINT/MT so the substring "MINT" inside them doesn't win.
 const RAW_TOKEN_REGEX = /\b(GEM\s*MINT|GEM-MINT|GEMMINT|GM|NR-MINT|NR\s*MINT|NRMT|NR-MT|NR\s*MT|NM-MT|NMMT|NEAR\s*MINT-MINT|NEAR\s*MINT|MINT|MT|NM\+|NM|EXMT|EX-MT|EXMINT|EXCELLENT-MINT|EX\+|EX|VG-EX|VGEX|VG|G|GOOD|POOR|PR|P)\b/i
@@ -568,12 +572,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Priority-seller hits: skip the condition filter. These sellers (e.g.
-  // GMCards) are explicitly trusted; if they have a card on the want list,
-  // the user almost always wants to see it regardless of grade. The condition
-  // badge still renders so the user can decide.
+  // Priority-seller hits: skip the condition filter for raw wants (the user
+  // wants to see anything from these trusted sellers). For Graded wants,
+  // still require that the listing title mentions a grading company —
+  // otherwise raw priority listings sneak into graded searches.
   for (const { item, want } of prioritySellerListings) {
     if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
+    if (want.targetType === 'Graded' && !GRADED_COMPANY_REGEX.test(item.title)) continue
     const detected = detectListingCondition(item.title, mappings)
     allHits.push({
       ...item,
