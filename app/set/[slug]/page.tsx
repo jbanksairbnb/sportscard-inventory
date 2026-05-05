@@ -489,6 +489,7 @@ export default function SetEditorPage() {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
+  const [scansPickerOpen, setScansPickerOpen] = useState(false);
   function descriptorForRow(row: Record<string, unknown>): CardDescriptor {
     const grade = String(row['Grade'] || '').trim() || null;
     const gradingCompany = String(row['Grading Company'] || '').trim() || null;
@@ -892,6 +893,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <Link href={`/set/${encodeURIComponent(slug)}/view`} className="btn btn-sm btn-outline">
                 View Inventory
               </Link>
+              <button type="button" onClick={() => setScansPickerOpen(true)} className="btn btn-sm btn-outline">
+                📷 Add Scans
+              </button>
             </div>
           </div>
         )}
@@ -1301,6 +1305,44 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           onChangeCell(idx, 'Value', toCurrency(value.toFixed(2)));
         }}
       />
+      {scansPickerOpen && (
+        <div onClick={() => setScansPickerOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(42,20,52,0.82)',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '60px 20px', overflowY: 'auto',
+          }}>
+          <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+            style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+              <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Add Scans</div>
+              <button type="button" onClick={() => setScansPickerOpen(false)} className="btn btn-outline btn-sm">✕ Close</button>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>Pick where you want to attach card scans.</p>
+            <div style={{ display: 'grid', gap: 12 }}>
+              {[
+                { icon: '📷', label: 'Add Scans to Single Cards', hint: 'Match scans to individual listings — front and back per card.', href: '/listings/scan-inbox' },
+                { icon: '📚', label: 'Add Scans to Set Inventory', hint: 'Bulk attach scans to rows in one of your sets.', href: '/listings/scan-from-set' },
+                { icon: '🪟', label: 'Multi-Card Scan (2×3 grid)', hint: 'Upload one image of 6 fronts + one of 6 backs. Splits losslessly into 6 cards and assigns each to a row.', href: '/listings/scan-multi-card' },
+              ].map(c => (
+                <button key={c.label} type="button"
+                  onClick={() => { setScansPickerOpen(false); router.push(c.href); }}
+                  className="panel-bordered"
+                  style={{
+                    padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+                    cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+                  }}>
+                  <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
+                    {c.icon} {c.label}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>{c.hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
