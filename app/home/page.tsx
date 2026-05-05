@@ -124,12 +124,13 @@ function LogoShowcase() {
   );
 }
 
-function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, onCoverPositionChange }: {
+function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, onCoverPositionChange, onToggleShared }: {
   userId: string;
   avatar: string | null; cover: string | null;
   profile: CollectorProfile;
   onAvatarChange: (url: string) => void; onCoverChange: (url: string) => void;
   onCoverPositionChange: (x: number, y: number) => void;
+  onToggleShared: () => void;
 }) {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -346,7 +347,9 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
               </div>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
-              <button className="btn btn-outline"><TradeIcon size={13} /> Propose trade</button>
+              <button onClick={onToggleShared} className="btn btn-outline" title={profile.profile_shared ? 'Other members can find your profile from the Members page' : 'Your profile is hidden — only your Want list is visible'}>
+                {profile.profile_shared ? '🔒 Make profile private' : '🔓 Make profile public'}
+              </button>
               <button className="btn btn-primary"><PlusIcon size={13} /> Follow</button>
             </div>
           </div>
@@ -727,11 +730,10 @@ function FeedItem({ item }: { item: FeedEntry }) {
 const FEED_FILTERS = ['All activity', 'Want-list hits', 'eBay hits', 'Comments', 'Following', 'Auctions'];
 
 function FeedSection() {
-  const [activeFilter, setActiveFilter] = useState('Want-list hits');
+  const [activeFilter, setActiveFilter] = useState('eBay hits');
   const showWantListHits = activeFilter === 'Want-list hits' || activeFilter === 'All activity';
   const showEbayHits = activeFilter === 'eBay hits' || activeFilter === 'All activity';
   const showAuctionHits = activeFilter === 'Auctions' || activeFilter === 'All activity';
-  const mockNonWantList = MOCK_FEED.filter(i => i.kind !== 'wantlist-hit');
   return (
     <section>
       <div className="section-head">
@@ -752,7 +754,6 @@ function FeedSection() {
         {showWantListHits && <WantListHitsFeed />}
         {showAuctionHits && <AuctionHitsFeed />}
         {showEbayHits && <EbayHitsFeed />}
-        {activeFilter === 'All activity' && mockNonWantList.map((item) => <FeedItem key={item.id} item={item} />)}
         {activeFilter !== 'All activity' && activeFilter !== 'Want-list hits' && activeFilter !== 'eBay hits' && activeFilter !== 'Auctions' && (
           <div className="panel" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
             <strong style={{ color: 'var(--plum)' }}>{activeFilter}</strong> is coming soon.
@@ -1051,6 +1052,7 @@ const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7
 
 function SetsInProgress({ sets }: { sets: SetRow[] }) {
   const [search, setSearch] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const sorted = useMemo(() => {
     const arr = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
     const q = search.trim().toLowerCase();
@@ -1101,7 +1103,7 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
           }} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-        {sorted.map((s, i) => {
+        {(showAll ? sorted : sorted.slice(0, 10)).map((s, i) => {
           const color = SET_COLORS[i % SET_COLORS.length];
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
@@ -1150,6 +1152,13 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
           );
         })}
       </div>
+      {sorted.length > 10 && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
+          <button type="button" onClick={() => setShowAll(s => !s)} className="btn btn-ghost btn-sm">
+            {showAll ? `↑ Show first 10` : `↓ Show all ${sorted.length}`}
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -1162,8 +1171,8 @@ const MOCK_ACTIVITY = [
   { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
 ];
 
-type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; cover_position_x: number; cover_position_y: number; };
-const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, cover_position_x: 50, cover_position_y: 50 };
+type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; profile_shared: boolean; cover_position_x: number; cover_position_y: number; };
+const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, profile_shared: true, cover_position_x: 50, cover_position_y: 50 };
 
 function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
   const [editing, setEditing] = useState(false);
@@ -1487,7 +1496,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
             const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, value_private, cover_position_x, cover_position_y')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, value_private, profile_shared, cover_position_x, cover_position_y')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1496,6 +1505,7 @@ export default function HomePage() {
           team: profileData.team || '', favorite_players: profileData.favorite_players || '',
           chasing: profileData.chasing || '',
           value_private: !!profileData.value_private,
+          profile_shared: profileData.profile_shared !== false,  // default true
           cover_position_x: profileData.cover_position_x != null ? Number(profileData.cover_position_x) : 50,
           cover_position_y: profileData.cover_position_y != null ? Number(profileData.cover_position_y) : 50,
         });
@@ -1539,7 +1549,14 @@ export default function HomePage() {
       <LogoShowcase />
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}
-        onCoverPositionChange={(x, y) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y }))} />
+        onCoverPositionChange={(x, y) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y }))}
+        onToggleShared={async () => {
+          if (!userId) return;
+          const next = !profile.profile_shared;
+          setProfile({ ...profile, profile_shared: next });
+          const supabase = createClient();
+          await supabase.from('user_profiles').upsert({ user_id: userId, profile_shared: next });
+        }} />
       {/* <SubNav active={activeTab} setActive={setActiveTab} /> */}
       <StatsStrip stats={[
         { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
@@ -1564,9 +1581,9 @@ export default function HomePage() {
       {showWantList && <WantListModal onClose={() => setShowWantList(false)} />}
       <div className="home-grid">
         <main style={{ minWidth: 0 }}>
+          <FeedSection />
           <SetsInProgress sets={sets} />
           <FavoritesShowcase userId={userId} />
-          <FeedSection />
         </main>
         <Sidebar userId={userId} profile={profile} onProfileSave={setProfile} />
       </div>

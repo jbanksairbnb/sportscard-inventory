@@ -16,6 +16,17 @@ type Profile = {
   chasing: string | null;
   avatar_url: string | null;
   favorite_cards: (string | null)[] | null;
+  profile_shared: boolean | null;
+};
+
+type WantCard = {
+  year: number;
+  brand: string;
+  cardNumber: string;
+  description: string;
+  targetType: string;
+  targetCondition: string;
+  targetPrice: string;
 };
 
 type SharedSet = {
@@ -40,6 +51,7 @@ export default function ProfilePage() {
   const [sets, setSets] = useState<SharedSet[]>([]);
   const [stats, setStats] = useState<Stats>({ cards_owned: 0, sets_tracked: 0, want_list: 0 });
   const [loading, setLoading] = useState(true);
+  const [wantListOpen, setWantListOpen] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -47,7 +59,7 @@ export default function ProfilePage() {
     async function load() {
       const [{ data: profileData }, { data: setsData }, { data: allSets }] = await Promise.all([
         supabase.from('user_profiles')
-          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, favorite_cards')
+          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, favorite_cards, profile_shared')
           .eq('user_id', userId).single(),
         supabase.from('sets')
           .select('share_token, title, year, brand, row_count, owned_count, owned_pct')
@@ -59,11 +71,12 @@ export default function ProfilePage() {
           .eq('user_id', userId),
       ]);
       setProfile(profileData as Profile | null);
-      setSets((setsData || []) as SharedSet[]);
+      const sharedList = (setsData || []) as SharedSet[];
+      setSets(sharedList);
       const arr = (allSets || []) as { row_count: number | null; owned_count: number | null }[];
       setStats({
         cards_owned: arr.reduce((n, s) => n + (s.owned_count || 0), 0),
-        sets_tracked: arr.length,
+        sets_tracked: sharedList.length,  // public-facing: count of shared sets
         want_list: arr.reduce((n, s) => n + Math.max(0, (s.row_count || 0) - (s.owned_count || 0)), 0),
       });
       setLoading(false);
@@ -87,6 +100,44 @@ export default function ProfilePage() {
     ? profile.favorite_players.split(',').map(s => s.trim()).filter(Boolean)
     : [];
   const favorites = (profile?.favorite_cards || []).filter((u): u is string => !!u);
+  // profile_shared defaults to true if column missing or null (back-compat).
+  const isShared = profile ? profile.profile_shared !== false : true;
+
+  if (!isShared) {
+    return (
+      <div style={{ minHeight: '100vh' }}>
+        <header style={{
+          position: 'sticky', top: 0, zIndex: 50,
+          background: 'rgba(248, 236, 208, 0.94)',
+          backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+          borderBottom: '3px solid var(--plum)',
+        }}>
+          <div style={{ maxWidth: 1280, margin: '0 auto', padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 20 }}>
+            <Link href="/members" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flexShrink: 0 }}>
+              <SCLogo size={40} />
+              <div style={{ lineHeight: 0.95 }}>
+                <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
+                <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
+              </div>
+            </Link>
+            <Link href="/members" className="btn btn-outline btn-sm">← Members</Link>
+          </div>
+        </header>
+        <div style={{ maxWidth: 700, margin: '0 auto', padding: '60px 28px 80px' }}>
+          <div className="panel-bordered" style={{ padding: '36px 28px', textAlign: 'center' }}>
+            <div className="display" style={{ fontSize: 28, color: 'var(--plum)', marginBottom: 8 }}>{name}</div>
+            <p style={{ color: 'var(--ink-soft)', fontSize: 13, margin: '0 0 24px' }}>
+              This collector has set their profile to private. You can still see what they&apos;re chasing.
+            </p>
+            <button onClick={() => setWantListOpen(true)} className="btn btn-primary">
+              Want List · {stats.want_list.toLocaleString()}
+            </button>
+          </div>
+        </div>
+        {wantListOpen && <ProfileWantListModal targetUserId={userId} ownerName={name} onClose={() => setWantListOpen(false)} />}
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -163,7 +214,7 @@ export default function ProfilePage() {
               <FavoritesShowcaseReadonly images={profile?.favorite_cards || []} />
             )}
 
-            <div className="section-head" style={{ marginBottom: 20 }}>
+            <div id="shared-sets-section" className="section-head" style={{ marginBottom: 20, scrollMarginTop: 80 }}>
               <span className="eyebrow" style={{ fontSize: 12 }}>★ Shared Sets ★</span>
             </div>
             {sets.length === 0 ? (
@@ -223,9 +274,13 @@ export default function ProfilePage() {
             <div style={{ display: 'flex', alignItems: 'stretch' }}>
               <RecordStat label="Cards Owned" value={stats.cards_owned.toLocaleString()} sub="across the collection" />
               <div style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} />
-              <RecordStat label="Sets Tracked" value={stats.sets_tracked.toLocaleString()} sub="binders in motion" />
+              <RecordStat label="Shared Sets" value={stats.sets_tracked.toLocaleString()} sub="click to view all"
+                onClick={() => {
+                  document.getElementById('shared-sets-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }} />
               <div style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} />
-              <RecordStat label="Want List" value={stats.want_list.toLocaleString()} sub="chasing" />
+              <RecordStat label="Want List" value={stats.want_list.toLocaleString()} sub="click to view"
+                onClick={() => setWantListOpen(true)} />
             </div>
           </div>
         </section>
@@ -247,16 +302,142 @@ export default function ProfilePage() {
         </div>
         <Link href="/members" style={{ color: 'inherit', textDecoration: 'none' }}>← Members</Link>
       </footer>
+      {wantListOpen && <ProfileWantListModal targetUserId={userId} ownerName={name} onClose={() => setWantListOpen(false)} />}
     </div>
   );
 }
 
-function RecordStat({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <div style={{ flex: 1 }}>
+function RecordStat({ label, value, sub, onClick }: { label: string; value: string; sub: string; onClick?: () => void }) {
+  const content = (
+    <>
       <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6 }}>{label}</div>
-      <div className="stat-num" style={{ fontSize: 38 }}>{value}</div>
+      <div className="stat-num" style={{ fontSize: 38, color: onClick ? 'var(--orange)' : undefined }}>{value}</div>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-mute)', marginTop: 3, fontWeight: 600 }}>{sub}</div>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} style={{ flex: 1, textAlign: 'left', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}>
+        {content}
+      </button>
+    );
+  }
+  return <div style={{ flex: 1 }}>{content}</div>;
+}
+
+function ProfileWantListModal({ targetUserId, ownerName, onClose }: { targetUserId: string; ownerName: string; onClose: () => void }) {
+  const [cards, setCards] = useState<WantCard[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const supabase = createClient();
+    async function load() {
+      const { data: setsData } = await supabase.from('sets')
+        .select('year, brand, rows, default_target')
+        .eq('user_id', targetUserId);
+      if (!setsData) { setLoading(false); return; }
+      const unowned: WantCard[] = [];
+      for (const s of setsData as { year: number | null; brand: string | null; rows: Record<string, unknown>[] | null; default_target: { type?: string; low?: string; high?: string; companies?: string } | null }[]) {
+        const dt = s.default_target || {};
+        const defaultType = String(dt.type || '');
+        const defaultLow = String(dt.low || '');
+        const defaultHigh = String(dt.high || '');
+        const defaultCompanies = String(dt.companies || '');
+        for (const row of (s.rows || [])) {
+          if (String(row['Owned'] || '') !== 'Yes') {
+            const rowType = String(row['Target Type'] || '').trim();
+            const rowLow = String(row['Target Condition - Low'] || row['Target Condition'] || '').trim();
+            const rowHigh = String(row['Target Condition - High'] || '').trim();
+            const rowCompanies = String(row['Target Grading Companies'] || '').trim();
+            const type = rowType || defaultType;
+            const low = rowLow || defaultLow;
+            const high = rowHigh || defaultHigh;
+            const companies = rowCompanies || defaultCompanies;
+            const range = low && high ? (low === high ? low : `${low}-${high}`) : (low || high || '');
+            let typeLabel = '';
+            if (type === 'Graded') typeLabel = companies ? `Graded · ${companies.replace(/,\s*/g, ', ')}` : 'Graded';
+            else if (type === 'Raw') typeLabel = 'Raw';
+            else typeLabel = type;
+            unowned.push({
+              year: s.year || 0,
+              brand: s.brand || '',
+              cardNumber: String(row['Card #'] || ''),
+              description: String(row['Player'] || row['Description'] || ''),
+              targetType: typeLabel,
+              targetCondition: range,
+              targetPrice: String(row['Target Price'] || ''),
+            });
+          }
+        }
+      }
+      setCards(unowned);
+      setLoading(false);
+    }
+    load();
+  }, [targetUserId]);
+
+  const filtered = search.trim()
+    ? cards.filter(c => {
+        const q = search.toLowerCase();
+        return String(c.year).includes(q) || c.brand.toLowerCase().includes(q)
+          || c.cardNumber.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
+          || c.targetType.toLowerCase().includes(q) || c.targetCondition.toLowerCase().includes(q);
+      })
+    : cards;
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '60px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered" style={{ width: '100%', maxWidth: 980, padding: 22, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>{ownerName}&apos;s Want List</div>
+          <button onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="🔍 Filter by year / brand / player / card #…"
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '8px 14px', marginBottom: 14,
+            border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', color: 'var(--plum)',
+            fontFamily: 'var(--font-body)', fontSize: 13,
+          }} />
+        {loading ? (
+          <div style={{ padding: 30, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 30, textAlign: 'center', color: 'var(--ink-mute)' }}>{cards.length === 0 ? 'Their want list is empty.' : 'No matches.'}</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+              <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                <tr>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Year</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Brand</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Card #</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Player</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Target</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Condition</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
+                    <td style={{ padding: '8px 10px' }}>{c.year || '—'}</td>
+                    <td style={{ padding: '8px 10px' }}>{c.brand || '—'}</td>
+                    <td style={{ padding: '8px 10px' }} className="mono">{c.cardNumber || '—'}</td>
+                    <td style={{ padding: '8px 10px', fontWeight: 600 }}>{c.description || '—'}</td>
+                    <td style={{ padding: '8px 10px' }}>{c.targetType || '—'}</td>
+                    <td style={{ padding: '8px 10px' }}>{c.targetCondition || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
