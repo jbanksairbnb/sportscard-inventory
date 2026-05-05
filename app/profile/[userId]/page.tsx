@@ -15,6 +15,9 @@ type Profile = {
   favorite_players: string | null;
   chasing: string | null;
   avatar_url: string | null;
+  cover_url: string | null;
+  cover_position_x: number | null;
+  cover_position_y: number | null;
   favorite_cards: (string | null)[] | null;
   profile_shared: boolean | null;
 };
@@ -59,7 +62,7 @@ export default function ProfilePage() {
     async function load() {
       const [{ data: profileData }, { data: setsData }, { data: allSets }] = await Promise.all([
         supabase.from('user_profiles')
-          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, favorite_cards, profile_shared')
+          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, cover_position_x, cover_position_y, favorite_cards, profile_shared')
           .eq('user_id', userId).single(),
         supabase.from('sets')
           .select('share_token, title, year, brand, row_count, owned_count, owned_pct')
@@ -159,22 +162,70 @@ export default function ProfilePage() {
         </div>
       </header>
 
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 28px 80px' }}>
+      {/* Cover banner with avatar roundel — mirrors the homepage Hero. */}
+      <section>
+        <div className="halftone" style={{
+          position: 'relative', height: 280,
+          background: profile?.cover_url
+            ? `url(${profile.cover_url}) ${profile.cover_position_x ?? 50}% ${profile.cover_position_y ?? 50}% / cover no-repeat`
+            : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
+          borderBottom: '3px solid var(--plum)', overflow: 'hidden',
+        }} />
+        <div style={{
+          maxWidth: 1280, margin: '0 auto', padding: '0 28px',
+          display: 'flex', alignItems: 'flex-end', gap: 20, marginTop: -64, position: 'relative', zIndex: 1,
+        }}>
+          <div style={{ width: 128, height: 128, flexShrink: 0 }}>
+            <div style={{
+              width: 128, height: 128, borderRadius: '50%',
+              border: '4px solid var(--plum)', boxShadow: '0 4px 0 var(--plum)',
+              background: profile?.avatar_url
+                ? `var(--cream) url(${profile.avatar_url}) center/cover no-repeat`
+                : 'linear-gradient(135deg, var(--plum) 0%, var(--plum-deep) 100%)',
+              display: 'grid', placeItems: 'center',
+              fontFamily: 'var(--font-display)', fontSize: 44, color: 'var(--mustard)', fontWeight: 700,
+            }}>
+              {!profile?.avatar_url && name.slice(0, 1).toUpperCase()}
+            </div>
+          </div>
+          <div style={{ flex: 1, paddingBottom: 6 }}>
+            <div className="eyebrow" style={{ color: 'var(--orange)', marginBottom: 4 }}>
+              ★ Collector{profile?.city ? ` · ${profile.city}` : ''} ★
+            </div>
+            <h1 className="display" style={{ fontSize: 44, margin: 0, color: 'var(--plum)', lineHeight: 1 }}>{name}</h1>
+            {profile?.handle && (
+              <div className="mono" style={{ fontSize: 13, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 6 }}>@{profile.handle}</div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+        {/* The Record — moved above Shared Sets per design */}
+        <section style={{ marginBottom: 28 }}>
+          <div className="panel-bordered" style={{ padding: '24px 28px', position: 'relative' }}>
+            <div style={{
+              position: 'absolute', top: -13, left: 24, background: 'var(--orange)', color: 'var(--cream)',
+              padding: '3px 14px', border: '2px solid var(--plum)', borderRadius: 100,
+              fontFamily: 'var(--font-body)', fontSize: 10.5, fontWeight: 700,
+              letterSpacing: '0.18em', textTransform: 'uppercase', boxShadow: '0 2px 0 var(--plum)',
+            }}>★ The Record ★</div>
+            <div style={{ display: 'flex', alignItems: 'stretch' }}>
+              <RecordStat label="Cards Owned" value={stats.cards_owned.toLocaleString()} sub="across the collection" />
+              <div style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} />
+              <RecordStat label="Shared Sets" value={stats.sets_tracked.toLocaleString()} sub="click to view all"
+                onClick={() => {
+                  document.getElementById('shared-sets-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }} />
+              <div style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} />
+              <RecordStat label="Want List" value={stats.want_list.toLocaleString()} sub="click to view"
+                onClick={() => setWantListOpen(true)} />
+            </div>
+          </div>
+        </section>
+
         <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 32, alignItems: 'start' }}>
           <aside>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
-              <div style={{
-                width: 140, height: 140, borderRadius: '50%',
-                border: '3px solid var(--plum)', boxShadow: '0 4px 0 var(--plum)',
-                background: profile?.avatar_url
-                  ? `var(--cream) url(${profile.avatar_url}) center/cover no-repeat`
-                  : 'var(--mustard)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontFamily: 'var(--font-display)', fontSize: 48, color: 'var(--plum)', fontWeight: 700,
-              }}>
-                {!profile?.avatar_url && name.slice(0, 1).toUpperCase()}
-              </div>
-            </div>
             <div className="panel-bordered" style={{ padding: 24 }}>
               <div className="eyebrow" style={{ marginBottom: 14, color: 'var(--orange)' }}>★ The Collector ★</div>
               <div className="display" style={{ fontSize: 26, color: 'var(--plum)', marginBottom: 4 }}>{name}</div>
@@ -262,28 +313,6 @@ export default function ProfilePage() {
             )}
           </main>
         </div>
-
-        <section style={{ marginTop: 40 }}>
-          <div className="panel-bordered" style={{ padding: '24px 28px', position: 'relative' }}>
-            <div style={{
-              position: 'absolute', top: -13, left: 24, background: 'var(--orange)', color: 'var(--cream)',
-              padding: '3px 14px', border: '2px solid var(--plum)', borderRadius: 100,
-              fontFamily: 'var(--font-body)', fontSize: 10.5, fontWeight: 700,
-              letterSpacing: '0.18em', textTransform: 'uppercase', boxShadow: '0 2px 0 var(--plum)',
-            }}>★ The Record ★</div>
-            <div style={{ display: 'flex', alignItems: 'stretch' }}>
-              <RecordStat label="Cards Owned" value={stats.cards_owned.toLocaleString()} sub="across the collection" />
-              <div style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} />
-              <RecordStat label="Shared Sets" value={stats.sets_tracked.toLocaleString()} sub="click to view all"
-                onClick={() => {
-                  document.getElementById('shared-sets-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }} />
-              <div style={{ width: 1, borderLeft: '2px dotted var(--plum)', margin: '0 24px', flexShrink: 0 }} />
-              <RecordStat label="Want List" value={stats.want_list.toLocaleString()} sub="click to view"
-                onClick={() => setWantListOpen(true)} />
-            </div>
-          </div>
-        </section>
       </div>
 
       <footer style={{
