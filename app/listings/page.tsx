@@ -7,6 +7,7 @@ import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
+import MarketResearchModal from '@/components/MarketResearchModal';
 
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
@@ -237,6 +238,7 @@ function ListingsPageContent() {
   const [editing, setEditing] = useState<Partial<Listing> | null>(null);
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
+  const [researchOpen, setResearchOpen] = useState(false);
   const [formError, setFormError] = useState('');
    const [importOpen, setImportOpen] = useState(false);
   const [newPickerOpen, setNewPickerOpen] = useState(false);
@@ -813,8 +815,24 @@ function ListingsPageContent() {
           error={formError}
           onUploadPhoto={uploadPhoto}
           onDeletePhoto={deletePhoto}
+          onResearchPrice={() => setResearchOpen(true)}
         />
       )}
+      <MarketResearchModal
+        open={researchOpen && !!editing}
+        onClose={() => setResearchOpen(false)}
+        card={{
+          year: editing?.year ?? null,
+          brand: editing?.brand ?? null,
+          card_number: editing?.card_number ?? null,
+          player: editing?.player ?? null,
+          grade: editing?.grade ?? null,
+          grading_company: editing?.grading_company ?? null,
+          raw_grade: editing?.raw_grade ?? null,
+          listing_id: editing?.id ?? null,
+        }}
+        onApply={(v) => setEditing(prev => prev ? { ...prev, asking_price: Math.round(v * 100) / 100 } : prev)}
+      />
       {importOpen && (
         <ImportListingsModal
           userId={userId}
@@ -932,7 +950,7 @@ function ListingsPageContent() {
 }
 
 function ListingEditor({
-  draft, onChange, onCancel, onSave, saving, error, onUploadPhoto, onDeletePhoto,
+  draft, onChange, onCancel, onSave, saving, error, onUploadPhoto, onDeletePhoto, onResearchPrice,
 }: {
   draft: Partial<Listing>;
   onChange: (next: Partial<Listing>) => void;
@@ -942,6 +960,7 @@ function ListingEditor({
   error: string;
   onUploadPhoto: (file: File) => Promise<void>;
   onDeletePhoto: (idx: number) => Promise<void>;
+  onResearchPrice: () => void;
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -1061,7 +1080,13 @@ function ListingEditor({
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <div className="eyebrow" style={labelStyle}>Asking Price ($)</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <div className="eyebrow" style={{ ...labelStyle, marginBottom: 0 }}>Asking Price ($)</div>
+                <button type="button" onClick={onResearchPrice}
+                  style={{ background: 'transparent', border: 0, color: 'var(--teal)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                  📈 Research Prices
+                </button>
+              </div>
               <input type="number" step="0.01" value={draft.asking_price ?? ''} onChange={e => set('asking_price', e.target.value ? Number(e.target.value) : null)}
                 placeholder="0.00" style={fieldStyle} />
             </div>
@@ -1559,6 +1584,7 @@ function InventoryListingWizard({
   onClose: () => void;
   onComplete: (newListings: Listing[]) => void;
 }) {
+  const [researchIdx, setResearchIdx] = useState<number | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sets, setSets] = useState<InventorySet[]>([]);
   const [setsLoading, setSetsLoading] = useState(true);
@@ -1995,8 +2021,18 @@ function InventoryListingWizard({
                             onChange={(v) => updateDraft(i, { grade: v || null })} />
                         </>
                       )}
-                      <LabeledInput label="Asking Price" type="number" value={d.asking_price ?? ''}
-                        onChange={(v) => updateDraft(i, { asking_price: v === '' ? null : Number(v) })} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>Asking Price</span>
+                          <button type="button" onClick={() => setResearchIdx(i)}
+                            style={{ background: 'transparent', border: 0, color: 'var(--teal)', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                            📈 Research
+                          </button>
+                        </div>
+                        <input type="number" value={d.asking_price ?? ''}
+                          onChange={(e) => updateDraft(i, { asking_price: e.target.value === '' ? null : Number(e.target.value) })}
+                          style={{ padding: '6px 8px', border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--paper)', color: 'var(--plum)', fontFamily: 'var(--font-body)', fontSize: 13 }} />
+                      </div>
                       <LabeledInput label="Cost" type="number" value={d.cost ?? ''}
                         onChange={(v) => updateDraft(i, { cost: v === '' ? null : Number(v) })} />
                     </div>
@@ -2035,6 +2071,22 @@ function InventoryListingWizard({
           </div>
         )}
       </div>
+      <MarketResearchModal
+        open={researchIdx !== null && researchIdx < drafts.length}
+        onClose={() => setResearchIdx(null)}
+        card={researchIdx !== null && drafts[researchIdx] ? {
+          year: drafts[researchIdx].year ?? null,
+          brand: drafts[researchIdx].brand ?? null,
+          card_number: drafts[researchIdx].card_number ?? null,
+          player: drafts[researchIdx].player ?? null,
+          grade: drafts[researchIdx].grade ?? null,
+          grading_company: drafts[researchIdx].grading_company ?? null,
+          raw_grade: drafts[researchIdx].raw_grade ?? null,
+        } : { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null }}
+        onApply={(value) => {
+          if (researchIdx !== null) updateDraft(researchIdx, { asking_price: Math.round(value * 100) / 100 });
+        }}
+      />
     </div>
   );
 }
