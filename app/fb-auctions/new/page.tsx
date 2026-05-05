@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
+import { replaceImageBg } from '@/lib/collageBg';
 import SCLogo from '@/components/SCLogo';
 
 type TemplateType = 'single' | 'multi';
@@ -125,8 +126,12 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     if (!ctx) return null;
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(front, 0, (h - front.naturalHeight) / 2);
-    if (back) ctx.drawImage(back, front.naturalWidth + gap, (h - back.naturalHeight) / 2);
+    const frontSrc = replaceImageBg(front, bgColor);
+    ctx.drawImage(frontSrc, 0, (h - front.naturalHeight) / 2);
+    if (back) {
+      const backSrc = replaceImageBg(back, bgColor);
+      ctx.drawImage(backSrc, front.naturalWidth + gap, (h - back.naturalHeight) / 2);
+    }
     return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.95));
   } catch {
     return null;

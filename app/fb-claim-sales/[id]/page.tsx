@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
+import { replaceImageBg } from '@/lib/collageBg';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'closed' | 'settled';
@@ -138,7 +139,8 @@ async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bg
     const x = c * (cellW + pad), y = r * (cellH + pad);
     const ratio = Math.min(cellW / img.naturalWidth, cellH / img.naturalHeight);
     const w = img.naturalWidth * ratio, h = img.naturalHeight * ratio;
-    ctx.drawImage(img, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
+    const src = replaceImageBg(img, bgColor);
+    ctx.drawImage(src, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
   }
   return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.92));
 }
