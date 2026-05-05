@@ -1,9 +1,21 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Papa from 'papaparse';
 import SCLogo from '@/components/SCLogo';
+
+type ExistingTemplate = {
+  id: string;
+  year: number | null;
+  brand: string | null;
+  title: string | null;
+  sport: string | null;
+  card_count: number | null;
+  is_official: boolean | null;
+  updated_at: string | null;
+  created_at: string | null;
+};
 
 const EXPECTED_HEADERS = [
   'Card #', 'Player', 'Owned', 'Raw Grade', 'Graded',
@@ -53,6 +65,52 @@ export default function AdminTemplatesPage() {
   const [items, setItems] = useState<ParsedItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<string>('');
+  const [existing, setExisting] = useState<ExistingTemplate[]>([]);
+  const [existingLoading, setExistingLoading] = useState(true);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Partial<ExistingTemplate>>({});
+  const [search, setSearch] = useState('');
+  const [working, setWorking] = useState<string | null>(null);
+
+  async function loadExisting() {
+    setExistingLoading(true);
+    try {
+      const res = await fetch('/api/admin/set-templates');
+      const data = await res.json();
+      if (res.ok) setExisting(data.templates || []);
+    } catch {} finally {
+      setExistingLoading(false);
+    }
+  }
+  useEffect(() => { loadExisting(); }, []);
+
+  async function deleteTemplate(t: ExistingTemplate) {
+    if (!confirm(`Delete template "${t.title}" (${t.year} ${t.brand})? Users who have already started a set from this template are unaffected.`)) return;
+    setWorking(t.id);
+    const res = await fetch('/api/admin/set-templates', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: t.id }),
+    });
+    setWorking(null);
+    if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Delete failed'); return; }
+    setExisting(prev => prev.filter(x => x.id !== t.id));
+  }
+  async function saveEdit() {
+    if (!editId) return;
+    setWorking(editId);
+    const res = await fetch('/api/admin/set-templates', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: editId, ...editDraft }),
+    });
+    setWorking(null);
+    if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Save failed'); return; }
+    const j = await res.json();
+    setExisting(prev => prev.map(x => x.id === editId ? { ...x, ...(j.template || {}) } : x));
+    setEditId(null);
+    setEditDraft({});
+  }
 
   function handleFiles(files: FileList | null) {
     if (!files) return;
@@ -121,6 +179,7 @@ export default function AdminTemplatesPage() {
       if (!res.ok) throw new Error(data.error || 'Upload failed');
       setResult(`✓ Uploaded ${data.inserted} template(s).`);
       setItems([]);
+      loadExisting();
     } catch (e) {
       setResult(`✗ ${e instanceof Error ? e.message : 'Upload failed'}`);
     } finally {
@@ -202,6 +261,109 @@ export default function AdminTemplatesPage() {
             </div>
           </section>
         )}
+
+        <section className="panel-bordered" style={{ padding: '24px 28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div className="display" style={{ fontSize: 20, color: 'var(--plum)', flex: 1 }}>
+              Existing Templates ({existing.length})
+            </div>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="🔍 Filter by year / brand / title…"
+              style={{
+                padding: '6px 12px', minWidth: 220, maxWidth: 320,
+                border: '1.5px solid var(--plum)', borderRadius: 100,
+                background: 'var(--cream)', color: 'var(--plum)',
+                fontFamily: 'var(--font-body)', fontSize: 12.5,
+              }} />
+            <button onClick={loadExisting} className="btn btn-ghost btn-sm">↻ Refresh</button>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
+            Re-uploading a CSV with the same year + brand + title automatically overrides the existing template (rows are replaced).
+          </p>
+          {existingLoading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
+          ) : existing.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No templates yet. Drop a CSV above.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                <tr>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Year</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Brand</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Title</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Sport</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }}>Cards</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'left' }}>Updated</th>
+                  <th style={{ padding: '8px 10px', textAlign: 'right' }} aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {existing
+                  .filter(t => {
+                    const q = search.trim().toLowerCase();
+                    if (!q) return true;
+                    return `${t.year || ''} ${t.brand || ''} ${t.title || ''}`.toLowerCase().includes(q);
+                  })
+                  .map(t => {
+                    const isEditing = editId === t.id;
+                    return (
+                      <tr key={t.id} style={{ borderTop: '1px solid var(--rule)' }}>
+                        <td style={{ padding: '8px 10px' }}>
+                          {isEditing ? (
+                            <input value={String(editDraft.year ?? t.year ?? '')} onChange={e => setEditDraft(d => ({ ...d, year: Number(e.target.value) || null }))}
+                              className="input-sc" style={{ width: 70, fontSize: 12, padding: '4px 8px' }} />
+                          ) : <span className="mono">{t.year}</span>}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          {isEditing ? (
+                            <input value={String(editDraft.brand ?? t.brand ?? '')} onChange={e => setEditDraft(d => ({ ...d, brand: e.target.value }))}
+                              className="input-sc" style={{ width: 120, fontSize: 12, padding: '4px 8px' }} />
+                          ) : t.brand}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          {isEditing ? (
+                            <input value={String(editDraft.title ?? t.title ?? '')} onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))}
+                              className="input-sc" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }} />
+                          ) : t.title}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          {isEditing ? (
+                            <select value={String(editDraft.sport ?? t.sport ?? 'baseball')} onChange={e => setEditDraft(d => ({ ...d, sport: e.target.value }))}
+                              className="input-sc" style={{ width: 110, fontSize: 12, padding: '4px 8px' }}>
+                              {SPORTS.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          ) : t.sport}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }} className="mono">{t.card_count ?? 0}</td>
+                        <td style={{ padding: '8px 10px', fontSize: 11, color: 'var(--ink-soft)' }}>
+                          {t.updated_at ? new Date(t.updated_at).toLocaleDateString() : '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {isEditing ? (
+                            <>
+                              <button onClick={saveEdit} disabled={working === t.id} className="btn btn-primary btn-sm" style={{ marginRight: 6 }}>
+                                {working === t.id ? 'Saving…' : 'Save'}
+                              </button>
+                              <button onClick={() => { setEditId(null); setEditDraft({}); }} className="btn btn-ghost btn-sm">Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => { setEditId(t.id); setEditDraft({ year: t.year, brand: t.brand, title: t.title, sport: t.sport }); }}
+                                className="btn btn-ghost btn-sm" style={{ marginRight: 6 }}>Edit</button>
+                              <button onClick={() => deleteTemplate(t)} disabled={working === t.id}
+                                className="btn btn-ghost btn-sm" style={{ color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>
+                                🗑 Delete
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          )}
+        </section>
       </div>
     </div>
   );
