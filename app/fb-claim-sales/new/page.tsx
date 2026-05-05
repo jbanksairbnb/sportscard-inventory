@@ -369,6 +369,12 @@ export default function NewClaimSalePage() {
               })}
             </div>
           )}
+          {lots.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1.5px dashed var(--rule)' }}>
+              <button onClick={() => addLot('single')} className="btn btn-ghost btn-sm">+ Single card</button>
+              <button onClick={() => addLot('group')} className="btn btn-primary btn-sm">+ Group lot (up to 6)</button>
+            </div>
+          )}
         </section>
 
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
