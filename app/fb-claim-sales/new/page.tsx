@@ -35,7 +35,8 @@ type LotDraft = {
   listingIds: (string | null)[];    // length 1 for single, 1..6 for group
   itemPrices: (number | null)[];    // parallel to listingIds when pricing=per_item
   groupPrice: number | null;
-  collageUrl: string;
+  collageUrl: string;       // fronts collage
+  backCollageUrl: string;   // backs collage
   commentBody: string;
   commentTouched: boolean;
 };
@@ -82,6 +83,88 @@ function buildCommentBody(
     lines.push('', `Group price: ${fmtMoney(lot.groupPrice)}`);
   }
   return lines.join('\n');
+}
+
+async function downloadJpeg(url: string, filename: string) {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error('fetch failed');
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    // Fallback: open the URL — user can right-click → save.
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = url;
+  });
+}
+
+// Composite all of one side (front or back) onto a single canvas, tightly
+// packed to minimize whitespace. Photos sit at index 0 (front) and 1 (back)
+// in the listing's photos array. Layout adapts to the count: 1→1×1, 2→2×1,
+// 3-4→2×2, 5-6→3×2, 7-9→3×3, 10+→4-wide.
+async function buildSideCollage(items: Listing[], side: 'front' | 'back'): Promise<Blob | null> {
+  if (items.length === 0) return null;
+  const photoIdx = side === 'front' ? 0 : 1;
+  const loaded: HTMLImageElement[] = [];
+  for (const item of items) {
+    const url = item.photos?.[photoIdx];
+    if (!url) continue;
+    try {
+      const img = await loadImage(url);
+      loaded.push(img);
+    } catch {
+      // skip — listing missing this side's photo, carry on
+    }
+  }
+  if (loaded.length === 0) return null;
+
+  // Standard trading-card aspect ~2.5:3.5 → 600×840 cell.
+  const cellW = 600;
+  const cellH = 840;
+  const pad = 8;  // tight padding so the collage isn't mostly background
+  let cols = 1;
+  if (loaded.length === 2) cols = 2;
+  else if (loaded.length <= 4) cols = 2;
+  else if (loaded.length <= 9) cols = 3;
+  else cols = 4;
+  const rows = Math.ceil(loaded.length / cols);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * cellW + (cols - 1) * pad;
+  canvas.height = rows * cellH + (rows - 1) * pad;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let i = 0; i < loaded.length; i++) {
+    const img = loaded[i];
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    const x = c * (cellW + pad);
+    const y = r * (cellH + pad);
+    const ratio = Math.min(cellW / img.naturalWidth, cellH / img.naturalHeight);
+    const w = img.naturalWidth * ratio;
+    const h = img.naturalHeight * ratio;
+    ctx.drawImage(img, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
+  }
+  return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.92));
 }
 
 function buildPostBody(title: string, lots: LotDraft[], paymentText: string, shippingText: string, footer: string): string {
@@ -162,6 +245,7 @@ export default function NewClaimSalePage() {
       itemPrices: kind === 'single' ? [null] : Array(6).fill(null),
       groupPrice: null,
       collageUrl: '',
+      backCollageUrl: '',
       commentBody: '',
       commentTouched: false,
     }]);
@@ -244,6 +328,7 @@ export default function NewClaimSalePage() {
           kind: lot.kind,
           comment_body: lot.commentBody,
           collage_url: lot.collageUrl.trim() || null,
+          back_collage_url: lot.backCollageUrl.trim() || null,
           group_price: lot.pricing === 'group' ? lot.groupPrice : null,
         })
         .select().single();
@@ -346,16 +431,24 @@ export default function NewClaimSalePage() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {lots.map((lot, i) => (
-                <LotEditor key={lot.id} onResearch={(descriptor, apply) => setResearch({ descriptor, apply })}
-                  lot={lot}
-                  index={i}
-                  isLast={i === lots.length - 1}
-                  listings={listings}
-                  onPatch={patch => patchLot(lot.id, patch)}
-                  onRemove={() => removeLot(lot.id)}
-                  onMove={dir => moveLot(lot.id, dir)} />
-              ))}
+              {lots.map((lot, i) => {
+                const usedInOtherLots = new Set<string>();
+                for (const ol of lots) {
+                  if (ol.id === lot.id) continue;
+                  for (const id of ol.listingIds) if (id) usedInOtherLots.add(id);
+                }
+                return (
+                  <LotEditor key={lot.id} onResearch={(descriptor, apply) => setResearch({ descriptor, apply })}
+                    lot={lot}
+                    index={i}
+                    isLast={i === lots.length - 1}
+                    listings={listings}
+                    usedInOtherLots={usedInOtherLots}
+                    onPatch={patch => patchLot(lot.id, patch)}
+                    onRemove={() => removeLot(lot.id)}
+                    onMove={dir => moveLot(lot.id, dir)} />
+                );
+              })}
             </div>
           )}
         </section>
@@ -404,16 +497,38 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove, onResearch }: {
+function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onRemove, onMove, onResearch }: {
   lot: LotDraft;
   index: number;
   isLast: boolean;
   listings: Listing[];
+  usedInOtherLots: Set<string>;
   onPatch: (patch: Partial<LotDraft>) => void;
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
   onResearch: (descriptor: CardDescriptor, apply: (v: number) => void) => void;
 }) {
+  const [buildingCollage, setBuildingCollage] = useState(false);
+  // Sorted by year desc → card # natural asc → player asc.
+  const sortedListings = React.useMemo(() => {
+    return [...listings].sort((a, b) => {
+      const yA = a.year || 0, yB = b.year || 0;
+      if (yA !== yB) return yB - yA;
+      const cmp = (a.card_number || '').localeCompare(b.card_number || '', undefined, { numeric: true });
+      if (cmp !== 0) return cmp;
+      return (a.player || '').localeCompare(b.player || '');
+    });
+  }, [listings]);
+  function optionsForSlot(slotPos: number): Listing[] {
+    const currentId = lot.listingIds[slotPos] || null;
+    return sortedListings.filter(l => {
+      if (currentId === l.id) return true;
+      if (usedInOtherLots.has(l.id)) return false;
+      // Skip listings already used in another slot of THIS lot.
+      if (lot.listingIds.some((id, i) => id === l.id && i !== slotPos)) return false;
+      return true;
+    });
+  }
   function descriptorFromListing(id: string | null): CardDescriptor {
     const l = id ? listings.find(x => x.id === id) : null;
     return {
@@ -505,7 +620,7 @@ function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove, on
             )}
             <select value={id || ''} onChange={e => setListingAt(pos, e.target.value)} className="input-sc" style={{ flex: 1 }}>
               <option value="">— pick a listing —</option>
-              {listings.map(l => (
+              {optionsForSlot(pos).map(l => (
                 <option key={l.id} value={l.id}>{listingLabel(l)}</option>
               ))}
             </select>
@@ -540,11 +655,85 @@ function LotEditor({ lot, index, isLast, listings, onPatch, onRemove, onMove, on
       </div>
 
       <div style={{ marginTop: 10 }}>
-        <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700, marginBottom: 4 }}>
-          Collage image URL (optional — paste your prepared image URL or upload separately)
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+          <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>
+            Collage image URL (optional — paste a URL or auto-build from this lot's photos)
+          </div>
+          <button type="button" disabled={buildingCollage}
+            onClick={async () => {
+              const filledListings = lot.listingIds
+                .map(id => id ? listings.find(l => l.id === id) : null)
+                .filter((l): l is Listing => !!l && (l.photos?.length ?? 0) > 0);
+              if (filledListings.length === 0) {
+                alert('Pick at least one listing with a photo first.');
+                return;
+              }
+              setBuildingCollage(true);
+              try {
+                const supabase = createClient();
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) { alert('Not signed in.'); return; }
+                const stamp = Date.now();
+                const tag = Math.random().toString(36).slice(2, 8);
+                async function uploadSide(side: 'front' | 'back'): Promise<string | null> {
+                  const blob = await buildSideCollage(filledListings, side);
+                  if (!blob) return null;
+                  const path = `${user!.id}/lot-collages/${stamp}-${tag}-${side}.jpg`;
+                  const { error } = await supabase.storage.from('card-images').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+                  if (error) { console.warn(`upload ${side} collage failed:`, error.message); return null; }
+                  return supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
+                }
+                const [frontUrl, backUrl] = await Promise.all([uploadSide('front'), uploadSide('back')]);
+                const patch: Partial<LotDraft> = {};
+                if (frontUrl) patch.collageUrl = frontUrl;
+                if (backUrl) patch.backCollageUrl = backUrl;
+                if (!frontUrl && !backUrl) {
+                  alert('Could not build collages — none of the selected listings had usable photos.');
+                  return;
+                }
+                onPatch(patch);
+              } finally {
+                setBuildingCollage(false);
+              }
+            }}
+            style={{ background: 'transparent', border: 0, color: 'var(--teal)', fontSize: 11, fontWeight: 700, cursor: buildingCollage ? 'not-allowed' : 'pointer', textDecoration: 'underline', padding: 0, marginLeft: 'auto' }}>
+            {buildingCollage ? 'Building…' : '🖼 Auto-build front + back collages'}
+          </button>
         </div>
-        <input value={lot.collageUrl} onChange={e => onPatch({ collageUrl: e.target.value })}
-          className="input-sc" style={{ width: '100%' }} placeholder="https://…" />
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {(['front', 'back'] as const).map(side => {
+            const url = side === 'front' ? lot.collageUrl : lot.backCollageUrl;
+            const setUrl = (v: string) => onPatch(side === 'front' ? { collageUrl: v } : { backCollageUrl: v });
+            const filename = `lot-${index + 1}-${side === 'front' ? 'fronts' : 'backs'}.jpg`;
+            return (
+              <div key={side} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180 }}>
+                <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {side === 'front' ? 'Fronts' : 'Backs'}
+                </div>
+                {url ? (
+                  <>
+                    <a href={url} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'block', width: 180, height: 120, background: 'var(--paper)', borderRadius: 6, border: '1.5px solid var(--rule)', overflow: 'hidden' }}>
+                      <img src={url} alt={`${side} collage`}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    </a>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={() => downloadJpeg(url, filename)}
+                        className="btn btn-primary btn-sm" style={{ fontSize: 11, padding: '4px 10px' }}>
+                        ⬇ Download
+                      </button>
+                      <button type="button" onClick={() => setUrl('')}
+                        className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '4px 8px' }}>✕</button>
+                    </div>
+                  </>
+                ) : (
+                  <input value={url} onChange={e => setUrl(e.target.value)}
+                    className="input-sc" style={{ width: 220, fontSize: 11 }} placeholder="https://… or auto-build above" />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
