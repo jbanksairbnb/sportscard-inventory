@@ -535,7 +535,7 @@ function ListingsPageContent() {
   async function bulkDelete() {
     if (selectedIds.size === 0) return;
     const n = selectedIds.size;
-    if (!confirm(`Delete ${n} listing${n === 1 ? '' : 's'}? Listings with purchase history will be hidden (kept for records); the rest will be permanently deleted.`)) return;
+    if (!confirm(`Delete ${n} listing${n === 1 ? '' : 's'}?\n\nListings linked to a sale (claim sale, auction lot, or purchase) will be archived (status set to "removed", kept for sales history). Listings with no sales history will be permanently deleted.`)) return;
     setBulkWorking(true);
     const supabase = createClient();
     const ids = Array.from(selectedIds);
@@ -575,6 +575,11 @@ function ListingsPageContent() {
     setBulkWorking(false);
     setListings(prev => prev.filter(l => !selectedIds.has(l.id)));
     setSelectedIds(new Set());
+    if (softIds.length > 0 && hardIds.length > 0) {
+      alert(`Done — ${hardIds.length} permanently deleted, ${softIds.length} archived (kept for sales history).`);
+    } else if (softIds.length > 0) {
+      alert(`Archived ${softIds.length} listing${softIds.length === 1 ? '' : 's'} (linked to a sale, kept for sales history).`);
+    }
   }
 
 
