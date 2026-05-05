@@ -480,9 +480,18 @@ function ListingsPageContent() {
     if (!confirm(`Delete listing "${l.title}"? This cannot be undone.`)) return;
     setWorking(l.id);
     const supabase = createClient();
-    const { data: linked } = await supabase.from('purchases').select('id').eq('listing_id', l.id).limit(1);
-    const hasPurchases = (linked || []).length > 0;
-    if (hasPurchases) {
+    // A listing is blocked from hard delete if any other table still
+    // references it via FK. Soft-delete (status='removed') in that case so
+    // history is preserved.
+    const [purchaseLink, claimLink, auctionLink] = await Promise.all([
+      supabase.from('purchases').select('id').eq('listing_id', l.id).limit(1),
+      supabase.from('fb_claim_sale_items').select('id').eq('listing_id', l.id).limit(1),
+      supabase.from('fb_auction_lots').select('id').eq('listing_id', l.id).limit(1),
+    ]);
+    const isReferenced = (purchaseLink.data || []).length > 0
+      || (claimLink.data || []).length > 0
+      || (auctionLink.data || []).length > 0;
+    if (isReferenced) {
       const { error } = await supabase.from('listings').update({ status: 'removed' }).eq('id', l.id);
       setWorking(null);
       if (error) { alert('Delete failed: ' + error.message); return; }
@@ -531,8 +540,17 @@ function ListingsPageContent() {
     const supabase = createClient();
     const ids = Array.from(selectedIds);
 
-    const { data: linked } = await supabase.from('purchases').select('listing_id').in('listing_id', ids);
-    const blockedIds = new Set((linked || []).map(p => p.listing_id));
+    // Listings referenced by any other table (purchases, claim sale items,
+    // auction lots) need a soft delete so we don't trip an FK constraint.
+    const [purchaseRes, claimRes, auctionRes] = await Promise.all([
+      supabase.from('purchases').select('listing_id').in('listing_id', ids),
+      supabase.from('fb_claim_sale_items').select('listing_id').in('listing_id', ids),
+      supabase.from('fb_auction_lots').select('listing_id').in('listing_id', ids),
+    ]);
+    const blockedIds = new Set<string>();
+    for (const r of purchaseRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
+    for (const r of claimRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
+    for (const r of auctionRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
     const softIds = ids.filter(id => blockedIds.has(id));
     const hardIds = ids.filter(id => !blockedIds.has(id));
 
