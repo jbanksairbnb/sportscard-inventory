@@ -116,9 +116,13 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
   try {
     const front = await loadImage(frontUrl);
     const back = backUrl ? await loadImage(backUrl).catch(() => null) : null;
-    const gap = back ? 20 : 0;
-    const w = front.naturalWidth + (back ? back.naturalWidth + gap : 0);
-    const h = Math.max(front.naturalHeight, back?.naturalHeight || 0);
+    const frontSrc = replaceImageBg(front, bgColor);
+    const backSrc = back ? replaceImageBg(back, bgColor) : null;
+    const fw = frontSrc.width, fh = frontSrc.height;
+    const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
+    const gap = backSrc ? 20 : 0;
+    const w = fw + (backSrc ? bw + gap : 0);
+    const h = Math.max(fh, bh);
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -126,11 +130,9 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     if (!ctx) return null;
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, w, h);
-    const frontSrc = replaceImageBg(front, bgColor);
-    ctx.drawImage(frontSrc, 0, (h - front.naturalHeight) / 2);
-    if (back) {
-      const backSrc = replaceImageBg(back, bgColor);
-      ctx.drawImage(backSrc, front.naturalWidth + gap, (h - back.naturalHeight) / 2);
+    ctx.drawImage(frontSrc, 0, (h - fh) / 2);
+    if (backSrc) {
+      ctx.drawImage(backSrc, fw + gap, (h - bh) / 2);
     }
     return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.95));
   } catch {

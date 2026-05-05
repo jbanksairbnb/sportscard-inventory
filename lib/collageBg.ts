@@ -4,25 +4,28 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
-// Replace the scan background of an image with the chosen color. We flood-fill
-// from the canvas edges so only the connected outer region is recolored — the
-// card itself stays pristine. If the edge sample isn't clearly black or white,
-// we leave the image alone.
-export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCanvasElement | HTMLImageElement {
+// Replace the scan background of an image with the chosen color and crop to
+// the card's bounding box. We flood-fill from the canvas edges so only the
+// connected outer region is recolored (the card itself stays pristine), then
+// trim the canvas to the bbox of un-filled pixels so collage layout doesn't
+// inherit the scan's padding.
+export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCanvasElement {
   const w = img.naturalWidth, h = img.naturalHeight;
-  if (!w || !h) return img;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return img;
+  const original = document.createElement('canvas');
+  original.width = Math.max(1, w);
+  original.height = Math.max(1, h);
+  const ctx = original.getContext('2d');
+  if (!ctx || !w || !h) {
+    if (ctx) ctx.drawImage(img, 0, 0);
+    return original;
+  }
   ctx.drawImage(img, 0, 0);
 
   let imgData: ImageData;
   try {
     imgData = ctx.getImageData(0, 0, w, h);
   } catch {
-    return img;
+    return original;
   }
   const data = imgData.data;
 
@@ -52,16 +55,16 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
 
   const isBlack = lum < 60;
   const isWhite = lum > 215;
-  if (!isBlack && !isWhite) return img;
+  if (!isBlack && !isWhite) return original;
 
   const target = hexToRgb(targetHex);
   const targetLum = (target.r + target.g + target.b) / 3;
-  if (isBlack && targetLum < 30) return img;
-  if (isWhite && targetLum > 230) return img;
+  if (isBlack && targetLum < 30) return original;
+  if (isWhite && targetLum > 230) return original;
 
   const tolerance = isBlack ? 70 : 55;
   const tolSq = tolerance * tolerance;
-  const visited = new Uint8Array(w * h);
+  const filled = new Uint8Array(w * h);
   const queue: number[] = [];
   for (let x = 0; x < w; x++) {
     queue.push(x);
@@ -75,23 +78,55 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
   let head = 0;
   while (head < queue.length) {
     const idx = queue[head++];
-    if (visited[idx]) continue;
-    visited[idx] = 1;
+    if (filled[idx]) continue;
     const i = idx * 4;
     const dr = data[i] - bgR;
     const dg = data[i + 1] - bgG;
     const db = data[i + 2] - bgB;
     if (dr * dr + dg * dg + db * db > tolSq) continue;
+    filled[idx] = 1;
     data[i] = target.r;
     data[i + 1] = target.g;
     data[i + 2] = target.b;
     const x = idx % w;
     const y = (idx - x) / w;
-    if (x > 0 && !visited[idx - 1]) queue.push(idx - 1);
-    if (x < w - 1 && !visited[idx + 1]) queue.push(idx + 1);
-    if (y > 0 && !visited[idx - w]) queue.push(idx - w);
-    if (y < h - 1 && !visited[idx + w]) queue.push(idx + w);
+    if (x > 0 && !filled[idx - 1]) queue.push(idx - 1);
+    if (x < w - 1 && !filled[idx + 1]) queue.push(idx + 1);
+    if (y > 0 && !filled[idx - w]) queue.push(idx - w);
+    if (y < h - 1 && !filled[idx + w]) queue.push(idx + w);
   }
   ctx.putImageData(imgData, 0, 0);
-  return canvas;
+
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      if (!filled[row + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return original;
+
+  const pad = 4;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(w - 1, maxX + pad);
+  maxY = Math.min(h - 1, maxY + pad);
+  const cw = maxX - minX + 1;
+  const ch = maxY - minY + 1;
+  if (cw === w && ch === h) return original;
+
+  const cropped = document.createElement('canvas');
+  cropped.width = cw;
+  cropped.height = ch;
+  const cctx = cropped.getContext('2d');
+  if (!cctx) return original;
+  cctx.fillStyle = targetHex;
+  cctx.fillRect(0, 0, cw, ch);
+  cctx.drawImage(original, minX, minY, cw, ch, 0, 0, cw, ch);
+  return cropped;
 }

@@ -112,20 +112,25 @@ async function downloadJpeg(url: string, filename: string) {
 async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bgColor: string = '#ffffff'): Promise<Blob | null> {
   if (items.length === 0) return null;
   const photoIdx = side === 'front' ? 0 : 1;
-  const loaded: HTMLImageElement[] = [];
+  const processed: HTMLCanvasElement[] = [];
   for (const item of items) {
     const url = item.photos?.[photoIdx];
     if (!url) continue;
-    try { loaded.push(await loadImage(url)); } catch { /* skip */ }
+    try {
+      const img = await loadImage(url);
+      processed.push(replaceImageBg(img, bgColor));
+    } catch { /* skip */ }
   }
-  if (loaded.length === 0) return null;
-  const cellW = 600, cellH = 840, pad = 8;
+  if (processed.length === 0) return null;
   let cols = 1;
-  if (loaded.length === 2) cols = 2;
-  else if (loaded.length <= 4) cols = 2;
-  else if (loaded.length <= 9) cols = 3;
+  if (processed.length === 2) cols = 2;
+  else if (processed.length <= 4) cols = 2;
+  else if (processed.length <= 9) cols = 3;
   else cols = 4;
-  const rows = Math.ceil(loaded.length / cols);
+  const rows = Math.ceil(processed.length / cols);
+  const cellW = Math.max(...processed.map(p => p.width));
+  const cellH = Math.max(...processed.map(p => p.height));
+  const pad = 8;
   const canvas = document.createElement('canvas');
   canvas.width = cols * cellW + (cols - 1) * pad;
   canvas.height = rows * cellH + (rows - 1) * pad;
@@ -133,13 +138,12 @@ async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bg
   if (!ctx) return null;
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let i = 0; i < loaded.length; i++) {
-    const img = loaded[i];
+  for (let i = 0; i < processed.length; i++) {
+    const src = processed[i];
     const c = i % cols, r = Math.floor(i / cols);
     const x = c * (cellW + pad), y = r * (cellH + pad);
-    const ratio = Math.min(cellW / img.naturalWidth, cellH / img.naturalHeight);
-    const w = img.naturalWidth * ratio, h = img.naturalHeight * ratio;
-    const src = replaceImageBg(img, bgColor);
+    const ratio = Math.min(cellW / src.width, cellH / src.height);
+    const w = src.width * ratio, h = src.height * ratio;
     ctx.drawImage(src, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
   }
   return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.92));
