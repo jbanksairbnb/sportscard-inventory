@@ -120,7 +120,7 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     const backSrc = back ? replaceImageBg(back, bgColor) : null;
     const fw = frontSrc.width, fh = frontSrc.height;
     const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
-    const gap = backSrc ? 100 : 0;
+    const gap = backSrc ? 60 : 0;
     const w = fw + (backSrc ? bw + gap : 0);
     const h = Math.max(fh, bh);
     const canvas = document.createElement('canvas');

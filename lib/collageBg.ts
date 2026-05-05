@@ -111,7 +111,7 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
   }
   if (maxX < 0) return original;
 
-  const pad = 4;
+  const pad = 12;
   minX = Math.max(0, minX - pad);
   minY = Math.max(0, minY - pad);
   maxX = Math.min(w - 1, maxX + pad);
