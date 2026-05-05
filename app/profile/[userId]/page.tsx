@@ -173,7 +173,7 @@ export default function ProfilePage() {
         }} />
         <div style={{
           maxWidth: 1280, margin: '0 auto', padding: '0 28px',
-          display: 'flex', alignItems: 'flex-end', gap: 20, marginTop: -64, position: 'relative', zIndex: 1,
+          display: 'flex', alignItems: 'flex-start', gap: 20, marginTop: -64, position: 'relative', zIndex: 1,
         }}>
           <div style={{ width: 128, height: 128, flexShrink: 0 }}>
             <div style={{
@@ -188,7 +188,10 @@ export default function ProfilePage() {
               {!profile?.avatar_url && name.slice(0, 1).toUpperCase()}
             </div>
           </div>
-          <div style={{ flex: 1, paddingBottom: 6 }}>
+          {/* Match homepage Hero: text sits *below* the cover line, not overlapping it.
+              marginTop: -64 lifts the avatar half-into the cover; paddingTop: 72 keeps
+              the eyebrow + name a few px south of the cover bottom. */}
+          <div style={{ flex: 1, paddingTop: 72 }}>
             <div className="eyebrow" style={{ color: 'var(--orange)', marginBottom: 4 }}>
               ★ Collector{profile?.city ? ` · ${profile.city}` : ''} ★
             </div>
