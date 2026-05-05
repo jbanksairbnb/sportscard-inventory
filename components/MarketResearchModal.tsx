@@ -206,18 +206,30 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       type SessionWithDP = SessionRow & { market_research_data_points: DataPointRow[] };
       const all = ((matches || []) as unknown as SessionWithDP[]);
       const ownAll = all.filter(s => s.user_id === user.id);
-      // Garbage-collect: silently delete the user's own sessions that ended up
-      // with no data points and no notes (e.g. abandoned modal opens before
-      // the tightened autosave landed). Keeps the history panel clean.
-      const empties = ownAll.filter(s =>
-        (s.market_research_data_points || []).length === 0 && !(s.notes || '').trim()
-      );
+      // Garbage-collect: silently delete the user's own sessions that have no
+      // notes AND every data point lacks user-entered content (price, weight,
+      // URL, row note, or custom-source label). Pre-populated source / grade
+      // defaults alone don't count — they're scaffolding from the modal opening,
+      // not data the user actually committed.
+      function dpHasUserContent(d: DataPointRow): boolean {
+        if (d.price !== null && d.price !== undefined) return true;
+        if (d.weight_pct !== null && d.weight_pct !== undefined) return true;
+        if ((d.url || '').trim()) return true;
+        if ((d.notes || '').trim()) return true;
+        if (d.source === 'other' && (d.source_label || '').trim()) return true;
+        return false;
+      }
+      const empties = ownAll.filter(s => {
+        if ((s.notes || '').trim()) return false;
+        const dps = s.market_research_data_points || [];
+        return dps.every(d => !dpHasUserContent(d));
+      });
       if (empties.length > 0) {
         await supabase.from('market_research_sessions').delete().in('id', empties.map(s => s.id));
       }
       const own = ownAll.filter(s => !empties.includes(s));
       const others = all.filter(s => s.user_id !== user.id
-        && (s.market_research_data_points || []).length > 0);
+        && (s.market_research_data_points || []).some(d => dpHasUserContent(d)));
 
       // Always open with a blank form. The user's latest analysis (if any) is
       // surfaced as a "Use most recent analysis" link, and the full archive is
