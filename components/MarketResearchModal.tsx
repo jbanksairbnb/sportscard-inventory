@@ -240,7 +240,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setAutoSaveTick('idle');
       if (own.length > 0) {
         setLatestSession({ session: own[0], data_points: own[0].market_research_data_points || [] });
-        setHistory(own.slice(1).map(s => ({ session: s, data_points: s.market_research_data_points || [] })));
+        // History shows every past session (including the latest), so the user
+        // always has a full archive view. The banner up top is just a shortcut
+        // to load the most recent.
+        setHistory(own.map(s => ({ session: s, data_points: s.market_research_data_points || [] })));
       } else {
         setLatestSession(null);
         setHistory([]);
