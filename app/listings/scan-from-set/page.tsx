@@ -380,6 +380,23 @@ export default function ScanFromSetPage() {
               <section className="panel-bordered" style={{ padding: '16px 20px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
                   <div className="display" style={{ fontSize: 16, color: 'var(--plum)' }}>2. Click cards in scan order</div>
+                  <button type="button"
+                    onClick={() => setSelectedOrder(prev => {
+                      const visibleIdxs = visibleRows.map(v => v.origIndex);
+                      // Append any visible cards not already selected, preserving prior order.
+                      const toAdd = visibleIdxs.filter(i => !prev.includes(i));
+                      return [...prev, ...toAdd];
+                    })}
+                    disabled={visibleRows.length === 0}
+                    className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                    ✓ Select all visible
+                  </button>
+                  {selectedOrder.length > 0 && (
+                    <button type="button" onClick={() => setSelectedOrder([])}
+                      className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>
+                      ✕ Clear
+                    </button>
+                  )}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>
                     <input type="checkbox" checked={ownedOnly} onChange={e => setOwnedOnly(e.target.checked)} />
                     Owned only
