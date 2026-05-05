@@ -265,6 +265,36 @@ export default function ClaimSalesPage() {
     else alert(error.message);
   }
 
+  async function deleteSale(sale: SaleRow) {
+    const saleLots = lots.filter(l => l.sale_id === sale.id);
+    const lotIds = saleLots.map(l => l.id);
+    const saleItems = items.filter(i => lotIds.includes(i.lot_id));
+    const warning = [
+      `⚠ DELETE CLAIM SALE "${sale.title}"`,
+      ``,
+      `This will permanently remove:`,
+      `  · the sale itself`,
+      `  · all ${saleLots.length} lot${saleLots.length === 1 ? '' : 's'}`,
+      `  · all ${saleItems.length} item${saleItems.length === 1 ? '' : 's'} (claims, buyers, payment status)`,
+      `  · this sale's contribution to every buyer's history (Claims / Spend on the Bidders page will drop)`,
+      ``,
+      `Buyer profiles in your Bidders list are kept — only the items tied to this sale are wiped.`,
+      ``,
+      `This cannot be undone. Continue?`,
+    ].join('\n');
+    if (!confirm(warning)) return;
+    const supabase = createClient();
+    if (lotIds.length > 0) {
+      await supabase.from('fb_claim_sale_items').delete().in('lot_id', lotIds);
+      await supabase.from('fb_claim_sale_lots').delete().eq('sale_id', sale.id);
+    }
+    const { error } = await supabase.from('fb_claim_sales').delete().eq('id', sale.id);
+    if (error) { alert('Delete failed: ' + error.message); return; }
+    setSales(prev => prev.filter(s => s.id !== sale.id));
+    setLots(prev => prev.filter(l => l.sale_id !== sale.id));
+    setItems(prev => prev.filter(i => !lotIds.includes(i.lot_id)));
+  }
+
   if (loading) {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
   }
@@ -390,6 +420,10 @@ export default function ClaimSalesPage() {
                       style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>
                       Manage →
                     </Link>
+                    <button onClick={() => deleteSale(sale)}
+                      className="btn btn-sm" style={{ background: 'transparent', color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>
+                      🗑 Delete
+                    </button>
                   </div>
 
                   {allItems.length === 0 ? (

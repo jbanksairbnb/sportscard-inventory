@@ -313,7 +313,20 @@ export default function FbAuctionsPage() {
     setSelectedDrafts(new Set());
   }
   async function deleteAuction(a: AuctionRow) {
-    if (!confirm(`Delete auction "${a.title}"? This will remove all its lots and bid history. This cannot be undone.`)) return;
+    const lotCount = a.fb_auction_lots?.length || 0;
+    const warning = [
+      `⚠ DELETE AUCTION "${a.title}"`,
+      ``,
+      `This will permanently remove:`,
+      `  · the auction itself`,
+      `  · all ${lotCount} lot${lotCount === 1 ? '' : 's'} (bids, winners, settlement state)`,
+      `  · this auction's contribution to every bidder's history (Bids / Won / Spent counts on the Bidders page will drop)`,
+      ``,
+      `Bidder profiles in your Bidders list are kept — only the activity tied to this auction is wiped.`,
+      ``,
+      `This cannot be undone. Continue?`,
+    ].join('\n');
+    if (!confirm(warning)) return;
     const supabase = createClient();
     // Delete in dependency order: bidder activity → lots → auction
     await supabase.from('fb_bidder_activity').delete().eq('auction_id', a.id);
