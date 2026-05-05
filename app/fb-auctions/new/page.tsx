@@ -121,8 +121,11 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     const fw = frontSrc.width, fh = frontSrc.height;
     const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
     const gap = backSrc ? 60 : 0;
-    const w = fw + (backSrc ? bw + gap : 0);
-    const h = Math.max(fh, bh);
+    const outer = gap * 2 || 120;
+    const innerW = fw + (backSrc ? bw + gap : 0);
+    const innerH = Math.max(fh, bh);
+    const w = innerW + outer * 2;
+    const h = innerH + outer * 2;
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -130,9 +133,9 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     if (!ctx) return null;
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(frontSrc, 0, (h - fh) / 2);
+    ctx.drawImage(frontSrc, outer, outer + (innerH - fh) / 2);
     if (backSrc) {
-      ctx.drawImage(backSrc, fw + gap, (h - bh) / 2);
+      ctx.drawImage(backSrc, outer + fw + gap, outer + (innerH - bh) / 2);
     }
     return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.95));
   } catch {

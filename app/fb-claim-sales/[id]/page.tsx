@@ -131,9 +131,10 @@ async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bg
   const cellW = Math.max(...processed.map(p => p.width));
   const cellH = Math.max(...processed.map(p => p.height));
   const pad = 24;
+  const outer = pad * 2;
   const canvas = document.createElement('canvas');
-  canvas.width = cols * cellW + (cols - 1) * pad;
-  canvas.height = rows * cellH + (rows - 1) * pad;
+  canvas.width = cols * cellW + (cols - 1) * pad + outer * 2;
+  canvas.height = rows * cellH + (rows - 1) * pad + outer * 2;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   ctx.fillStyle = bgColor;
@@ -141,7 +142,7 @@ async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bg
   for (let i = 0; i < processed.length; i++) {
     const src = processed[i];
     const c = i % cols, r = Math.floor(i / cols);
-    const x = c * (cellW + pad), y = r * (cellH + pad);
+    const x = outer + c * (cellW + pad), y = outer + r * (cellH + pad);
     const ratio = Math.min(cellW / src.width, cellH / src.height);
     const w = src.width * ratio, h = src.height * ratio;
     ctx.drawImage(src, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
