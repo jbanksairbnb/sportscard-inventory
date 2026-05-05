@@ -1027,10 +1027,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           style={{ cursor: 'pointer', accentColor: 'var(--plum)' }} />
                       </td>
                       <td style={tdFrozen(FROZEN_LEFT.cardNum, FROZEN_W.cardNum, rowBg)}>
-                        <input value={v(row["Card #"])} readOnly style={{ ...CELL_INPUT, width: 72, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
+                        <input value={v(row["Card #"])}
+                          onChange={(e) => onChangeCell(origIndex, "Card #", e.target.value)}
+                          style={{ ...CELL_INPUT, width: 72 }} />
                       </td>
                       <td style={tdFrozen(FROZEN_LEFT.player, FROZEN_W.player, rowBg, PLAYER_RIGHT_BORDER)}>
-                        <input value={v(row["Player"])} readOnly style={{ ...CELL_INPUT, width: 220, background: 'var(--paper)', cursor: 'not-allowed', opacity: 0.7 }} />
+                        <input value={v(row["Player"])}
+                          onChange={(e) => onChangeCell(origIndex, "Player", e.target.value)}
+                          style={{ ...CELL_INPUT, width: 220 }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Owned"])} onChange={(e) => onChangeCell(origIndex, "Owned", e.target.value)} style={CELL_SELECT}>
