@@ -663,6 +663,30 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   }
   function clearSelection() { setSelectedRows(new Set()); }
 
+  function addRow() {
+    const blank: Record<string, any> = {};
+    EXPECTED_HEADERS.forEach(h => { blank[h] = ''; });
+    const next = [...rows, blank];
+    setRows(next);
+    scheduleAutoSave(next);
+  }
+  function deleteSelected() {
+    if (selectedRows.size === 0) return;
+    if (!confirm(`Delete ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    const next = rows.filter((_, i) => !selectedRows.has(i));
+    setRows(next);
+    setSelectedRows(new Set());
+    scheduleAutoSave(next);
+  }
+  function duplicateSelected() {
+    if (selectedRows.size === 0) return;
+    const copies = rows.filter((_, i) => selectedRows.has(i)).map(r => ({ ...r }));
+    const next = [...rows, ...copies];
+    setRows(next);
+    setSelectedRows(new Set());
+    scheduleAutoSave(next);
+  }
+
   function applyBulkEdit() {
     if (selectedRows.size === 0) return;
     let value: any = bulkValue;
@@ -930,6 +954,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
               Apply to {selectedRows.size}
             </button>
+            <button type="button" onClick={duplicateSelected}
+              className="btn btn-sm" style={{ background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--mustard)' }}>
+              📋 Duplicate
+            </button>
+            <button type="button" onClick={deleteSelected}
+              className="btn btn-sm" style={{ background: 'var(--rust)', color: 'var(--cream)', border: '1.5px solid var(--rust)' }}>
+              🗑 Delete
+            </button>
             <button type="button" onClick={clearSelection}
               className="btn btn-sm" style={{ background: 'transparent', color: 'var(--mustard)', border: '1.5px solid var(--mustard)', marginLeft: 'auto' }}>
               Clear
@@ -1139,6 +1171,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                   })}
                 </tbody>
               </table>
+            </div>
+            <div style={{ padding: '10px 14px', borderTop: '1.5px solid var(--rule)', display: 'flex', gap: 10, alignItems: 'center' }}>
+              <button type="button" onClick={addRow} className="btn btn-ghost btn-sm">
+                + Add row
+              </button>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                Appends a blank row to the end of the table — fill in any fields you want.
+              </span>
             </div>
           </section>
         ) : (
