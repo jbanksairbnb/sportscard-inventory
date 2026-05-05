@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
+import { replaceImageBg } from '@/lib/collageBg';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'closed' | 'settled';
@@ -108,37 +109,43 @@ async function downloadJpeg(url: string, filename: string) {
 
 // Composite all of one side (front or back) onto a single canvas, tightly
 // packed. 600x840 cells (standard card aspect) with 8px padding.
-async function buildSideCollage(items: ListingLite[], side: 'front' | 'back'): Promise<Blob | null> {
+async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bgColor: string = '#ffffff'): Promise<Blob | null> {
   if (items.length === 0) return null;
   const photoIdx = side === 'front' ? 0 : 1;
-  const loaded: HTMLImageElement[] = [];
+  const processed: HTMLCanvasElement[] = [];
   for (const item of items) {
     const url = item.photos?.[photoIdx];
     if (!url) continue;
-    try { loaded.push(await loadImage(url)); } catch { /* skip */ }
+    try {
+      const img = await loadImage(url);
+      processed.push(replaceImageBg(img, bgColor));
+    } catch { /* skip */ }
   }
-  if (loaded.length === 0) return null;
-  const cellW = 600, cellH = 840, pad = 8;
+  if (processed.length === 0) return null;
   let cols = 1;
-  if (loaded.length === 2) cols = 2;
-  else if (loaded.length <= 4) cols = 2;
-  else if (loaded.length <= 9) cols = 3;
+  if (processed.length === 2) cols = 2;
+  else if (processed.length <= 4) cols = 2;
+  else if (processed.length <= 9) cols = 3;
   else cols = 4;
-  const rows = Math.ceil(loaded.length / cols);
+  const rows = Math.ceil(processed.length / cols);
+  const cellW = Math.max(...processed.map(p => p.width));
+  const cellH = Math.max(...processed.map(p => p.height));
+  const pad = 24;
+  const outer = pad * 2;
   const canvas = document.createElement('canvas');
-  canvas.width = cols * cellW + (cols - 1) * pad;
-  canvas.height = rows * cellH + (rows - 1) * pad;
+  canvas.width = cols * cellW + (cols - 1) * pad + outer * 2;
+  canvas.height = rows * cellH + (rows - 1) * pad + outer * 2;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let i = 0; i < loaded.length; i++) {
-    const img = loaded[i];
+  for (let i = 0; i < processed.length; i++) {
+    const src = processed[i];
     const c = i % cols, r = Math.floor(i / cols);
-    const x = c * (cellW + pad), y = r * (cellH + pad);
-    const ratio = Math.min(cellW / img.naturalWidth, cellH / img.naturalHeight);
-    const w = img.naturalWidth * ratio, h = img.naturalHeight * ratio;
-    ctx.drawImage(img, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
+    const x = outer + c * (cellW + pad), y = outer + r * (cellH + pad);
+    const ratio = Math.min(cellW / src.width, cellH / src.height);
+    const w = src.width * ratio, h = src.height * ratio;
+    ctx.drawImage(src, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
   }
   return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.92));
 }
@@ -157,6 +164,16 @@ export default function ManageClaimSalePage() {
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
   const [buildingCollage, setBuildingCollage] = useState<string | null>(null);
+  const [collageBg, setCollageBg] = useState('#ffffff');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem('sc-collage-bg');
+    if (saved) setCollageBg(saved);
+  }, []);
+  function updateCollageBg(c: string) {
+    setCollageBg(c);
+    try { window.localStorage.setItem('sc-collage-bg', c); } catch {}
+  }
 
   async function buildLotCollages(lot: Lot) {
     const items = (itemsByLot[lot.id] || []).map(i => i.listing).filter((l): l is ListingLite => !!l && (l.photos?.length ?? 0) > 0);
@@ -169,7 +186,7 @@ export default function ManageClaimSalePage() {
       const stamp = Date.now();
       const tag = Math.random().toString(36).slice(2, 8);
       async function uploadSide(side: 'front' | 'back'): Promise<string | null> {
-        const blob = await buildSideCollage(items, side);
+        const blob = await buildSideCollage(items, side, collageBg);
         if (!blob) return null;
         const path = `${user!.id}/lot-collages/${stamp}-${tag}-${side}.jpg`;
         const { error } = await supabase.storage.from('card-images').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
@@ -531,6 +548,7 @@ export default function ManageClaimSalePage() {
                         className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
                         {buildingCollage === lot.id ? 'Building…' : '🖼 Auto-build front + back'}
                       </button>
+                      <BgColorPicker value={collageBg} onChange={updateCollageBg} />
                     </div>
                     {(['front', 'back'] as const).map(side => {
                       const url = side === 'front' ? lot.collage_url : lot.back_collage_url;
@@ -711,6 +729,35 @@ export default function ManageClaimSalePage() {
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+const BG_PRESETS = [
+  { color: '#ffffff', label: 'White' },
+  { color: '#000000', label: 'Black' },
+  { color: '#f8ecd0', label: 'Cream' },
+  { color: '#3d1f4a', label: 'Plum' },
+  { color: '#2d7a6e', label: 'Teal' },
+  { color: '#e8742c', label: 'Orange' },
+];
+
+function BgColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+      <span className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Bg</span>
+      {BG_PRESETS.map(p => (
+        <button key={p.color} type="button" onClick={() => onChange(p.color)} title={p.label}
+          aria-label={`Background ${p.label}`}
+          style={{
+            width: 18, height: 18, borderRadius: '50%', cursor: 'pointer', padding: 0,
+            background: p.color,
+            border: value.toLowerCase() === p.color.toLowerCase() ? '2.5px solid var(--orange)' : '1.5px solid var(--plum)',
+          }} />
+      ))}
+      <input type="color" value={value} onChange={e => onChange(e.target.value)}
+        title="Custom color"
+        style={{ width: 18, height: 18, padding: 0, border: '1.5px solid var(--plum)', borderRadius: '50%', cursor: 'pointer', background: 'transparent' }} />
     </div>
   );
 }

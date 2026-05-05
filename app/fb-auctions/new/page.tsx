@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
+import { replaceImageBg } from '@/lib/collageBg';
 import SCLogo from '@/components/SCLogo';
 
 type TemplateType = 'single' | 'multi';
@@ -111,22 +112,31 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-async function buildSideBySide(frontUrl: string, backUrl: string | null): Promise<Blob | null> {
+async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor: string = '#ffffff'): Promise<Blob | null> {
   try {
     const front = await loadImage(frontUrl);
     const back = backUrl ? await loadImage(backUrl).catch(() => null) : null;
-    const gap = back ? 20 : 0;
-    const w = front.naturalWidth + (back ? back.naturalWidth + gap : 0);
-    const h = Math.max(front.naturalHeight, back?.naturalHeight || 0);
+    const frontSrc = replaceImageBg(front, bgColor);
+    const backSrc = back ? replaceImageBg(back, bgColor) : null;
+    const fw = frontSrc.width, fh = frontSrc.height;
+    const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
+    const gap = backSrc ? 60 : 0;
+    const outer = gap * 2 || 120;
+    const innerW = fw + (backSrc ? bw + gap : 0);
+    const innerH = Math.max(fh, bh);
+    const w = innerW + outer * 2;
+    const h = innerH + outer * 2;
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(front, 0, (h - front.naturalHeight) / 2);
-    if (back) ctx.drawImage(back, front.naturalWidth + gap, (h - back.naturalHeight) / 2);
+    ctx.drawImage(frontSrc, outer, outer + (innerH - fh) / 2);
+    if (backSrc) {
+      ctx.drawImage(backSrc, outer + fw + gap, outer + (innerH - bh) / 2);
+    }
     return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.95));
   } catch {
     return null;
@@ -182,6 +192,16 @@ export default function NewFbAuctionPage() {
   const [saving, setSaving] = useState(false);
   const [goingLive, setGoingLive] = useState(false);
   const [busyImage, setBusyImage] = useState<string | null>(null);
+  const [collageBg, setCollageBg] = useState('#ffffff');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem('sc-collage-bg');
+    if (saved) setCollageBg(saved);
+  }, []);
+  function updateCollageBg(c: string) {
+    setCollageBg(c);
+    try { window.localStorage.setItem('sc-collage-bg', c); } catch {}
+  }
 
   async function handleGoLive() {
     if (!generated || goingLive) return;
@@ -485,7 +505,7 @@ export default function NewFbAuctionPage() {
     const back = photos[1] || null;
     if (!front) { alert('No photo on this listing.'); return; }
     setBusyImage(lot.listing.id);
-    const blob = back ? await buildSideBySide(front, back) : await fetch(front).then(r => r.blob()).catch(() => null);
+    const blob = back ? await buildSideBySide(front, back, collageBg) : await fetch(front).then(r => r.blob()).catch(() => null);
     setBusyImage(null);
     if (!blob) { alert('Image generation failed (likely a CORS issue with the photo source).'); return; }
     const safe = `${lot.listing.year || 'card'}-${(lot.listing.player || 'player').replace(/[^a-z0-9]+/gi, '-')}-lot${lot.lot_number}.jpg`.toLowerCase();
@@ -642,14 +662,16 @@ export default function NewFbAuctionPage() {
                     className="btn btn-outline">
                     {busyImage === generated.lots[0].listing.id ? 'Building…' : '🖼 Download side-by-side image'}
                   </button>
+                  <BgColorPicker value={collageBg} onChange={updateCollageBg} />
                 </div>
               </div>
             )}
 
             {generated.type === 'multi' && (
               <>
-                <div style={{ marginTop: 24, marginBottom: 12 }}>
-                  <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>Lots — paste each as a comment with the image attached</div>
+                <div style={{ marginTop: 24, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div className="display" style={{ fontSize: 18, color: 'var(--plum)', flex: 1 }}>Lots — paste each as a comment with the image attached</div>
+                  <BgColorPicker value={collageBg} onChange={updateCollageBg} />
                 </div>
                 {generated.lots.map(lot => (
                   <div key={lot.lot_number} className="panel-bordered" style={{ padding: 18, marginBottom: 14 }}>
@@ -1056,5 +1078,34 @@ function BidderSuggestionsPanel({ suggestions }: { suggestions: BidderSuggestion
         })}
       </div>
     </section>
+  );
+}
+
+const BG_PRESETS = [
+  { color: '#ffffff', label: 'White' },
+  { color: '#000000', label: 'Black' },
+  { color: '#f8ecd0', label: 'Cream' },
+  { color: '#3d1f4a', label: 'Plum' },
+  { color: '#2d7a6e', label: 'Teal' },
+  { color: '#e8742c', label: 'Orange' },
+];
+
+function BgColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Bg</span>
+      {BG_PRESETS.map(p => (
+        <button key={p.color} type="button" onClick={() => onChange(p.color)} title={p.label}
+          aria-label={`Background ${p.label}`}
+          style={{
+            width: 22, height: 22, borderRadius: '50%', cursor: 'pointer',
+            background: p.color,
+            border: value.toLowerCase() === p.color.toLowerCase() ? '2.5px solid var(--orange)' : '1.5px solid var(--plum)',
+          }} />
+      ))}
+      <input type="color" value={value} onChange={e => onChange(e.target.value)}
+        title="Custom color"
+        style={{ width: 22, height: 22, padding: 0, border: '1.5px solid var(--plum)', borderRadius: '50%', cursor: 'pointer', background: 'transparent' }} />
+    </div>
   );
 }
