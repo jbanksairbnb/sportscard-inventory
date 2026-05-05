@@ -130,7 +130,7 @@ async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bg
   const rows = Math.ceil(processed.length / cols);
   const cellW = Math.max(...processed.map(p => p.width));
   const cellH = Math.max(...processed.map(p => p.height));
-  const pad = 8;
+  const pad = 40;
   const canvas = document.createElement('canvas');
   canvas.width = cols * cellW + (cols - 1) * pad;
   canvas.height = rows * cellH + (rows - 1) * pad;
