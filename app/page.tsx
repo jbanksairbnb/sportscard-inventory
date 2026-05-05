@@ -263,10 +263,16 @@ export default function HomePage() {
     setSets((prev) => prev.filter((s) => s.slug !== slug));
   }
 
-  const sorted = useMemo(
-    () => [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || '')),
-    [sets]
-  );
+  const [search, setSearch] = useState('');
+  const sorted = useMemo(() => {
+    const arr = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
+    const q = search.trim().toLowerCase();
+    if (!q) return arr;
+    return arr.filter(s => {
+      const hay = `${s.title} ${s.year || ''} ${s.brand || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [sets, search]);
 
   if (loading) {
     return (
@@ -284,10 +290,18 @@ export default function HomePage() {
       <TopNav userEmail={userEmail} onLogout={handleLogout} />
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 32 }}>
-          <div className="section-head" style={{ flex: 1, marginBottom: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 32, flexWrap: 'wrap' }}>
+          <div className="section-head" style={{ marginBottom: 0 }}>
             <span className="eyebrow" style={{ fontSize: 14 }}>★ My Shelf ★</span>
           </div>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Filter by title / year / brand…"
+            style={{
+              flex: 1, minWidth: 220, maxWidth: 360,
+              padding: '6px 14px', border: '1.5px solid var(--plum)', borderRadius: 100,
+              background: 'var(--cream)', color: 'var(--plum)',
+              fontFamily: 'var(--font-body)', fontSize: 12.5,
+            }} />
           <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
             <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
             <button onClick={() => setScansPickerOpen(true)} className="btn btn-ghost btn-sm">📷 Scans</button>
