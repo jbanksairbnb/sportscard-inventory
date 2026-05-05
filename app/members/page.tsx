@@ -13,6 +13,7 @@ type Member = {
   avatar_url: string | null;
   bio: string | null;
   city: string | null;
+  profile_shared: boolean;
   cards_owned: number;
   sets_tracked: number;
   want_list: number;
@@ -30,7 +31,7 @@ export default function MembersPage() {
     async function load() {
       const { data: profiles } = await supabase
         .from('user_profiles')
-        .select('user_id, display_name, handle, avatar_url, bio, city')
+        .select('user_id, display_name, handle, avatar_url, bio, city, profile_shared')
         .eq('application_status', 'approved');
 
       const ids = (profiles || []).map(p => p.user_id);
@@ -52,7 +53,11 @@ export default function MembersPage() {
         const cards_owned = arr.reduce((n, s) => n + (s.owned_count || 0), 0);
         const sets_tracked = arr.length;
         const want_list = arr.reduce((n, s) => n + Math.max(0, (s.row_count || 0) - (s.owned_count || 0)), 0);
-        return { ...p, cards_owned, sets_tracked, want_list } as Member;
+        return {
+          ...p,
+          profile_shared: (p as { profile_shared?: boolean | null }).profile_shared !== false,
+          cards_owned, sets_tracked, want_list,
+        } as Member;
       });
 
       setMembers(list);
@@ -155,58 +160,81 @@ function MemberCard({ m }: { m: Member }) {
   const name = m.display_name || m.handle || 'Collector';
   const handle = m.handle ? `@${m.handle}` : '';
   const profileHref = `/profile/${m.user_id}`;
+  const shared = m.profile_shared;
+
+  const avatarBlock = (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: '50%', flexShrink: 0,
+        border: '2px solid var(--plum)',
+        background: m.avatar_url
+          ? `var(--cream) url(${m.avatar_url}) center/cover no-repeat`
+          : 'var(--mustard)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 22, fontFamily: 'var(--font-display)', color: 'var(--plum)', fontWeight: 700,
+      }}>
+        {!m.avatar_url && name.slice(0, 1).toUpperCase()}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="display" style={{ fontSize: 16, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+            {name}
+          </div>
+          {!shared && (
+            <span title="Profile is private — only their Want list is visible"
+              style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 100, background: 'var(--ink-mute)', color: 'var(--cream)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Private
+            </span>
+          )}
+        </div>
+        {handle && (
+          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 2 }}>{handle}</div>
+        )}
+        {shared && m.city && (
+          <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginTop: 4 }}>📍 {m.city}</div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="panel-bordered" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <Link href={profileHref} style={{ display: 'flex', gap: 12, alignItems: 'center', textDecoration: 'none', color: 'inherit' }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: '50%', flexShrink: 0,
-          border: '2px solid var(--plum)',
-          background: m.avatar_url
-            ? `var(--cream) url(${m.avatar_url}) center/cover no-repeat`
-            : 'var(--mustard)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 22, fontFamily: 'var(--font-display)', color: 'var(--plum)', fontWeight: 700,
-        }}>
-          {!m.avatar_url && name.slice(0, 1).toUpperCase()}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="display" style={{ fontSize: 16, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {name}
-          </div>
-          {handle && (
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 2 }}>{handle}</div>
-          )}
-          {m.city && (
-            <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginTop: 4 }}>📍 {m.city}</div>
-          )}
-        </div>
-      </Link>
+      {shared ? (
+        <Link href={profileHref} style={{ textDecoration: 'none', color: 'inherit' }}>{avatarBlock}</Link>
+      ) : avatarBlock}
       <div style={{ display: 'flex', gap: 6, borderTop: '1.5px solid var(--rule)', paddingTop: 10 }}>
-        <StatLink href={profileHref} label="Cards" value={m.cards_owned} />
-        <StatLink href={profileHref} label="Sets" value={m.sets_tracked} />
+        <StatLink href={shared ? profileHref : null} label="Cards" value={m.cards_owned} />
+        <StatLink href={shared ? profileHref : null} label="Sets" value={m.sets_tracked} />
         <StatLink href={profileHref} label="Want list" value={m.want_list} />
       </div>
     </div>
   );
 }
 
-function StatLink({ href, label, value }: { href: string; label: string; value: number }) {
-  return (
-    <Link href={href} style={{
-      flex: 1, textAlign: 'center', padding: '6px 4px', textDecoration: 'none',
-      borderRadius: 6, border: '1.5px solid var(--rule)', background: 'var(--paper)',
-      transition: 'background 120ms',
-    }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(184,146,58,0.18)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'var(--paper)')}
-    >
+function StatLink({ href, label, value }: { href: string | null; label: string; value: number }) {
+  const inner = (
+    <>
       <div className="mono" style={{ fontSize: 15, color: 'var(--plum)', fontWeight: 700 }}>
         {value.toLocaleString()}
       </div>
       <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', fontWeight: 700, letterSpacing: '0.16em' }}>
         {label}
       </div>
+    </>
+  );
+  const baseStyle: React.CSSProperties = {
+    flex: 1, textAlign: 'center', padding: '6px 4px', textDecoration: 'none',
+    borderRadius: 6, border: '1.5px solid var(--rule)', background: 'var(--paper)',
+    transition: 'background 120ms',
+  };
+  if (!href) {
+    return <div style={{ ...baseStyle, opacity: 0.55 }}>{inner}</div>;
+  }
+  return (
+    <Link href={href} style={baseStyle}
+      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(184,146,58,0.18)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'var(--paper)')}>
+      {inner}
     </Link>
   );
 }
