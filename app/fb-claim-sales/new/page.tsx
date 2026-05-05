@@ -80,7 +80,7 @@ function buildCommentBody(
     lines.push(`${pos}. ${listingLabel(l)}${priceStr}`);
   }
   if (lot.pricing === 'group' && lot.groupPrice) {
-    lines.push('', `Group price: ${fmtMoney(lot.groupPrice)}`);
+    lines.push('', `Group price: ${fmtMoney(lot.groupPrice)} each`);
   }
   return lines.join('\n');
 }
