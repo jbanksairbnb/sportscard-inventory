@@ -49,6 +49,7 @@ export default function ScanFromSetPage() {
   const [phase, setPhase] = useState<Phase>('pick-set');
   const [pickQuery, setPickQuery] = useState('');
   const [hideOwnedWithImages, setHideOwnedWithImages] = useState(true);
+  const [ownedOnly, setOwnedOnly] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState<number[]>([]); // origIndex order
   const [pairMode, setPairMode] = useState<PairMode>('fronts-then-backs');
   const [files, setFiles] = useState<File[]>([]);
@@ -283,6 +284,7 @@ export default function ScanFromSetPage() {
 
   const visibleRows = (currentSet?.rows || [])
     .map((r, origIndex) => ({ row: r, origIndex }))
+    .filter(({ row }) => !ownedOnly || String(row['Owned'] || '').toLowerCase() === 'yes')
     .filter(({ row }) => !hideOwnedWithImages || !rowHasImages(row));
 
   return (
@@ -378,7 +380,28 @@ export default function ScanFromSetPage() {
               <section className="panel-bordered" style={{ padding: '16px 20px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
                   <div className="display" style={{ fontSize: 16, color: 'var(--plum)' }}>2. Click cards in scan order</div>
+                  <button type="button"
+                    onClick={() => setSelectedOrder(prev => {
+                      const visibleIdxs = visibleRows.map(v => v.origIndex);
+                      // Append any visible cards not already selected, preserving prior order.
+                      const toAdd = visibleIdxs.filter(i => !prev.includes(i));
+                      return [...prev, ...toAdd];
+                    })}
+                    disabled={visibleRows.length === 0}
+                    className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                    ✓ Select all visible
+                  </button>
+                  {selectedOrder.length > 0 && (
+                    <button type="button" onClick={() => setSelectedOrder([])}
+                      className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>
+                      ✕ Clear
+                    </button>
+                  )}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>
+                    <input type="checkbox" checked={ownedOnly} onChange={e => setOwnedOnly(e.target.checked)} />
+                    Owned only
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)', fontWeight: 600, cursor: 'pointer' }}>
                     <input type="checkbox" checked={hideOwnedWithImages} onChange={e => setHideOwnedWithImages(e.target.checked)} />
                     Hide cards that already have images
                   </label>
@@ -386,7 +409,7 @@ export default function ScanFromSetPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 540, overflowY: 'auto', border: '1px solid var(--rule)', borderRadius: 6 }}>
                   {visibleRows.length === 0 ? (
                     <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
-                      All cards in this set already have images. Uncheck the filter to include them.
+                      No cards match the current filters. Uncheck <strong>Owned only</strong> or <strong>Hide cards that already have images</strong> to include more.
                     </div>
                   ) : visibleRows.map(({ row, origIndex }) => {
                     const orderIdx = selectedOrder.indexOf(origIndex);
