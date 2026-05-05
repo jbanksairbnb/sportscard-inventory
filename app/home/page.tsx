@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -1050,8 +1050,43 @@ function FavoritesShowcase({ userId }: { userId: string }) {
 const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
 
 function SetsInProgress({ sets }: { sets: SetRow[] }) {
-  const sorted = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
-  if (sets.length === 0) {
+  const [search, setSearch] = useState('');
+  const [working, setWorking] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [setsState, setSetsState] = useState<SetRow[]>(sets);
+  useEffect(() => { setSetsState(sets); }, [sets]);
+  const sorted = useMemo(() => {
+    const arr = [...setsState].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
+    const q = search.trim().toLowerCase();
+    if (!q) return arr;
+    return arr.filter(s => {
+      const hay = `${s.title} ${s.year || ''} ${s.brand || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [setsState, search]);
+
+  async function toggleShare(s: SetRow) {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    setWorking(s.slug);
+    if (s.share_token) {
+      // Copy link if already shared.
+      const url = `${window.location.origin}/share/${s.share_token}`;
+      try { await navigator.clipboard.writeText(url); setCopied(s.slug); setTimeout(() => setCopied(null), 1500); } catch {}
+    } else {
+      const token = crypto.randomUUID();
+      const { error } = await supabase.from('sets').update({ share_token: token }).eq('user_id', user.id).eq('slug', s.slug);
+      if (!error) {
+        setSetsState(prev => prev.map(x => x.slug === s.slug ? { ...x, share_token: token } : x));
+        const url = `${window.location.origin}/share/${token}`;
+        try { await navigator.clipboard.writeText(url); setCopied(s.slug); setTimeout(() => setCopied(null), 1500); } catch {}
+      }
+    }
+    setWorking(null);
+  }
+
+  if (setsState.length === 0) {
     return (
       <section style={{ marginBottom: 32 }}>
         <div className="section-head">
@@ -1076,59 +1111,80 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
   }
   return (
     <section style={{ marginBottom: 32 }}>
-      <div className="section-head">
+      <div className="section-head" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span className="eyebrow" style={{ fontSize: 12 }}>★ Sets in Progress ★</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+          {sorted.length}{sorted.length !== setsState.length ? ` of ${setsState.length}` : ''}
+        </span>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="🔍 Filter by title / year / brand…"
+          style={{
+            marginLeft: 'auto', padding: '6px 12px', minWidth: 240, maxWidth: 340,
+            border: '1.5px solid var(--plum)', borderRadius: 100,
+            background: 'var(--cream)', color: 'var(--plum)',
+            fontFamily: 'var(--font-body)', fontSize: 12.5,
+          }} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
         {sorted.map((s, i) => {
           const color = SET_COLORS[i % SET_COLORS.length];
           const pct = s.owned_pct || 0;
           const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
-          const inner = (
-              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
-                <div style={{
-                  width: 58, height: 58,
-                  background: color, color: 'var(--cream)',
-                  display: 'grid', placeItems: 'center',
-                  fontFamily: 'var(--font-display)', fontSize: 22,
-                  borderRadius: 10,
-                  border: '2px solid var(--plum)',
-                  boxShadow: '0 2px 0 var(--plum)',
-                  flexShrink: 0,
-                }}>
-                  {yearShort}
+          return (
+            <div key={s.slug} className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', position: 'relative' }}>
+              <Link href={`/set/${encodeURIComponent(s.slug)}`} style={{ position: 'absolute', inset: 0, borderRadius: 'inherit' }} aria-label={`Open ${s.title}`} />
+              <div style={{
+                width: 58, height: 58,
+                background: color, color: 'var(--cream)',
+                display: 'grid', placeItems: 'center',
+                fontFamily: 'var(--font-display)', fontSize: 22,
+                borderRadius: 10,
+                border: '2px solid var(--plum)',
+                boxShadow: '0 2px 0 var(--plum)',
+                flexShrink: 0, position: 'relative', zIndex: 1,
+              }}>
+                {yearShort}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, position: 'relative', zIndex: 1, pointerEvents: 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    {s.title}
+                  </div>
+                  {s.share_token && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+                      background: 'var(--teal)', color: 'var(--cream)',
+                      padding: '2px 6px', borderRadius: 100, flexShrink: 0,
+                    }}>SHARED</span>
+                  )}
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {s.title}
-                    </div>
-                    {s.share_token && (
-                      <span style={{
-                        fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
-                        background: 'var(--teal)', color: 'var(--cream)',
-                        padding: '2px 6px', borderRadius: 100, flexShrink: 0,
-                      }}>SHARED</span>
-                    )}
-                  </div>
-                  <div className="progress">
-                    <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
-                  </div>
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between', marginTop: 5,
-                    fontFamily: 'var(--font-mono)', fontSize: 10.5,
-                    color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
-                  }}>
-                    <span>{s.owned_count} / {s.row_count}</span>
-                    <span>{pct.toFixed(1)}%</span>
-                  </div>
+                <div className="progress">
+                  <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+                </div>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', marginTop: 5,
+                  fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                  color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
+                }}>
+                  <span>{s.owned_count} / {s.row_count}</span>
+                  <span>{pct.toFixed(1)}%</span>
                 </div>
               </div>
+              <button type="button" onClick={(e) => { e.stopPropagation(); toggleShare(s); }}
+                disabled={working === s.slug}
+                title={s.share_token ? 'Copy share link' : 'Generate share link'}
+                style={{
+                  position: 'relative', zIndex: 2,
+                  padding: '6px 10px', fontSize: 11, fontWeight: 700,
+                  border: '1.5px solid var(--plum)', borderRadius: 100,
+                  background: s.share_token ? 'var(--teal)' : 'var(--cream)',
+                  color: s.share_token ? 'var(--cream)' : 'var(--plum)',
+                  fontFamily: 'var(--font-body)', cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                {copied === s.slug ? '✓ Copied' : (s.share_token ? '🔗 Copy link' : '↗ Share')}
+              </button>
+            </div>
           );
-          const href = s.share_token
-            ? `/set/${encodeURIComponent(s.slug)}/view`
-            : `/set/${encodeURIComponent(s.slug)}`;
-          return <Link key={s.slug} href={href} style={{ textDecoration: 'none' }}>{inner}</Link>;
         })}
       </div>
     </section>
