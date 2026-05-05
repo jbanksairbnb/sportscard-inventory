@@ -55,6 +55,7 @@ type Lot = {
   comment_body: string | null;
   comment_url: string | null;
   collage_url: string | null;
+  back_collage_url: string | null;
   group_price: number | null;
   notes: string | null;
 };
@@ -77,6 +78,71 @@ function statusFg(s: Status) {
 }
 async function copyText(t: string) { try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
 
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load image'));
+    img.src = url;
+  });
+}
+
+async function downloadJpeg(url: string, filename: string) {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error('fetch failed');
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  } catch {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+// Composite all of one side (front or back) onto a single canvas, tightly
+// packed. 600x840 cells (standard card aspect) with 8px padding.
+async function buildSideCollage(items: ListingLite[], side: 'front' | 'back'): Promise<Blob | null> {
+  if (items.length === 0) return null;
+  const photoIdx = side === 'front' ? 0 : 1;
+  const loaded: HTMLImageElement[] = [];
+  for (const item of items) {
+    const url = item.photos?.[photoIdx];
+    if (!url) continue;
+    try { loaded.push(await loadImage(url)); } catch { /* skip */ }
+  }
+  if (loaded.length === 0) return null;
+  const cellW = 600, cellH = 840, pad = 8;
+  let cols = 1;
+  if (loaded.length === 2) cols = 2;
+  else if (loaded.length <= 4) cols = 2;
+  else if (loaded.length <= 9) cols = 3;
+  else cols = 4;
+  const rows = Math.ceil(loaded.length / cols);
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * cellW + (cols - 1) * pad;
+  canvas.height = rows * cellH + (rows - 1) * pad;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < loaded.length; i++) {
+    const img = loaded[i];
+    const c = i % cols, r = Math.floor(i / cols);
+    const x = c * (cellW + pad), y = r * (cellH + pad);
+    const ratio = Math.min(cellW / img.naturalWidth, cellH / img.naturalHeight);
+    const w = img.naturalWidth * ratio, h = img.naturalHeight * ratio;
+    ctx.drawImage(img, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
+  }
+  return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.92));
+}
+
 export default function ManageClaimSalePage() {
   const router = useRouter();
   const params = useParams();
@@ -90,6 +156,45 @@ export default function ManageClaimSalePage() {
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
+  const [buildingCollage, setBuildingCollage] = useState<string | null>(null);
+
+  async function buildLotCollages(lot: Lot) {
+    const items = (itemsByLot[lot.id] || []).map(i => i.listing).filter((l): l is ListingLite => !!l && (l.photos?.length ?? 0) > 0);
+    if (items.length === 0) { alert('No items in this lot have photos.'); return; }
+    setBuildingCollage(lot.id);
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { alert('Not signed in.'); return; }
+      const stamp = Date.now();
+      const tag = Math.random().toString(36).slice(2, 8);
+      async function uploadSide(side: 'front' | 'back'): Promise<string | null> {
+        const blob = await buildSideCollage(items, side);
+        if (!blob) return null;
+        const path = `${user!.id}/lot-collages/${stamp}-${tag}-${side}.jpg`;
+        const { error } = await supabase.storage.from('card-images').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+        if (error) { console.warn(`upload ${side} collage failed:`, error.message); return null; }
+        return supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
+      }
+      const [frontUrl, backUrl] = await Promise.all([uploadSide('front'), uploadSide('back')]);
+      if (!frontUrl && !backUrl) { alert('Could not build collages — none of the items had usable photos.'); return; }
+      const patch: { collage_url?: string; back_collage_url?: string } = {};
+      if (frontUrl) patch.collage_url = frontUrl;
+      if (backUrl) patch.back_collage_url = backUrl;
+      const { error } = await supabase.from('fb_claim_sale_lots').update(patch).eq('id', lot.id);
+      if (error) { alert('Save failed: ' + error.message); return; }
+      setLots(prev => prev.map(l => l.id === lot.id ? { ...l, ...patch } as Lot : l));
+    } finally {
+      setBuildingCollage(null);
+    }
+  }
+  async function clearLotCollage(lot: Lot, side: 'front' | 'back') {
+    const supabase = createClient();
+    const patch = side === 'front' ? { collage_url: null } : { back_collage_url: null };
+    const { error } = await supabase.from('fb_claim_sale_lots').update(patch).eq('id', lot.id);
+    if (error) { alert('Clear failed: ' + error.message); return; }
+    setLots(prev => prev.map(l => l.id === lot.id ? { ...l, ...patch } as Lot : l));
+  }
   const [copiedTag, setCopiedTag] = useState<string | null>(null);
   const [expandedBuyers, setExpandedBuyers] = useState<Set<string>>(new Set());
   const [editedInvoices, setEditedInvoices] = useState<Record<string, string>>({});
@@ -416,6 +521,40 @@ export default function ManageClaimSalePage() {
                       whiteSpace: 'pre-wrap', margin: '0 0 10px',
                     }}>{lot.comment_body}</pre>
                   )}
+
+                  {/* Collage section */}
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', padding: '8px 0', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 700 }}>Collages</div>
+                      <button type="button" disabled={buildingCollage === lot.id}
+                        onClick={() => buildLotCollages(lot)}
+                        className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                        {buildingCollage === lot.id ? 'Building…' : '🖼 Auto-build front + back'}
+                      </button>
+                    </div>
+                    {(['front', 'back'] as const).map(side => {
+                      const url = side === 'front' ? lot.collage_url : lot.back_collage_url;
+                      if (!url) return null;
+                      const filename = `lot-${lot.lot_number}-${side === 'front' ? 'fronts' : 'backs'}.jpg`;
+                      return (
+                        <div key={side} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 700, textTransform: 'uppercase' }}>
+                            {side === 'front' ? 'Fronts' : 'Backs'}
+                          </div>
+                          <a href={url} target="_blank" rel="noopener noreferrer"
+                            style={{ display: 'block', width: 160, height: 110, background: 'var(--paper)', borderRadius: 6, border: '1.5px solid var(--rule)', overflow: 'hidden' }}>
+                            <img src={url} alt={`${side} collage`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                          </a>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button type="button" onClick={() => downloadJpeg(url, filename)}
+                              className="btn btn-primary btn-sm" style={{ fontSize: 10.5, padding: '3px 8px' }}>⬇ Download</button>
+                            <button type="button" onClick={() => clearLotCollage(lot, side)}
+                              className="btn btn-ghost btn-sm" style={{ fontSize: 10.5, padding: '3px 8px' }}>✕</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
 
                   {/* Item rows */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
