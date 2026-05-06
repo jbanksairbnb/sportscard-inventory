@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { replaceImageBg } from '@/lib/collageBg';
+import { setListingsStatus } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'closed' | 'settled';
@@ -356,17 +357,34 @@ export default function ManageClaimSalePage() {
       setItems(prev => prev.map(i => i.id === item.id
         ? { ...i, claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status }
         : i));
+      await syncItemListingStatus(supabase, item, claim_status);
     } else {
       alert(error.message);
     }
     setSavingItems(prev => { const n = new Set(prev); n.delete(item.id); return n; });
   }
 
+  async function syncItemListingStatus(
+    supabase: ReturnType<typeof createClient>,
+    item: Item,
+    nextStatus: ClaimStatus,
+  ) {
+    if (!userId || !item.listing?.id) return;
+    if (item.claim_status === nextStatus) return;
+    if (item.claim_status === 'open' && nextStatus !== 'open') {
+      await setListingsStatus(supabase, userId, [item.listing.id], 'sold', 'active');
+    } else if (item.claim_status !== 'open' && nextStatus === 'open') {
+      await setListingsStatus(supabase, userId, [item.listing.id], 'active', 'sold');
+    }
+  }
+
   async function setItemStatus(item: Item, claim_status: ClaimStatus) {
     const supabase = createClient();
     const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).eq('id', item.id);
-    if (!error) setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
-    else alert(error.message);
+    if (!error) {
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
+      await syncItemListingStatus(supabase, item, claim_status);
+    } else alert(error.message);
   }
 
   async function setBuyerStatus(buyerItems: Item[], claim_status: ClaimStatus) {
@@ -377,6 +395,16 @@ export default function ManageClaimSalePage() {
     if (error) { alert(error.message); return; }
     const idSet = new Set(ids);
     setItems(prev => prev.map(i => idSet.has(i.id) ? { ...i, claim_status } : i));
+    if (userId) {
+      const lockListingIds = buyerItems
+        .filter(i => i.claim_status === 'open' && claim_status !== 'open' && i.listing?.id)
+        .map(i => i.listing!.id);
+      const unlockListingIds = buyerItems
+        .filter(i => i.claim_status !== 'open' && claim_status === 'open' && i.listing?.id)
+        .map(i => i.listing!.id);
+      if (lockListingIds.length > 0) await setListingsStatus(supabase, userId, lockListingIds, 'sold', 'active');
+      if (unlockListingIds.length > 0) await setListingsStatus(supabase, userId, unlockListingIds, 'active', 'sold');
+    }
   }
 
   async function setLotCommentUrl(lot: Lot, url: string) {

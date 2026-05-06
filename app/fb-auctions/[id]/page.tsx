@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { substitute, listingVars } from '@/lib/fbAuctionText';
 import { logBidEvent } from '@/lib/fbBidEvents';
+import { setListingsStatus } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'ended' | 'settled';
@@ -291,6 +292,22 @@ export default function ManageFbAuctionPage() {
     else {
       setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf, bidder_id: bidderId } : l));
       setEditBuffer(prev => { const next = { ...prev }; delete next[id]; return next; });
+      // If the lot's status changed, sync the underlying listing.
+      if ('status' in buf && lotRef?.listing_id && userId) {
+        const newLotStatus = buf.status as Lot['status'];
+        const prevLotStatus = lotRef.status;
+        if (prevLotStatus !== newLotStatus) {
+          if (newLotStatus === 'no_sale') {
+            await setListingsStatus(supabase, userId, [lotRef.listing_id], 'active', 'sold');
+          } else if (newLotStatus === 'open' && prevLotStatus === 'no_sale') {
+            // re-listing for sale within a live auction
+            if (auction?.status === 'live') {
+              await setListingsStatus(supabase, userId, [lotRef.listing_id], 'sold', 'active');
+            }
+          }
+          // sold / paid: listing is already marked sold from the auction-live transition.
+        }
+      }
       const newBid = 'current_bid' in buf ? (buf.current_bid ?? null) : (lotRef?.current_bid ?? null);
       const newName = 'bidder_name' in buf ? (buf.bidder_name?.toString().trim() || null) : (lotRef?.bidder_name ?? null);
       const newHandle = 'bidder_fb_handle' in buf ? (buf.bidder_fb_handle?.toString().trim() || null) : (lotRef?.bidder_fb_handle ?? null);
@@ -365,9 +382,18 @@ export default function ManageFbAuctionPage() {
     // draft (or back from settled), open lots are restored.
     if (prev !== 'live' && s === 'live') {
       await markLotsInventory(lots.filter(l => l.status === 'open'), false);
+      // Lock the source listings out of active inventory so they can't be sold twice.
+      const listingIds = lots
+        .filter(l => l.status === 'open' && l.listing_id)
+        .map(l => l.listing_id as string);
+      await setListingsStatus(supabase, userId, listingIds, 'sold', 'active');
     } else if (prev === 'live' && s !== 'live') {
       // Restore the lots that ended unsold; sold/paid lots stay removed.
       await markLotsInventory(lots.filter(l => l.status === 'open' || l.status === 'no_sale'), true);
+      const listingIds = lots
+        .filter(l => (l.status === 'open' || l.status === 'no_sale') && l.listing_id)
+        .map(l => l.listing_id as string);
+      await setListingsStatus(supabase, userId, listingIds, 'active', 'sold');
     }
   }
 
