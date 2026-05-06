@@ -80,9 +80,9 @@ function statusFg(s: Status) {
 }
 function saleStatusLabel(s: Status): string {
   if (s === 'draft') return 'Draft';
-  if (s === 'live') return 'Open';
+  if (s === 'live') return 'Live';
   if (s === 'closed') return 'Claimed';
-  if (s === 'settled') return 'Paid';
+  if (s === 'settled') return 'Sold';
   return s;
 }
 function deriveSaleStatus(current: Status, items: { claim_status: ClaimStatus }[]): Status {
@@ -404,7 +404,7 @@ export default function ManageClaimSalePage() {
       const unlockIds = buyerItems
         .filter(i => i.claim_status !== 'open' && claim_status === 'open' && i.listing?.id)
         .map(i => i.listing!.id);
-      if (lockIds.length > 0) await setListingsStatus(supabase, userId, lockIds, 'sold', 'active');
+      if (lockIds.length > 0) await setListingsStatus(supabase, userId, lockIds, 'sold', ['draft', 'active']);
       if (unlockIds.length > 0) await setListingsStatus(supabase, userId, unlockIds, 'active', 'sold');
     }
     await syncSaleStatusAfter(ids.map(id => ({ id, claim_status })));
@@ -415,7 +415,7 @@ export default function ManageClaimSalePage() {
     if (!userId || !item.listing?.id) return;
     if (item.claim_status === nextStatus) return;
     if (item.claim_status === 'open' && nextStatus !== 'open') {
-      await setListingsStatus(supabase, userId, [item.listing.id], 'sold', 'active');
+      await setListingsStatus(supabase, userId, [item.listing.id], 'sold', ['draft', 'active']);
     } else if (item.claim_status !== 'open' && nextStatus === 'open') {
       await setListingsStatus(supabase, userId, [item.listing.id], 'active', 'sold');
     }
@@ -747,9 +747,9 @@ export default function ManageClaimSalePage() {
                           <select value={it.claim_status === 'sold' ? 'claimed' : it.claim_status}
                             onChange={e => setItemStatus(it, e.target.value as ClaimStatus)}
                             className="input-sc" style={{ width: 100, fontSize: 11.5 }}>
-                            <option value="open">Open</option>
+                            <option value="open">Live</option>
                             <option value="claimed">Claimed</option>
-                            <option value="paid">Paid</option>
+                            <option value="paid">Sold</option>
                           </select>
                           {savingItems.has(it.id) && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>…</span>}
                         </div>

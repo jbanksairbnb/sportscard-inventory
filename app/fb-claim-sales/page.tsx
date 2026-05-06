@@ -81,9 +81,9 @@ function statusFg(s: SaleStatus) {
 }
 function saleStatusLabel(s: SaleStatus): string {
   if (s === 'draft') return 'Draft';
-  if (s === 'live') return 'Open';
+  if (s === 'live') return 'Live';
   if (s === 'closed') return 'Claimed';
-  if (s === 'settled') return 'Paid';
+  if (s === 'settled') return 'Sold';
   return s;
 }
 function deriveSaleStatus(current: SaleStatus, items: { claim_status: ClaimStatus }[]): SaleStatus {
@@ -290,7 +290,7 @@ export default function ClaimSalesPage() {
     if (!userId || !item.listing_id) return;
     if (item.claim_status === nextStatus) return;
     if (item.claim_status === 'open' && nextStatus !== 'open') {
-      await setListingsStatus(supabase, userId, [item.listing_id], 'sold', 'active');
+      await setListingsStatus(supabase, userId, [item.listing_id], 'sold', ['draft', 'active']);
     } else if (item.claim_status !== 'open' && nextStatus === 'open') {
       await setListingsStatus(supabase, userId, [item.listing_id], 'active', 'sold');
     }
@@ -409,7 +409,7 @@ export default function ClaimSalesPage() {
           {STATUS_FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-ghost'}`}>
-              {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'all' ? 'All' : saleStatusLabel(f as SaleStatus)}
               <span style={{ marginLeft: 6, opacity: 0.8 }}>({counts[f] || 0})</span>
             </button>
           ))}
@@ -539,9 +539,9 @@ export default function ClaimSalesPage() {
                                   <select value={item.claim_status === 'sold' ? 'claimed' : item.claim_status}
                                     onChange={e => setItemStatus(item, e.target.value as ClaimStatus)}
                                     className="input-sc" style={{ width: 100, fontSize: 11.5 }}>
-                                    <option value="open">Open</option>
+                                    <option value="open">Live</option>
                                     <option value="claimed">Claimed</option>
-                                    <option value="paid">Paid</option>
+                                    <option value="paid">Sold</option>
                                   </select>
                                   {isSaving && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginLeft: 6 }}>…</span>}
                                 </td>
