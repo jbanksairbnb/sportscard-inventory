@@ -102,6 +102,7 @@ function MarketplacePageInner() {
         .from('listings')
         .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at')
         .eq('status', 'active')
+        .gt('asking_price', 0)
         .order('created_at', { ascending: false });
 
       const sellerIds = Array.from(new Set((rows || []).map(r => r.user_id)));
@@ -350,6 +351,10 @@ function BuyModal({
 
   async function confirm() {
     setError('');
+    if (!listing.asking_price || listing.asking_price <= 0) {
+      setError('Card unavailable. Seller may have this in an auction — please contact the seller if interested.');
+      return;
+    }
     if (!ship) { setError('Pick a shipping option.'); return; }
     if (!name.trim() || !addr1.trim() || !city.trim() || !stateReg.trim() || !zip.trim() || !country.trim()) {
       setError('All shipping address fields except line 2 are required.');

@@ -70,6 +70,7 @@ function SearchPageInner() {
           .from('listings')
           .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos')
           .eq('status', 'active')
+          .gt('asking_price', 0)
           .order('created_at', { ascending: false })
           .limit(500),
         supabase
