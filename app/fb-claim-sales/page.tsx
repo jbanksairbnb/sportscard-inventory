@@ -78,6 +78,20 @@ function statusFg(s: SaleStatus) {
   if (s === 'closed') return 'var(--plum)';
   return 'var(--cream)';
 }
+function saleStatusLabel(s: SaleStatus): string {
+  if (s === 'draft') return 'Draft';
+  if (s === 'live') return 'Open';
+  if (s === 'closed') return 'Claimed';
+  if (s === 'settled') return 'Paid';
+  return s;
+}
+function deriveSaleStatus(current: SaleStatus, items: { claim_status: ClaimStatus }[]): SaleStatus {
+  if (current === 'draft') return 'draft';
+  if (items.length === 0) return current;
+  if (items.some(i => i.claim_status === 'open')) return 'live';
+  if (items.every(i => i.claim_status === 'paid')) return 'settled';
+  return 'closed';
+}
 function fmtMoney(n: number | null | undefined) {
   if (n === null || n === undefined) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
@@ -252,6 +266,7 @@ export default function ClaimSalesPage() {
       setItems(prev => prev.map(i => i.id === item.id
         ? { ...i, claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status }
         : i));
+      await syncSaleStatus(item.lot_id, item.id, claim_status);
     } else {
       alert(error.message);
     }
@@ -261,8 +276,27 @@ export default function ClaimSalesPage() {
   async function setItemStatus(item: ItemRow, claim_status: ClaimStatus) {
     const supabase = createClient();
     const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).eq('id', item.id);
-    if (!error) setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
-    else alert(error.message);
+    if (!error) {
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
+      await syncSaleStatus(item.lot_id, item.id, claim_status);
+    } else alert(error.message);
+  }
+
+  async function syncSaleStatus(lotId: string, changedItemId: string, nextItemStatus: ClaimStatus) {
+    const lot = lots.find(l => l.id === lotId);
+    if (!lot) return;
+    const sale = sales.find(s => s.id === lot.sale_id);
+    if (!sale || sale.status === 'draft') return;
+    const saleLotIds = new Set(lots.filter(l => l.sale_id === sale.id).map(l => l.id));
+    const saleItems = items
+      .filter(i => saleLotIds.has(i.lot_id))
+      .map(i => i.id === changedItemId ? { ...i, claim_status: nextItemStatus } : i);
+    const next = deriveSaleStatus(sale.status, saleItems);
+    if (next === sale.status) return;
+    const supabase = createClient();
+    const { error } = await supabase.from('fb_claim_sales').update({ status: next, updated_at: new Date().toISOString() }).eq('id', sale.id);
+    if (error) { console.warn('[sale status auto-advance] failed:', error.message); return; }
+    setSales(prev => prev.map(s => s.id === sale.id ? { ...s, status: next } : s));
   }
 
   async function deleteSale(sale: SaleRow) {
@@ -406,7 +440,7 @@ export default function ClaimSalesPage() {
                       background: statusBg(sale.status), color: statusFg(sale.status),
                       padding: '3px 10px', borderRadius: 100, textTransform: 'uppercase',
                       border: '1.5px solid var(--mustard)',
-                    }}>{sale.status === 'closed' ? 'Sold' : sale.status}</span>
+                    }}>{saleStatusLabel(sale.status)}</span>
                     <div className="mono" style={{ fontSize: 12, color: 'var(--mustard)', fontWeight: 700 }}>
                       {fmtMoney(totalClaimed)} <span style={{ opacity: 0.7, fontWeight: 500 }}>/ {fmtMoney(totalList)}</span>
                     </div>
@@ -488,11 +522,11 @@ export default function ClaimSalesPage() {
                                     className="input-sc" style={{ width: 170, fontSize: 12 }} />
                                 </td>
                                 <td style={{ padding: '6px 14px', whiteSpace: 'nowrap' }}>
-                                  <select value={item.claim_status} onChange={e => setItemStatus(item, e.target.value as ClaimStatus)}
+                                  <select value={item.claim_status === 'sold' ? 'claimed' : item.claim_status}
+                                    onChange={e => setItemStatus(item, e.target.value as ClaimStatus)}
                                     className="input-sc" style={{ width: 100, fontSize: 11.5 }}>
                                     <option value="open">Open</option>
                                     <option value="claimed">Claimed</option>
-                                    <option value="sold">Sold</option>
                                     <option value="paid">Paid</option>
                                   </select>
                                   {isSaving && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginLeft: 6 }}>…</span>}
