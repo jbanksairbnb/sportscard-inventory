@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { logBidEvent, fetchLotBidStats, type LotBidStats } from '@/lib/fbBidEvents';
+import { syncAuctionListings } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'ended' | 'settled';
@@ -315,6 +316,12 @@ export default function FbAuctionsPage() {
     setBulkWorking(false);
     if (error) { alert(error.message); return; }
     setAuctions(prev => prev.map(a => ids.includes(a.id) ? { ...a, status: 'live' } : a));
+    if (userId) {
+      for (const id of ids) {
+        const a = auctions.find(x => x.id === id);
+        if (a) await syncAuctionListings(supabase, userId, 'live', a.fb_auction_lots);
+      }
+    }
     setSelectedDrafts(new Set());
   }
   async function deleteAuction(a: AuctionRow) {
@@ -441,6 +448,7 @@ export default function FbAuctionsPage() {
       const { error: aErr } = await supabase.from('fb_auctions').update({ status: desiredAuctionStatus }).eq('id', auctionId);
       if (aErr) console.warn('auction status auto-advance failed:', aErr.message);
     }
+    if (userId) await syncAuctionListings(supabase, userId, desiredAuctionStatus, nextLots);
   }
 
   function buildBidUpdate(auction: AuctionRow): string {

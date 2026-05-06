@@ -539,9 +539,9 @@ export default function ClaimSalesPage() {
                                   <select value={item.claim_status === 'sold' ? 'claimed' : item.claim_status}
                                     onChange={e => setItemStatus(item, e.target.value as ClaimStatus)}
                                     className="input-sc" style={{ width: 100, fontSize: 11.5 }}>
-                                    <option value="open">Open</option>
+                                    <option value="open">Live</option>
                                     <option value="claimed">Claimed</option>
-                                    <option value="paid">Paid</option>
+                                    <option value="paid">Sold</option>
                                   </select>
                                   {isSaving && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginLeft: 6 }}>…</span>}
                                 </td>

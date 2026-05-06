@@ -747,9 +747,9 @@ export default function ManageClaimSalePage() {
                           <select value={it.claim_status === 'sold' ? 'claimed' : it.claim_status}
                             onChange={e => setItemStatus(it, e.target.value as ClaimStatus)}
                             className="input-sc" style={{ width: 100, fontSize: 11.5 }}>
-                            <option value="open">Open</option>
+                            <option value="open">Live</option>
                             <option value="claimed">Claimed</option>
-                            <option value="paid">Paid</option>
+                            <option value="paid">Sold</option>
                           </select>
                           {savingItems.has(it.id) && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>…</span>}
                         </div>
