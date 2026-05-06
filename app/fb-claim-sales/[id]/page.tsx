@@ -599,6 +599,20 @@ export default function ManageClaimSalePage() {
           <div className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 6 }}>
             {lots.length} lot{lots.length === 1 ? '' : 's'} · {items.length} item{items.length === 1 ? '' : 's'} · List value {fmtMoney(totalList)} · Claimed {fmtMoney(totalClaimed)}
           </div>
+          {sale.status === 'draft' && (
+            <div style={{ marginTop: 14, padding: '12px 14px', background: 'rgba(45,122,110,0.10)', border: '1.5px dashed var(--teal)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>Ready to post on Facebook?</div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 2 }}>
+                  Going Live locks each card in your inventory so you don&apos;t double-sell.
+                </div>
+              </div>
+              <button type="button" onClick={() => setStatus('live')}
+                className="btn btn-primary" style={{ fontSize: 13, padding: '8px 16px' }}>
+                🟢 Go Live
+              </button>
+            </div>
+          )}
           <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {(['draft', 'live', 'closed', 'settled'] as const).map(s => (
               <button key={s} onClick={() => setStatus(s)}
