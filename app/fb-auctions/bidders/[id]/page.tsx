@@ -73,6 +73,27 @@ type ClaimItemRow = {
 type ClaimLotRow = { id: string; sale_id: string; lot_number: number };
 type ClaimSaleRef = { id: string; title: string | null; status: string | null };
 
+type BidEventRow = {
+  id: string;
+  lot_id: string;
+  auction_id: string;
+  bidder_id: string | null;
+  bidder_name: string | null;
+  amount: number | null;
+  created_at: string;
+};
+
+type BidHistoryItem = {
+  id: string;
+  createdAt: string;
+  amount: number | null;
+  lotId: string;
+  auctionId: string;
+  auctionTitle: string | null;
+  lotNumber: number | null;
+  listing: ListingRef | null;
+};
+
 type ClaimActivityItem = {
   itemId: string;
   saleId: string;
@@ -90,7 +111,10 @@ function fmtMoney(n: number | null): string {
 }
 
 function activityLabel(item: ActivityItem): string {
-  const r = item.listing;
+  return cardSummary(item.listing);
+}
+
+function cardSummary(r: ListingRef | null): string {
   if (!r) return '(card details missing)';
   const parts = [
     r.year ? String(r.year) : '',
@@ -120,6 +144,7 @@ export default function BidderProfilePage() {
   const [bidder, setBidder] = useState<Bidder | null>(null);
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [claimItems, setClaimItems] = useState<ClaimActivityItem[]>([]);
+  const [bidHistory, setBidHistory] = useState<BidHistoryItem[]>([]);
   const [edit, setEdit] = useState({
     name: '', fb_handle: '', email: '', phone: '',
     address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '',
@@ -276,6 +301,73 @@ export default function BidderProfilePage() {
       });
       setClaimItems(claimActivityItems);
 
+      // Pull every fb_auction_bid_events row for this bidder (by id, plus name fallback for unlinked events).
+      const eventBatches: BidEventRow[][] = [];
+      const { data: byIdEvents } = await supabase
+        .from('fb_auction_bid_events')
+        .select('id, lot_id, auction_id, bidder_id, bidder_name, amount, created_at')
+        .eq('user_id', user.id)
+        .eq('bidder_id', bidderId);
+      eventBatches.push((byIdEvents || []) as BidEventRow[]);
+      const trimmedName = b.name.trim();
+      if (trimmedName) {
+        const { data: byNameEvents } = await supabase
+          .from('fb_auction_bid_events')
+          .select('id, lot_id, auction_id, bidder_id, bidder_name, amount, created_at')
+          .eq('user_id', user.id)
+          .is('bidder_id', null)
+          .ilike('bidder_name', trimmedName);
+        eventBatches.push((byNameEvents || []) as BidEventRow[]);
+      }
+      const eventsCombined: BidEventRow[] = [];
+      const eventSeen = new Set<string>();
+      for (const batch of eventBatches) {
+        for (const e of batch) {
+          if (eventSeen.has(e.id)) continue;
+          eventSeen.add(e.id);
+          eventsCombined.push(e);
+        }
+      }
+      // Resolve lot → auction + listing for the rendered history.
+      const eventLotIds = Array.from(new Set(eventsCombined.map(e => e.lot_id)));
+      const lotMetaById = new Map<string, { lot_number: number | null; listing_id: string | null }>();
+      if (eventLotIds.length > 0) {
+        const { data: lotMetaRows } = await supabase
+          .from('fb_auction_lots')
+          .select('id, lot_number, listing_id')
+          .in('id', eventLotIds);
+        for (const r of (lotMetaRows || []) as { id: string; lot_number: number | null; listing_id: string | null }[]) {
+          lotMetaById.set(r.id, { lot_number: r.lot_number, listing_id: r.listing_id });
+        }
+      }
+      const extraListingIds = Array.from(new Set(
+        Array.from(lotMetaById.values()).map(m => m.listing_id).filter((v): v is string => !!v && !listingsById.has(v))
+      ));
+      if (extraListingIds.length > 0) {
+        const { data: extraListings } = await supabase
+          .from('listings')
+          .select('id, title, year, brand, card_number, player')
+          .in('id', extraListingIds);
+        for (const l of (extraListings || []) as ListingRef[]) listingsById.set(l.id, l);
+      }
+      const history: BidHistoryItem[] = eventsCombined.map(e => {
+        const meta = lotMetaById.get(e.lot_id) || null;
+        const listing = meta?.listing_id ? listingsById.get(meta.listing_id) || null : null;
+        const auction = auctionsById.get(e.auction_id) || null;
+        return {
+          id: e.id,
+          createdAt: e.created_at,
+          amount: e.amount,
+          lotId: e.lot_id,
+          auctionId: e.auction_id,
+          auctionTitle: auction?.title || null,
+          lotNumber: meta?.lot_number ?? null,
+          listing,
+        };
+      });
+      history.sort((a, b1) => (b1.createdAt > a.createdAt ? 1 : b1.createdAt < a.createdAt ? -1 : 0));
+      setBidHistory(history);
+
       setLoading(false);
     }
     load();
@@ -415,7 +507,7 @@ export default function BidderProfilePage() {
               </section>
             )}
 
-            <section className="panel-bordered" style={{ padding: '18px 22px' }}>
+            <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
               <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>
                 {winning.length > 0 ? `Other bids (${losing.length})` : `Bid activity (${items.length})`}
               </div>
@@ -425,6 +517,49 @@ export default function BidderProfilePage() {
                 </div>
               ) : (
                 <ActivityList items={winning.length > 0 ? losing : items} />
+              )}
+            </section>
+
+            <section className="panel-bordered" style={{ padding: '18px 22px' }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 10 }}>
+                🔨 Full bid history ({bidHistory.length})
+              </div>
+              {bidHistory.length === 0 ? (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+                  No recorded bid events yet. Every bid (amount or bidder change) entered on a lot is logged here going forward.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {bidHistory.map(h => {
+                    const cardLabel = h.listing
+                      ? cardSummary(h.listing)
+                      : h.lotNumber !== null ? `Lot #${h.lotNumber}` : 'Lot';
+                    return (
+                      <Link key={h.id} href={`/fb-auctions/${h.auctionId}`}
+                        style={{ textDecoration: 'none', color: 'inherit' }}>
+                        <div style={{
+                          display: 'grid', gridTemplateColumns: '150px 70px 1fr auto',
+                          gap: 10, alignItems: 'center', padding: '8px 10px',
+                          background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
+                        }}>
+                          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                            {new Date(h.createdAt).toLocaleString()}
+                          </div>
+                          <div className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--plum)' }}>
+                            #{h.lotNumber ?? '?'}
+                          </div>
+                          <div style={{ fontSize: 12.5, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontWeight: 600 }}>{cardLabel}</span>
+                            {h.auctionTitle && <span style={{ color: 'var(--ink-mute)', marginLeft: 8 }}>· {h.auctionTitle}</span>}
+                          </div>
+                          <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--orange)' }}>
+                            {h.amount != null ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(h.amount) : '—'}
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
               )}
             </section>
           </div>

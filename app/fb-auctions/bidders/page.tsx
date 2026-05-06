@@ -20,6 +20,14 @@ type LotRow = {
   status: 'open' | 'sold' | 'no_sale' | 'paid';
 };
 
+type BidEventRow = {
+  lot_id: string;
+  bidder_id: string | null;
+  bidder_name: string | null;
+  amount: number | null;
+  created_at: string;
+};
+
 type ClaimItemRow = {
   claim_buyer_id: string | null;
   claim_buyer_name: string | null;
@@ -28,7 +36,9 @@ type ClaimItemRow = {
 };
 
 type BidderStats = BidderRow & {
-  bidCount: number;       // auction lots where this bidder placed any bid
+  totalBids: number;      // every bid event this bidder placed
+  lotsBidOn: number;      // distinct auction lots they have bid on
+  leadingCount: number;   // auction lots where they're the current high bidder
   wonCount: number;       // auction lots ended/sold/paid (status sold or paid)
   paidCount: number;      // auction lots paid
   totalSpend: number;     // sum auction + claim paid
@@ -45,23 +55,26 @@ export default function BiddersListPage() {
   const [loading, setLoading] = useState(true);
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
+  const [bidEvents, setBidEvents] = useState<BidEventRow[]>([]);
   const [claimItems, setClaimItems] = useState<ClaimItemRow[]>([]);
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims'>('spend');
+  const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims' | 'bids'>('bids');
 
   useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      const [bRes, lRes, cRes] = await Promise.all([
+      const [bRes, lRes, cRes, eRes] = await Promise.all([
         supabase.from('fb_bidders').select('id, name, fb_handle, notes').eq('user_id', user.id).order('name'),
         supabase.from('fb_auction_lots').select('bidder_id, bidder_name, current_bid, status').eq('user_id', user.id),
         supabase.from('fb_claim_sale_items').select('claim_buyer_id, claim_buyer_name, price, claim_status').eq('user_id', user.id),
+        supabase.from('fb_auction_bid_events').select('lot_id, bidder_id, bidder_name, amount, created_at').eq('user_id', user.id),
       ]);
       setBidders((bRes.data || []) as BidderRow[]);
       setLots((lRes.data || []) as LotRow[]);
       setClaimItems((cRes.data || []) as ClaimItemRow[]);
+      setBidEvents((eRes.data || []) as BidEventRow[]);
       setLoading(false);
     }
     load();
@@ -97,13 +110,31 @@ export default function BiddersListPage() {
         claimsByName.set(k, arr);
       }
     }
+    // Index bid events similarly so we count every recorded bid (not just current high).
+    const eventsByBidder = new Map<string, BidEventRow[]>();
+    const eventsByName = new Map<string, BidEventRow[]>();
+    for (const e of bidEvents) {
+      if (e.bidder_id) {
+        const arr = eventsByBidder.get(e.bidder_id) || [];
+        arr.push(e);
+        eventsByBidder.set(e.bidder_id, arr);
+      } else if (e.bidder_name) {
+        const k = e.bidder_name.trim().toLowerCase();
+        const arr = eventsByName.get(k) || [];
+        arr.push(e);
+        eventsByName.set(k, arr);
+      }
+    }
     return bidders.map(b => {
       const nameKey = b.name.trim().toLowerCase();
       const myLots = [...(lotsByBidder.get(b.id) || []), ...(lotsByName.get(nameKey) || [])];
       const myClaims = [...(claimsByBuyer.get(b.id) || []), ...(claimsByName.get(nameKey) || [])];
-      let bidCount = 0, wonCount = 0, paidCount = 0, totalSpend = 0;
+      const myEvents = [...(eventsByBidder.get(b.id) || []), ...(eventsByName.get(nameKey) || [])];
+      const totalBids = myEvents.length;
+      const lotsBidOn = new Set(myEvents.map(e => e.lot_id)).size;
+      let leadingCount = 0, wonCount = 0, paidCount = 0, totalSpend = 0;
       for (const l of myLots) {
-        bidCount += 1;
+        leadingCount += 1;
         if (l.status === 'sold' || l.status === 'paid') wonCount += 1;
         if (l.status === 'paid') {
           paidCount += 1;
@@ -118,9 +149,9 @@ export default function BiddersListPage() {
           if (c.price) totalSpend += c.price;
         }
       }
-      return { ...b, bidCount, wonCount, paidCount, totalSpend, claimCount, claimPaidCount };
+      return { ...b, totalBids, lotsBidOn, leadingCount, wonCount, paidCount, totalSpend, claimCount, claimPaidCount };
     });
-  }, [bidders, lots, claimItems]);
+  }, [bidders, lots, claimItems, bidEvents]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -130,6 +161,7 @@ export default function BiddersListPage() {
     arr.sort((a, b) => {
       if (sort === 'spend') return b.totalSpend - a.totalSpend;
       if (sort === 'won') return b.wonCount - a.wonCount;
+      if (sort === 'bids') return b.totalBids - a.totalBids;
       if (sort === 'claims') return b.claimCount - a.claimCount;
       return a.name.localeCompare(b.name);
     });
@@ -182,10 +214,10 @@ export default function BiddersListPage() {
             placeholder="Search bidders…"
             className="input-sc" style={{ flex: 1, minWidth: 240, maxWidth: 360, fontSize: 13 }} />
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['spend', 'won', 'claims', 'name'] as const).map(opt => (
+            {(['bids', 'spend', 'won', 'claims', 'name'] as const).map(opt => (
               <button key={opt} onClick={() => setSort(opt)}
                 className={sort === opt ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
-                Sort: {opt === 'spend' ? '$ spent' : opt === 'won' ? '# won' : opt === 'claims' ? '# claims' : 'A→Z'}
+                Sort: {opt === 'bids' ? '# bids' : opt === 'spend' ? '$ spent' : opt === 'won' ? '# won' : opt === 'claims' ? '# claims' : 'A→Z'}
               </button>
             ))}
           </div>
@@ -226,7 +258,9 @@ export default function BiddersListPage() {
                 <tr>
                   <th style={{ padding: '10px 14px', textAlign: 'left' }}>Name</th>
                   <th style={{ padding: '10px 14px', textAlign: 'left' }}>FB Handle</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'right' }}>Bids</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Total bids placed across all auctions">Bids</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Distinct lots this bidder has bid on">Lots</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Lots where this bidder is currently the high bidder">Leading</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Won</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Claims</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Paid</th>
@@ -241,7 +275,9 @@ export default function BiddersListPage() {
                     <td style={{ padding: '10px 14px', fontSize: 12, color: 'var(--teal)' }} className="mono">
                       {s.fb_handle ? `@${s.fb_handle}` : <span style={{ color: 'var(--ink-mute)' }}>—</span>}
                     </td>
-                    <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.bidCount}</td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>{s.totalBids}</td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.lotsBidOn}</td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.leadingCount}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.wonCount}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.claimCount}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.paidCount + s.claimPaidCount}</td>
