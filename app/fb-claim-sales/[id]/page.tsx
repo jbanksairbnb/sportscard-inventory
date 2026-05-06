@@ -77,6 +77,20 @@ function statusFg(s: Status) {
   if (s === 'closed') return 'var(--plum)';
   return 'var(--cream)';
 }
+function saleStatusLabel(s: Status): string {
+  if (s === 'draft') return 'Draft';
+  if (s === 'live') return 'Open';
+  if (s === 'closed') return 'Claimed';
+  if (s === 'settled') return 'Paid';
+  return s;
+}
+function deriveSaleStatus(current: Status, items: { claim_status: ClaimStatus }[]): Status {
+  if (current === 'draft') return 'draft';
+  if (items.length === 0) return current;
+  if (items.some(i => i.claim_status === 'open')) return 'live';
+  if (items.every(i => i.claim_status === 'paid')) return 'settled';
+  return 'closed';
+}
 async function copyText(t: string) { try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -356,6 +370,7 @@ export default function ManageClaimSalePage() {
       setItems(prev => prev.map(i => i.id === item.id
         ? { ...i, claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status }
         : i));
+      await syncSaleStatusAfter([{ id: item.id, claim_status }]);
     } else {
       alert(error.message);
     }
@@ -365,8 +380,10 @@ export default function ManageClaimSalePage() {
   async function setItemStatus(item: Item, claim_status: ClaimStatus) {
     const supabase = createClient();
     const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).eq('id', item.id);
-    if (!error) setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
-    else alert(error.message);
+    if (!error) {
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
+      await syncSaleStatusAfter([{ id: item.id, claim_status }]);
+    } else alert(error.message);
   }
 
   async function setBuyerStatus(buyerItems: Item[], claim_status: ClaimStatus) {
@@ -377,6 +394,21 @@ export default function ManageClaimSalePage() {
     if (error) { alert(error.message); return; }
     const idSet = new Set(ids);
     setItems(prev => prev.map(i => idSet.has(i.id) ? { ...i, claim_status } : i));
+    await syncSaleStatusAfter(ids.map(id => ({ id, claim_status })));
+  }
+
+  // Apply pending item-status updates to an in-memory copy of items, then
+  // recompute the parent sale's status. If it changed, persist it.
+  async function syncSaleStatusAfter(pending: { id: string; claim_status: ClaimStatus }[]) {
+    if (!sale || sale.status === 'draft') return;
+    const pendingMap = new Map(pending.map(p => [p.id, p.claim_status]));
+    const projected = items.map(i => pendingMap.has(i.id) ? { ...i, claim_status: pendingMap.get(i.id)! } : i);
+    const next = deriveSaleStatus(sale.status, projected);
+    if (next === sale.status) return;
+    const supabase = createClient();
+    const { error } = await supabase.from('fb_claim_sales').update({ status: next, updated_at: new Date().toISOString() }).eq('id', sale.id);
+    if (error) { console.warn('[sale status auto-advance] failed:', error.message); return; }
+    setSale(prev => prev ? { ...prev, status: next } : prev);
   }
 
   async function setLotCommentUrl(lot: Lot, url: string) {
@@ -538,7 +570,7 @@ export default function ManageClaimSalePage() {
               fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
               background: statusBg(sale.status), color: statusFg(sale.status),
               padding: '3px 10px', borderRadius: 100, textTransform: 'uppercase',
-            }}>{sale.status}</span>
+            }}>{saleStatusLabel(sale.status)}</span>
           </div>
           <div className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 6 }}>
             {lots.length} lot{lots.length === 1 ? '' : 's'} · {items.length} item{items.length === 1 ? '' : 's'} · List value {fmtMoney(totalList)} · Claimed {fmtMoney(totalClaimed)}
@@ -547,7 +579,7 @@ export default function ManageClaimSalePage() {
             {(['draft', 'live', 'closed', 'settled'] as const).map(s => (
               <button key={s} onClick={() => setStatus(s)}
                 className={`btn btn-sm ${sale.status === s ? 'btn-primary' : 'btn-ghost'}`}>
-                {s.charAt(0).toUpperCase() + s.slice(1)}
+                {saleStatusLabel(s)}
               </button>
             ))}
           </div>
@@ -688,11 +720,11 @@ export default function ManageClaimSalePage() {
                               if ((v.trim() || null) !== (it.claim_buyer_name || null)) setItemBuyer(it, v);
                             }}
                             className="input-sc" style={{ width: 160, fontSize: 12 }} />
-                          <select value={it.claim_status} onChange={e => setItemStatus(it, e.target.value as ClaimStatus)}
+                          <select value={it.claim_status === 'sold' ? 'claimed' : it.claim_status}
+                            onChange={e => setItemStatus(it, e.target.value as ClaimStatus)}
                             className="input-sc" style={{ width: 100, fontSize: 11.5 }}>
                             <option value="open">Open</option>
                             <option value="claimed">Claimed</option>
-                            <option value="sold">Sold</option>
                             <option value="paid">Paid</option>
                           </select>
                           {savingItems.has(it.id) && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>…</span>}
