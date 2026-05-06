@@ -391,13 +391,17 @@ export default function FbAuctionsPage() {
       const bidChanged = ('current_bid' in buf) && newBid !== previousBid;
       const bidderChanged = bidderId !== previousBidderId;
       if ((bidChanged || bidderChanged) && (newBid != null || newName) && userId && auctionForLot) {
-        await logBidEvent(supabase, {
+        const evtErr = await logBidEvent(supabase, {
           userId, auctionId: auctionForLot.id, lotId,
           amount: newBid, bidderId, bidderName: newName, bidderFbHandle: newHandle,
         });
-        const fresh = await fetchLotBidStats(supabase, [lotId]);
-        const stat = fresh.get(lotId);
-        if (stat) setLotStats(prev => { const next = new Map(prev); next.set(lotId, stat); return next; });
+        if (evtErr) {
+          alert(`Bid event log failed: ${evtErr}\nThe lot was saved but the bid history did NOT record this change.`);
+        } else {
+          const fresh = await fetchLotBidStats(supabase, [lotId]);
+          const stat = fresh.get(lotId);
+          if (stat) setLotStats(prev => { const next = new Map(prev); next.set(lotId, stat); return next; });
+        }
       }
     }
     setSavingLots(prev => { const next = new Set(prev); next.delete(lotId); return next; });

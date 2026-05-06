@@ -10,12 +10,13 @@ export type LogBidEventInput = {
   bidderFbHandle: string | null;
 };
 
-// Fire-and-forget. Failures are swallowed so a bid update on the lot row never
-// rolls back because the event log can't be written (e.g. migration not yet
-// applied). Caller passes a Supabase client that's already authed as the seller.
-export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInput): Promise<void> {
+// Caller passes a Supabase client that's already authed as the seller.
+// Returns null on success, or an error message string on failure. Callers
+// should surface failures so missed events get noticed (the table is the
+// source of truth for bidder analytics).
+export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInput): Promise<string | null> {
   try {
-    await supabase.from('fb_auction_bid_events').insert({
+    const { error } = await supabase.from('fb_auction_bid_events').insert({
       user_id: args.userId,
       auction_id: args.auctionId,
       lot_id: args.lotId,
@@ -24,8 +25,15 @@ export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInp
       bidder_name: args.bidderName,
       bidder_fb_handle: args.bidderFbHandle,
     });
-  } catch {
-    /* ignore */
+    if (error) {
+      console.error('[fb_auction_bid_events] insert failed:', error.message);
+      return error.message;
+    }
+    return null;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[fb_auction_bid_events] insert threw:', msg);
+    return msg;
   }
 }
 

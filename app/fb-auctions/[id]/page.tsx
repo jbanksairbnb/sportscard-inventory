@@ -298,10 +298,11 @@ export default function ManageFbAuctionPage() {
       const bidderChanged = bidderId !== previousBidderId;
       if ((bidChanged || bidderChanged) && (newBid != null || newName)) {
         if (userId && auction) {
-          logBidEvent(supabase, {
+          const err = await logBidEvent(supabase, {
             userId, auctionId: auction.id, lotId: id,
             amount: newBid, bidderId, bidderName: newName, bidderFbHandle: newHandle,
           });
+          if (err) alert(`Bid event log failed: ${err}\nThe lot was saved but the bid history did NOT record this change.`);
         }
       }
       if (previousBidderId && previousBidderId !== bidderId) {
