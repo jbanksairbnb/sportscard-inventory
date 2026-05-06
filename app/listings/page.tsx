@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 import MarketResearchModal from '@/components/MarketResearchModal';
+import PhotoEditor from '@/components/PhotoEditor';
 
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
@@ -467,6 +468,25 @@ function ListingsPageContent() {
     setListings(prev => prev.map(l => l.id === editing.id ? { ...l, photos: newPhotos } : l));
   }
 
+  async function replacePhoto(idx: number, blob: Blob) {
+    if (!editing?.id || !userId || !editing.photos) return;
+    const oldUrl = editing.photos[idx];
+    const supabase = createClient();
+    const path = `${userId}/listings/${editing.id}/${Date.now()}-edit.jpg`;
+    const { error: upErr } = await supabase.storage.from('card-images').upload(path, blob, { contentType: 'image/jpeg' });
+    if (upErr) { alert('Upload failed: ' + upErr.message); return; }
+    const url = supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
+    const newPhotos = editing.photos.map((u, i) => i === idx ? url : u);
+    const { error: updErr } = await supabase.from('listings').update({ photos: newPhotos }).eq('id', editing.id);
+    if (updErr) { alert(updErr.message); return; }
+    setEditing(prev => prev ? { ...prev, photos: newPhotos } : prev);
+    setListings(prev => prev.map(l => l.id === editing.id ? { ...l, photos: newPhotos } : l));
+    if (oldUrl) {
+      const m = oldUrl.match(/\/card-images\/(.+?)(?:\?|$)/);
+      if (m?.[1]) supabase.storage.from('card-images').remove([decodeURIComponent(m[1])]).catch(() => {});
+    }
+  }
+
   async function markSold(l: Listing) {
     const input = prompt('Final sale price:', l.asking_price ? String(l.asking_price) : '');
     if (input === null) return;
@@ -838,6 +858,7 @@ function ListingsPageContent() {
           error={formError}
           onUploadPhoto={uploadPhoto}
           onDeletePhoto={deletePhoto}
+          onReplacePhoto={replacePhoto}
           onResearchPrice={() => setResearchOpen(true)}
         />
       )}
@@ -973,7 +994,7 @@ function ListingsPageContent() {
 }
 
 function ListingEditor({
-  draft, onChange, onCancel, onSave, saving, error, onUploadPhoto, onDeletePhoto, onResearchPrice,
+  draft, onChange, onCancel, onSave, saving, error, onUploadPhoto, onDeletePhoto, onReplacePhoto, onResearchPrice,
 }: {
   draft: Partial<Listing>;
   onChange: (next: Partial<Listing>) => void;
@@ -983,10 +1004,12 @@ function ListingEditor({
   error: string;
   onUploadPhoto: (file: File) => Promise<void>;
   onDeletePhoto: (idx: number) => Promise<void>;
+  onReplacePhoto: (idx: number, blob: Blob) => Promise<void>;
   onResearchPrice: () => void;
 }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null);
   const [lbStart, setLbStart] = useState<number | null>(null);
   const photos = draft.photos || [];
   const canUpload = !!draft.id && photos.length < MAX_PHOTOS;
@@ -1145,6 +1168,15 @@ function ListingEditor({
                   <div key={url + i} style={{ position: 'relative' }}>
                     <img src={url} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
                       style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
+                    <button type="button" onClick={() => setEditingPhotoIdx(i)}
+                      title="Rotate or crop"
+                      style={{
+                        position: 'absolute', bottom: -6, right: -6,
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: 'var(--plum)', color: 'var(--mustard)',
+                        border: '2px solid var(--cream)', cursor: 'pointer',
+                        fontSize: 11, fontWeight: 700, lineHeight: 1, padding: 0,
+                      }}>✎</button>
                     <button type="button" onClick={() => onDeletePhoto(i)}
                       style={{
                         position: 'absolute', top: -6, right: -6,
@@ -1192,6 +1224,13 @@ function ListingEditor({
       </div>
       {lbStart !== null && photos.length > 0 && (
                 <PhotoLightbox urls={photos} startIdx={lbStart} onClose={() => setLbStart(null)} />
+      )}
+      {editingPhotoIdx !== null && photos[editingPhotoIdx] && (
+        <PhotoEditor
+          url={photos[editingPhotoIdx]}
+          onSave={async (blob) => { await onReplacePhoto(editingPhotoIdx, blob); }}
+          onClose={() => setEditingPhotoIdx(null)}
+        />
       )}
     </div>
   );
