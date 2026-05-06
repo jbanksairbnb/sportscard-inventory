@@ -756,7 +756,7 @@ function ListingsPageContent() {
                       <ListingPhotoStrip photos={l.photos} />
                     )}
                     <div style={{ flex: 1, minWidth: 280 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
                         <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>{l.title}</div>
                         <span style={{
                           fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
@@ -764,6 +764,15 @@ function ListingsPageContent() {
                         }}>
                           {l.status.toUpperCase()}
                         </span>
+                        {l.status === 'active' && (!l.asking_price || l.asking_price <= 0) && (
+                          <span title="Hidden from the marketplace until a price is set"
+                            style={{
+                              fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', padding: '2px 8px', borderRadius: 100,
+                              background: 'var(--mustard)', color: 'var(--plum)',
+                            }}>
+                            HIDDEN · NO PRICE
+                          </span>
+                        )}
                       </div>
                       {l.description && (
                         <p style={{ margin: '0 0 8px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>{l.description}</p>
