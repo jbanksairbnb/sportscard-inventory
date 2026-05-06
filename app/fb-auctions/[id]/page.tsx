@@ -486,16 +486,6 @@ export default function ManageFbAuctionPage() {
     ].join('\n');
   }
 
-  if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
-  if (!auction) return null;
-
-  const totalLots = lots.length;
-  const openLots = lots.filter(l => l.status === 'open').length;
-  const endedLots = lots.filter(l => l.status === 'sold').length;
-  const noSaleLots = lots.filter(l => l.status === 'no_sale').length;
-  const paidLots = lots.filter(l => l.status === 'paid').length;
-  const grossSales = lots.filter(l => l.status === 'sold' || l.status === 'paid').reduce((s, l) => s + (l.current_bid || 0), 0);
-
   const postDetails = useMemo(() => {
     if (!auction) return null;
     const tpl = auction.fb_auction_templates;
@@ -525,6 +515,16 @@ export default function ManageFbAuctionPage() {
     }
     return { isSingle, parentBody, lotComments };
   }, [auction, lots]);
+
+  if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
+  if (!auction) return null;
+
+  const totalLots = lots.length;
+  const openLots = lots.filter(l => l.status === 'open').length;
+  const endedLots = lots.filter(l => l.status === 'sold').length;
+  const noSaleLots = lots.filter(l => l.status === 'no_sale').length;
+  const paidLots = lots.filter(l => l.status === 'paid').length;
+  const grossSales = lots.filter(l => l.status === 'sold' || l.status === 'paid').reduce((s, l) => s + (l.current_bid || 0), 0);
 
   // Group lots into sections so an "ended" (closed-but-unpaid) card moves out
   // of the Live list while its siblings keep running.
