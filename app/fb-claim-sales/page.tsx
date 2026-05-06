@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { setListingsStatus } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
 type SaleStatus = 'draft' | 'live' | 'closed' | 'settled';
@@ -266,6 +267,7 @@ export default function ClaimSalesPage() {
       setItems(prev => prev.map(i => i.id === item.id
         ? { ...i, claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status }
         : i));
+      await syncListingForItem(supabase, item, claim_status);
       await syncSaleStatus(item.lot_id, item.id, claim_status);
     } else {
       alert(error.message);
@@ -278,8 +280,20 @@ export default function ClaimSalesPage() {
     const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).eq('id', item.id);
     if (!error) {
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
+      await syncListingForItem(supabase, item, claim_status);
       await syncSaleStatus(item.lot_id, item.id, claim_status);
     } else alert(error.message);
+  }
+
+  // Lock or unlock the listing in My Listings based on this item's claim transition.
+  async function syncListingForItem(supabase: ReturnType<typeof createClient>, item: ItemRow, nextStatus: ClaimStatus) {
+    if (!userId || !item.listing_id) return;
+    if (item.claim_status === nextStatus) return;
+    if (item.claim_status === 'open' && nextStatus !== 'open') {
+      await setListingsStatus(supabase, userId, [item.listing_id], 'sold', 'active');
+    } else if (item.claim_status !== 'open' && nextStatus === 'open') {
+      await setListingsStatus(supabase, userId, [item.listing_id], 'active', 'sold');
+    }
   }
 
   async function syncSaleStatus(lotId: string, changedItemId: string, nextItemStatus: ClaimStatus) {
