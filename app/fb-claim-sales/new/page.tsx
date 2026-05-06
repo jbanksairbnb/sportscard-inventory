@@ -85,7 +85,7 @@ function buildCommentBody(
   return lines.join('\n');
 }
 
-function buildPostBody(title: string, lots: LotDraft[], paymentText: string, shippingText: string, footer: string): string {
+function buildPostBody(title: string, lots: LotDraft[], shippingText: string, footer: string): string {
   const lines = [
     `*** ${title || 'Claim Sale'} ***`,
     '',
@@ -93,7 +93,6 @@ function buildPostBody(title: string, lots: LotDraft[], paymentText: string, shi
     '',
   ];
   if (shippingText.trim()) lines.push(shippingText.trim(), '');
-  if (paymentText.trim()) lines.push(paymentText.trim(), '');
   if (footer.trim()) lines.push(footer.trim());
   return lines.join('\n').trim();
 }
@@ -114,12 +113,22 @@ export default function NewClaimSalePage() {
   const [title, setTitle] = useState('');
   const [groupId, setGroupId] = useState('');
   const [templateId, setTemplateId] = useState('');
-  const [paymentText, setPaymentText] = useState('PayPal F&F: your-paypal@email.com\nVenmo: @your-venmo');
+  const [paymentText, setPaymentText] = useState('');
   const [shippingText, setShippingText] = useState('U.S. shipping $5. Combined shipping on multiple lots.');
   const [defaultShipping, setDefaultShipping] = useState<number>(5);
   const [endsAt, setEndsAt] = useState('');
   const [postBody, setPostBody] = useState('');
   const [postBodyTouched, setPostBodyTouched] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem('sc-payment-info');
+    if (saved) setPaymentText(saved);
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (paymentText) window.localStorage.setItem('sc-payment-info', paymentText);
+  }, [paymentText]);
 
   const [lots, setLots] = useState<LotDraft[]>([]);
 
@@ -151,8 +160,8 @@ export default function NewClaimSalePage() {
   // Auto-fill post body when inputs change unless the user has touched it.
   useEffect(() => {
     if (postBodyTouched) return;
-    setPostBody(buildPostBody(title, lots, paymentText, shippingText, activeTemplate?.post_footer || ''));
-  }, [title, lots, paymentText, shippingText, activeTemplate, postBodyTouched]);
+    setPostBody(buildPostBody(title, lots, shippingText, activeTemplate?.post_footer || ''));
+  }, [title, lots, shippingText, activeTemplate, postBodyTouched]);
 
   function addLot(kind: 'single' | 'group') {
     setLots(prev => [...prev, {
@@ -329,8 +338,10 @@ export default function NewClaimSalePage() {
             <Field label="Shipping note (in post)">
               <textarea value={shippingText} onChange={e => setShippingText(e.target.value)} rows={2} className="input-sc" style={{ width: '100%', resize: 'vertical' }} />
             </Field>
-            <Field label="Payment note (in post)">
-              <textarea value={paymentText} onChange={e => setPaymentText(e.target.value)} rows={2} className="input-sc" style={{ width: '100%', resize: 'vertical' }} />
+            <Field label="Payment info (invoice only — not in post)">
+              <textarea value={paymentText} onChange={e => setPaymentText(e.target.value)} rows={2}
+                placeholder="PayPal F&F: your-paypal@email.com&#10;Venmo: @your-venmo"
+                className="input-sc" style={{ width: '100%', resize: 'vertical' }} />
             </Field>
           </div>
         </section>

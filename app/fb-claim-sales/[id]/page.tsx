@@ -405,17 +405,16 @@ export default function ManageClaimSalePage() {
     ];
     let subtotal = 0;
     for (const it of buyer.items.slice().sort((a, b) => {
-      const lot = lots.find(l => l.id === a.lot_id)?.lot_number ?? 0;
+      const lotA = lots.find(l => l.id === a.lot_id)?.lot_number ?? 0;
       const lotB = lots.find(l => l.id === b.lot_id)?.lot_number ?? 0;
-      return lot - lotB || a.position - b.position;
+      return lotA - lotB || a.position - b.position;
     })) {
-      const lot = lots.find(l => l.id === it.lot_id);
       const cardLabel = it.listing
         ? `${it.listing.year || ''} ${it.listing.brand || ''} #${it.listing.card_number || ''} ${it.listing.player || ''}`.trim()
         : 'Card';
       const price = it.price ?? 0;
       subtotal += price;
-      lines.push(`· Lot #${lot?.lot_number || '?'}${lot?.kind === 'group' ? ` pos ${it.position}` : ''} — ${cardLabel} — ${fmtMoney(price)}`);
+      lines.push(`· ${cardLabel} — ${fmtMoney(price)}`);
     }
     lines.push('');
     lines.push(`Subtotal: ${fmtMoney(subtotal)}`);
@@ -456,6 +455,13 @@ export default function ManageClaimSalePage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Manage Claim Sale ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {buyers.length > 0 && (
+              <button type="button"
+                onClick={() => document.getElementById('buyer-invoices')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="btn btn-primary btn-sm">
+                🧾 Invoices ({buyers.length})
+              </button>
+            )}
             <Link href="/fb-claim-sales" className="btn btn-ghost btn-sm">All Claim Sales</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
@@ -643,7 +649,7 @@ export default function ManageClaimSalePage() {
 
         {/* Per-buyer invoices */}
         {buyers.length > 0 && (
-          <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
+          <section id="buyer-invoices" className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18, scrollMarginTop: 80 }}>
             <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>
               Buyer Invoices ({buyers.length})
             </div>
