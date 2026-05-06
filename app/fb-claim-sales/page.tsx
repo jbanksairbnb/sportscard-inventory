@@ -290,7 +290,7 @@ export default function ClaimSalesPage() {
     if (!userId || !item.listing_id) return;
     if (item.claim_status === nextStatus) return;
     if (item.claim_status === 'open' && nextStatus !== 'open') {
-      await setListingsStatus(supabase, userId, [item.listing_id], 'sold', 'active');
+      await setListingsStatus(supabase, userId, [item.listing_id], 'sold', ['draft', 'active']);
     } else if (item.claim_status !== 'open' && nextStatus === 'open') {
       await setListingsStatus(supabase, userId, [item.listing_id], 'active', 'sold');
     }

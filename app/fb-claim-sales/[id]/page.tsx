@@ -404,7 +404,7 @@ export default function ManageClaimSalePage() {
       const unlockIds = buyerItems
         .filter(i => i.claim_status !== 'open' && claim_status === 'open' && i.listing?.id)
         .map(i => i.listing!.id);
-      if (lockIds.length > 0) await setListingsStatus(supabase, userId, lockIds, 'sold', 'active');
+      if (lockIds.length > 0) await setListingsStatus(supabase, userId, lockIds, 'sold', ['draft', 'active']);
       if (unlockIds.length > 0) await setListingsStatus(supabase, userId, unlockIds, 'active', 'sold');
     }
     await syncSaleStatusAfter(ids.map(id => ({ id, claim_status })));
@@ -415,7 +415,7 @@ export default function ManageClaimSalePage() {
     if (!userId || !item.listing?.id) return;
     if (item.claim_status === nextStatus) return;
     if (item.claim_status === 'open' && nextStatus !== 'open') {
-      await setListingsStatus(supabase, userId, [item.listing.id], 'sold', 'active');
+      await setListingsStatus(supabase, userId, [item.listing.id], 'sold', ['draft', 'active']);
     } else if (item.claim_status !== 'open' && nextStatus === 'open') {
       await setListingsStatus(supabase, userId, [item.listing.id], 'active', 'sold');
     }
