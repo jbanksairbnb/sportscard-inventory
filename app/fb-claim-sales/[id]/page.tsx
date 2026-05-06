@@ -324,6 +324,16 @@ export default function ManageClaimSalePage() {
     else alert(error.message);
   }
 
+  async function setBuyerStatus(buyerItems: Item[], claim_status: ClaimStatus) {
+    if (buyerItems.length === 0) return;
+    const supabase = createClient();
+    const ids = buyerItems.map(i => i.id);
+    const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).in('id', ids);
+    if (error) { alert(error.message); return; }
+    const idSet = new Set(ids);
+    setItems(prev => prev.map(i => idSet.has(i.id) ? { ...i, claim_status } : i));
+  }
+
   async function setLotCommentUrl(lot: Lot, url: string) {
     setSavingLots(prev => new Set(prev).add(lot.id));
     const supabase = createClient();
@@ -686,6 +696,18 @@ export default function ManageClaimSalePage() {
                       <button onClick={() => copyTag(messageText, tag)} className="btn btn-outline btn-sm">
                         {copiedTag === tag ? '✓ Copied' : '📋 Copy invoice'}
                       </button>
+                      {b.items.every(i => i.claim_status === 'paid') ? (
+                        <span className="mono" style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', background: 'var(--teal)', color: 'var(--cream)', borderRadius: 100, textTransform: 'uppercase', letterSpacing: '0.08em' }}>✓ Paid</span>
+                      ) : (
+                        <button type="button"
+                          onClick={() => {
+                            if (!confirm(`Mark all ${b.items.length} item${b.items.length === 1 ? '' : 's'} for ${b.name} as paid?`)) return;
+                            setBuyerStatus(b.items, 'paid');
+                          }}
+                          className="btn btn-primary btn-sm">
+                          ✓ Mark all paid
+                        </button>
+                      )}
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
                       Subtotal {fmtMoney(subtotal)} + Shipping {fmtMoney(shipping)}
