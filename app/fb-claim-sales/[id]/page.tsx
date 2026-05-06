@@ -128,24 +128,39 @@ async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bg
   else if (processed.length <= 9) cols = 3;
   else cols = 4;
   const rows = Math.ceil(processed.length / cols);
-  const cellW = Math.max(...processed.map(p => p.width));
-  const cellH = Math.max(...processed.map(p => p.height));
   const pad = 24;
   const outer = pad * 2;
+
+  const targetH = Math.max(...processed.map(p => p.height));
+  const scaled = processed.map(p => {
+    const ratio = targetH / p.height;
+    return { src: p, w: Math.round(p.width * ratio), h: targetH };
+  });
+  const rowWidths: number[] = [];
+  for (let r = 0; r < rows; r++) {
+    const start = r * cols;
+    const items = scaled.slice(start, start + cols);
+    rowWidths.push(items.reduce((s, it) => s + it.w, 0) + (items.length - 1) * pad);
+  }
+  const innerW = Math.max(...rowWidths);
+  const innerH = rows * targetH + (rows - 1) * pad;
+
   const canvas = document.createElement('canvas');
-  canvas.width = cols * cellW + (cols - 1) * pad + outer * 2;
-  canvas.height = rows * cellH + (rows - 1) * pad + outer * 2;
+  canvas.width = innerW + outer * 2;
+  canvas.height = innerH + outer * 2;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  for (let i = 0; i < processed.length; i++) {
-    const src = processed[i];
-    const c = i % cols, r = Math.floor(i / cols);
-    const x = outer + c * (cellW + pad), y = outer + r * (cellH + pad);
-    const ratio = Math.min(cellW / src.width, cellH / src.height);
-    const w = src.width * ratio, h = src.height * ratio;
-    ctx.drawImage(src, x + (cellW - w) / 2, y + (cellH - h) / 2, w, h);
+  for (let r = 0; r < rows; r++) {
+    const start = r * cols;
+    const items = scaled.slice(start, start + cols);
+    let x = outer + Math.round((innerW - rowWidths[r]) / 2);
+    const y = outer + r * (targetH + pad);
+    for (const it of items) {
+      ctx.drawImage(it.src, x, y, it.w, it.h);
+      x += it.w + pad;
+    }
   }
   return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.92));
 }
