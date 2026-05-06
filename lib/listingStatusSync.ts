@@ -21,3 +21,33 @@ export async function setListingsStatus(
   }
   return null;
 }
+
+type AuctionLotForSync = { listing_id: string | null; status: 'open' | 'sold' | 'no_sale' | 'paid' };
+
+// Sweep over every lot in an auction and sync its listing's active/sold state
+// from current values rather than from a transition. Idempotent — the
+// fromStatus guard means we never clobber a listing the seller manually sold
+// elsewhere. This handles every auction-status path (draft→live→ended,
+// draft→ended, live→settled, etc.) without needing per-transition branches.
+//
+// Rule: listing is `sold` when the lot is sold/paid OR (auction is live AND
+// lot is open). Anything else → `active`.
+export async function syncAuctionListings(
+  supabase: SupabaseClient,
+  userId: string,
+  auctionStatus: 'draft' | 'live' | 'ended' | 'settled',
+  lots: AuctionLotForSync[],
+): Promise<void> {
+  const lockIds: string[] = [];
+  const unlockIds: string[] = [];
+  for (const l of lots) {
+    if (!l.listing_id) continue;
+    const shouldBeSold = l.status === 'sold' || l.status === 'paid'
+      || (auctionStatus === 'live' && l.status === 'open');
+    if (shouldBeSold) lockIds.push(l.listing_id);
+    else unlockIds.push(l.listing_id);
+  }
+  if (lockIds.length > 0) await setListingsStatus(supabase, userId, lockIds, 'sold', 'active');
+  if (unlockIds.length > 0) await setListingsStatus(supabase, userId, unlockIds, 'active', 'sold');
+}
+
