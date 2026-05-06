@@ -81,9 +81,9 @@ function statusFg(s: SaleStatus) {
 }
 function saleStatusLabel(s: SaleStatus): string {
   if (s === 'draft') return 'Draft';
-  if (s === 'live') return 'Open';
+  if (s === 'live') return 'Live';
   if (s === 'closed') return 'Claimed';
-  if (s === 'settled') return 'Paid';
+  if (s === 'settled') return 'Sold';
   return s;
 }
 function deriveSaleStatus(current: SaleStatus, items: { claim_status: ClaimStatus }[]): SaleStatus {
@@ -409,7 +409,7 @@ export default function ClaimSalesPage() {
           {STATUS_FILTERS.map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-ghost'}`}>
-              {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'all' ? 'All' : saleStatusLabel(f as SaleStatus)}
               <span style={{ marginLeft: 6, opacity: 0.8 }}>({counts[f] || 0})</span>
             </button>
           ))}

@@ -80,9 +80,9 @@ function statusFg(s: Status) {
 }
 function saleStatusLabel(s: Status): string {
   if (s === 'draft') return 'Draft';
-  if (s === 'live') return 'Open';
+  if (s === 'live') return 'Live';
   if (s === 'closed') return 'Claimed';
-  if (s === 'settled') return 'Paid';
+  if (s === 'settled') return 'Sold';
   return s;
 }
 function deriveSaleStatus(current: Status, items: { claim_status: ClaimStatus }[]): Status {
