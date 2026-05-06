@@ -324,6 +324,16 @@ export default function ManageClaimSalePage() {
     else alert(error.message);
   }
 
+  async function setBuyerStatus(buyerItems: Item[], claim_status: ClaimStatus) {
+    if (buyerItems.length === 0) return;
+    const supabase = createClient();
+    const ids = buyerItems.map(i => i.id);
+    const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).in('id', ids);
+    if (error) { alert(error.message); return; }
+    const idSet = new Set(ids);
+    setItems(prev => prev.map(i => idSet.has(i.id) ? { ...i, claim_status } : i));
+  }
+
   async function setLotCommentUrl(lot: Lot, url: string) {
     setSavingLots(prev => new Set(prev).add(lot.id));
     const supabase = createClient();
@@ -405,17 +415,16 @@ export default function ManageClaimSalePage() {
     ];
     let subtotal = 0;
     for (const it of buyer.items.slice().sort((a, b) => {
-      const lot = lots.find(l => l.id === a.lot_id)?.lot_number ?? 0;
+      const lotA = lots.find(l => l.id === a.lot_id)?.lot_number ?? 0;
       const lotB = lots.find(l => l.id === b.lot_id)?.lot_number ?? 0;
-      return lot - lotB || a.position - b.position;
+      return lotA - lotB || a.position - b.position;
     })) {
-      const lot = lots.find(l => l.id === it.lot_id);
       const cardLabel = it.listing
         ? `${it.listing.year || ''} ${it.listing.brand || ''} #${it.listing.card_number || ''} ${it.listing.player || ''}`.trim()
         : 'Card';
       const price = it.price ?? 0;
       subtotal += price;
-      lines.push(`· Lot #${lot?.lot_number || '?'}${lot?.kind === 'group' ? ` pos ${it.position}` : ''} — ${cardLabel} — ${fmtMoney(price)}`);
+      lines.push(`· ${cardLabel} — ${fmtMoney(price)}`);
     }
     lines.push('');
     lines.push(`Subtotal: ${fmtMoney(subtotal)}`);
@@ -456,6 +465,13 @@ export default function ManageClaimSalePage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Manage Claim Sale ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {buyers.length > 0 && (
+              <button type="button"
+                onClick={() => document.getElementById('buyer-invoices')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="btn btn-primary btn-sm">
+                🧾 Invoices ({buyers.length})
+              </button>
+            )}
             <Link href="/fb-claim-sales" className="btn btn-ghost btn-sm">All Claim Sales</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
@@ -643,7 +659,7 @@ export default function ManageClaimSalePage() {
 
         {/* Per-buyer invoices */}
         {buyers.length > 0 && (
-          <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18 }}>
+          <section id="buyer-invoices" className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 18, scrollMarginTop: 80 }}>
             <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>
               Buyer Invoices ({buyers.length})
             </div>
@@ -680,6 +696,18 @@ export default function ManageClaimSalePage() {
                       <button onClick={() => copyTag(messageText, tag)} className="btn btn-outline btn-sm">
                         {copiedTag === tag ? '✓ Copied' : '📋 Copy invoice'}
                       </button>
+                      {b.items.every(i => i.claim_status === 'paid') ? (
+                        <span className="mono" style={{ fontSize: 10, fontWeight: 700, padding: '4px 10px', background: 'var(--teal)', color: 'var(--cream)', borderRadius: 100, textTransform: 'uppercase', letterSpacing: '0.08em' }}>✓ Paid</span>
+                      ) : (
+                        <button type="button"
+                          onClick={() => {
+                            if (!confirm(`Mark all ${b.items.length} item${b.items.length === 1 ? '' : 's'} for ${b.name} as paid?`)) return;
+                            setBuyerStatus(b.items, 'paid');
+                          }}
+                          className="btn btn-primary btn-sm">
+                          ✓ Mark all paid
+                        </button>
+                      )}
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
                       Subtotal {fmtMoney(subtotal)} + Shipping {fmtMoney(shipping)}
