@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
+import { syncAuctionListings } from '@/lib/listingStatusSync';
 import { replaceImageBg } from '@/lib/collageBg';
 import SCLogo from '@/components/SCLogo';
 
@@ -241,6 +242,9 @@ export default function NewFbAuctionPage() {
           rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now(),
         }).eq('user_id', user.id).eq('slug', slug);
       }
+      // Lock the underlying listings now that the auction is live.
+      const lotsForSync = generated.lots.map(l => ({ listing_id: l.listing.id, status: 'open' as const }));
+      await syncAuctionListings(supabase, user.id, 'live', lotsForSync);
     }
     router.push('/fb-auctions');
   }

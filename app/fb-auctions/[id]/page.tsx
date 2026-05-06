@@ -417,6 +417,9 @@ export default function ManageFbAuctionPage() {
     const nextLots = lots.map(l => l.id === lot.id ? { ...l, status: next } : l);
     setLots(nextLots);
     await syncAuctionStatusFromLots(nextLots);
+    if (userId && auction) {
+      await syncAuctionListings(supabase, userId, auction.status, nextLots);
+    }
     return nextLots;
   }
   async function quickSetSold(lot: Lot) {
