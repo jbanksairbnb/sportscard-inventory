@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
+import { substitute, listingVars } from '@/lib/fbAuctionText';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'ended' | 'settled';
@@ -54,7 +55,13 @@ type Auction = {
   group_id: string | null;
   template_id: string | null;
   fb_groups?: { name: string; url: string | null } | null;
-  fb_auction_templates?: { name: string; post_footer: string } | null;
+  fb_auction_templates?: {
+    name: string;
+    template_type?: 'single' | 'multi' | 'winning' | null;
+    post_header?: string | null;
+    post_footer?: string | null;
+    lot_template?: string | null;
+  } | null;
 };
 
 function statusBg(s: Status) {
@@ -98,6 +105,14 @@ export default function ManageFbAuctionPage() {
 
   const [editBuffer, setEditBuffer] = useState<Record<string, Partial<Lot>>>({});
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  async function copyAndFlash(key: string, text: string) {
+    if (await copyText(text)) {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(prev => prev === key ? null : prev), 1600);
+    }
+  }
+  const [postExpanded, setPostExpanded] = useState(true);
 
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
@@ -116,7 +131,7 @@ export default function ManageFbAuctionPage() {
 
       const [aucRes, lotsRes, biddersRes] = await Promise.all([
         supabase.from('fb_auctions')
-          .select('*, fb_groups(name, url), fb_auction_templates(name, post_footer)')
+          .select('*, fb_groups(name, url), fb_auction_templates(name, template_type, post_header, post_footer, lot_template)')
           .eq('id', auctionId).eq('user_id', user.id).maybeSingle(),
         supabase.from('fb_auction_lots')
           .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade, source_set_slug, source_card_number)')
@@ -481,6 +496,36 @@ export default function ManageFbAuctionPage() {
   const paidLots = lots.filter(l => l.status === 'paid').length;
   const grossSales = lots.filter(l => l.status === 'sold' || l.status === 'paid').reduce((s, l) => s + (l.current_bid || 0), 0);
 
+  const postDetails = useMemo(() => {
+    if (!auction) return null;
+    const tpl = auction.fb_auction_templates;
+    const isSingle = (tpl?.template_type === 'single') || (lots.length === 1 && tpl?.template_type !== 'multi');
+    const sortedLots = [...lots].sort((a, b) => a.lot_number - b.lot_number);
+    const minBidStr = sortedLots[0]?.starting_bid != null ? String(sortedLots[0].starting_bid) : '';
+    const lotComments = sortedLots.map(l => {
+      const text = l.listing && tpl?.lot_template
+        ? substitute(tpl.lot_template, listingVars(l.listing, l.lot_number, l.starting_bid != null ? String(l.starting_bid) : minBidStr))
+        : '';
+      return { lot_id: l.id, lot_number: l.lot_number, listing: l.listing, comment_url: l.comment_url, text };
+    });
+    let parentBody = '';
+    if (isSingle && sortedLots[0]?.listing) {
+      const body = tpl?.post_header
+        ? substitute(tpl.post_header, listingVars(sortedLots[0].listing, undefined, minBidStr))
+        : '';
+      parentBody = [body, (tpl?.post_footer || '').trim()].filter(Boolean).join('\n\n');
+    } else {
+      const headerVars = {
+        auction_title: auction.title,
+        lot_count: String(sortedLots.length),
+        ends_at: auction.ends_at ? new Date(auction.ends_at).toLocaleString() : '',
+      };
+      const intro = tpl?.post_header ? substitute(tpl.post_header, headerVars) : '';
+      parentBody = [intro, auction.title, (tpl?.post_footer || '').trim()].filter(s => s && s.trim()).join('\n\n');
+    }
+    return { isSingle, parentBody, lotComments };
+  }, [auction, lots]);
+
   // Group lots into sections so an "ended" (closed-but-unpaid) card moves out
   // of the Live list while its siblings keep running.
   const liveLots = lots.filter(l => l.status === 'open');
@@ -566,6 +611,96 @@ export default function ManageFbAuctionPage() {
             {auction.ends_at && ` · Ends ${new Date(auction.ends_at).toLocaleString()}`}
           </div>
         </section>
+
+        {postDetails && (
+          <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: postExpanded ? 12 : 0 }}>
+              <button type="button"
+                onClick={() => setPostExpanded(v => !v)}
+                aria-label={postExpanded ? 'Collapse' : 'Expand'}
+                style={{ background: 'transparent', border: 0, cursor: 'pointer', fontSize: 14, color: 'var(--plum)', padding: '2px 6px' }}>
+                {postExpanded ? '▼' : '▶'}
+              </button>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1 }}>
+                {postDetails.isSingle ? 'Post Details — single-card auction' : `Post Details — ${postDetails.lotComments.length} lots`}
+              </div>
+              {auction.fb_auction_templates?.name && (
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                  Template: {auction.fb_auction_templates.name}
+                </span>
+              )}
+            </div>
+            {postExpanded && (
+              <>
+                <div style={{ marginTop: 4, marginBottom: 14 }}>
+                  <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 700, marginBottom: 6 }}>
+                    Parent post body
+                  </div>
+                  <textarea readOnly value={postDetails.parentBody}
+                    rows={Math.min(14, Math.max(4, postDetails.parentBody.split('\n').length + 1))}
+                    className="input-sc"
+                    style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12.5, resize: 'vertical' }} />
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                    <button type="button" onClick={() => copyAndFlash('parent', postDetails.parentBody)} className="btn btn-primary btn-sm">
+                      {copiedKey === 'parent' ? '✓ Copied' : '📋 Copy post body'}
+                    </button>
+                    {auction.post_url && (
+                      <a href={auction.post_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">
+                        ↗ Open FB post
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {!postDetails.isSingle && postDetails.lotComments.length > 0 && (
+                  <div style={{ borderTop: '1.5px dashed var(--rule)', paddingTop: 14 }}>
+                    <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>
+                      Per-lot comments — paste each as a comment under the parent post
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {postDetails.lotComments.map(lc => {
+                        const key = `lot:${lc.lot_id}`;
+                        const label = lc.listing
+                          ? `${lc.listing.year || ''} ${lc.listing.brand || ''} ${lc.listing.player || ''} #${lc.listing.card_number || ''}`.trim()
+                          : 'Listing missing';
+                        return (
+                          <div key={lc.lot_id} className="panel" style={{ padding: 12, border: '1.5px solid var(--rule)', background: 'var(--paper)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                              <div className="mono" style={{ fontSize: 11, color: 'var(--plum)', fontWeight: 700 }}>
+                                Lot #{lc.lot_number}
+                              </div>
+                              <div className="display" style={{ fontSize: 12.5, color: 'var(--plum)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {label}
+                              </div>
+                              <button type="button" onClick={() => copyAndFlash(key, lc.text)}
+                                disabled={!lc.text} className="btn btn-outline btn-sm">
+                                {copiedKey === key ? '✓ Copied' : '📋 Copy'}
+                              </button>
+                              {lc.comment_url && (
+                                <a href={lc.comment_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">↗</a>
+                              )}
+                            </div>
+                            {lc.text ? (
+                              <pre style={{
+                                margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11.5,
+                                color: 'var(--ink-soft)', whiteSpace: 'pre-wrap',
+                                background: 'var(--cream)', padding: 8, borderRadius: 4, border: '1px dashed var(--rule)',
+                              }}>{lc.text}</pre>
+                            ) : (
+                              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
+                                No comment text — listing or template missing.
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
 
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
           <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>Auction Controls</div>
