@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { logBidEvent, fetchLotBidStats, type LotBidStats } from '@/lib/fbBidEvents';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'ended' | 'settled';
@@ -113,6 +114,7 @@ export default function FbAuctionsPage() {
   const [editBuffer, setEditBuffer] = useState<Record<string, Partial<LotRow>>>({});
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
   const [savingPostUrls, setSavingPostUrls] = useState<Set<string>>(new Set());
+  const [lotStats, setLotStats] = useState<Map<string, LotBidStats>>(new Map());
   const [userId, setUserId] = useState<string | null>(null);
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
@@ -183,6 +185,9 @@ export default function FbAuctionsPage() {
       if (bidderErr) console.warn('fb_bidders not available (Phase A SQL not run?):', bidderErr.message);
       setAuctions(aucData);
       setBidders((bidderData || []) as BidderRow[]);
+      const allLotIds = aucData.flatMap(a => a.fb_auction_lots.map(l => l.id));
+      const stats = await fetchLotBidStats(supabase, allLotIds);
+      setLotStats(stats);
       setLoading(false);
     }
     load();
@@ -369,6 +374,9 @@ export default function FbAuctionsPage() {
       bidderId = null;
     }
 
+    const previousBidderId = lotRef?.bidder_id ?? null;
+    const previousBid = lotRef?.current_bid ?? null;
+    const auctionForLot = auctions.find(a => a.fb_auction_lots.some(l => l.id === lotId));
     const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', lotId);
     if (error) alert(error.message);
     else {
@@ -377,6 +385,20 @@ export default function FbAuctionsPage() {
         fb_auction_lots: a.fb_auction_lots.map(l => l.id === lotId ? { ...l, ...buf, bidder_id: bidderId } : l),
       })));
       setEditBuffer(prev => { const next = { ...prev }; delete next[lotId]; return next; });
+      const newBid = 'current_bid' in buf ? (buf.current_bid ?? null) : (lotRef?.current_bid ?? null);
+      const newName = 'bidder_name' in buf ? (buf.bidder_name?.toString().trim() || null) : (lotRef?.bidder_name ?? null);
+      const newHandle = 'bidder_fb_handle' in buf ? (buf.bidder_fb_handle?.toString().trim() || null) : (lotRef?.bidder_fb_handle ?? null);
+      const bidChanged = ('current_bid' in buf) && newBid !== previousBid;
+      const bidderChanged = bidderId !== previousBidderId;
+      if ((bidChanged || bidderChanged) && (newBid != null || newName) && userId && auctionForLot) {
+        await logBidEvent(supabase, {
+          userId, auctionId: auctionForLot.id, lotId,
+          amount: newBid, bidderId, bidderName: newName, bidderFbHandle: newHandle,
+        });
+        const fresh = await fetchLotBidStats(supabase, [lotId]);
+        const stat = fresh.get(lotId);
+        if (stat) setLotStats(prev => { const next = new Map(prev); next.set(lotId, stat); return next; });
+      }
     }
     setSavingLots(prev => { const next = new Set(prev); next.delete(lotId); return next; });
   }
@@ -648,8 +670,19 @@ export default function FbAuctionsPage() {
                                 : `1.5px solid ${statusBgCol}`,
                             }}>
                               <div className="mono" style={{ fontSize: 11, fontWeight: 700, color: 'var(--plum)' }}>#{lot.lot_number}</div>
-                              <div style={{ fontSize: 12, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {shortLotLabel(lot)}
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 12, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {shortLotLabel(lot)}
+                                </div>
+                                {(() => {
+                                  const s = lotStats.get(lot.id);
+                                  if (!s || s.bid_count === 0) return null;
+                                  return (
+                                    <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 2 }}>
+                                      🔨 {s.bid_count} bid{s.bid_count === 1 ? '' : 's'} · {s.unique_bidders} bidder{s.unique_bidders === 1 ? '' : 's'}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                               <input type="text" inputMode="decimal"
                                 defaultValue={cur !== null && cur !== undefined ? String(cur) : ''}

@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { substitute, listingVars } from '@/lib/fbAuctionText';
+import { logBidEvent } from '@/lib/fbBidEvents';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'ended' | 'settled';
@@ -284,11 +285,25 @@ export default function ManageFbAuctionPage() {
     }
 
     const previousBidderId = lotRef?.bidder_id ?? null;
+    const previousBid = lotRef?.current_bid ?? null;
     const { error } = await supabase.from('fb_auction_lots').update(payload).eq('id', id);
     if (error) { alert(error.message); }
     else {
       setLots(prev => prev.map(l => l.id === id ? { ...l, ...buf, bidder_id: bidderId } : l));
       setEditBuffer(prev => { const next = { ...prev }; delete next[id]; return next; });
+      const newBid = 'current_bid' in buf ? (buf.current_bid ?? null) : (lotRef?.current_bid ?? null);
+      const newName = 'bidder_name' in buf ? (buf.bidder_name?.toString().trim() || null) : (lotRef?.bidder_name ?? null);
+      const newHandle = 'bidder_fb_handle' in buf ? (buf.bidder_fb_handle?.toString().trim() || null) : (lotRef?.bidder_fb_handle ?? null);
+      const bidChanged = ('current_bid' in buf) && newBid !== previousBid;
+      const bidderChanged = bidderId !== previousBidderId;
+      if ((bidChanged || bidderChanged) && (newBid != null || newName)) {
+        if (userId && auction) {
+          logBidEvent(supabase, {
+            userId, auctionId: auction.id, lotId: id,
+            amount: newBid, bidderId, bidderName: newName, bidderFbHandle: newHandle,
+          });
+        }
+      }
       if (previousBidderId && previousBidderId !== bidderId) {
         // Fire-and-forget — server will skip if previous bidder isn't linked to a member.
         fetch('/api/auctions/notify-outbid', {
