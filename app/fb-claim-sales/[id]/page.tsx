@@ -107,6 +107,36 @@ async function downloadJpeg(url: string, filename: string) {
   }
 }
 
+async function buildSideBySideSingle(item: ListingLite, bgColor: string = '#ffffff'): Promise<Blob | null> {
+  const frontUrl = item.photos?.[0];
+  const backUrl = item.photos?.[1] || null;
+  if (!frontUrl) return null;
+  try {
+    const front = await loadImage(frontUrl);
+    const back = backUrl ? await loadImage(backUrl).catch(() => null) : null;
+    const frontSrc = replaceImageBg(front, bgColor);
+    const backSrc = back ? replaceImageBg(back, bgColor) : null;
+    const fw = frontSrc.width, fh = frontSrc.height;
+    const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
+    const gap = backSrc ? 60 : 0;
+    const outer = 120;
+    const innerW = fw + (backSrc ? bw + gap : 0);
+    const innerH = Math.max(fh, bh);
+    const canvas = document.createElement('canvas');
+    canvas.width = innerW + outer * 2;
+    canvas.height = innerH + outer * 2;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(frontSrc, outer, outer + (innerH - fh) / 2);
+    if (backSrc) ctx.drawImage(backSrc, outer + fw + gap, outer + (innerH - bh) / 2);
+    return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.95));
+  } catch {
+    return null;
+  }
+}
+
 // Composite all of one side (front or back) onto a single canvas, tightly
 // packed. 600x840 cells (standard card aspect) with 8px padding.
 async function buildSideCollage(items: ListingLite[], side: 'front' | 'back', bgColor: string = '#ffffff'): Promise<Blob | null> {
@@ -200,6 +230,21 @@ export default function ManageClaimSalePage() {
       if (!user) { alert('Not signed in.'); return; }
       const stamp = Date.now();
       const tag = Math.random().toString(36).slice(2, 8);
+
+      if (items.length === 1) {
+        const blob = await buildSideBySideSingle(items[0], collageBg);
+        if (!blob) { alert('Could not build image — front photo missing or failed to load.'); return; }
+        const path = `${user.id}/lot-collages/${stamp}-${tag}-combined.jpg`;
+        const { error: upErr } = await supabase.storage.from('card-images').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+        if (upErr) { alert('Upload failed: ' + upErr.message); return; }
+        const url = supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
+        const patch = { collage_url: url, back_collage_url: null };
+        const { error } = await supabase.from('fb_claim_sale_lots').update(patch).eq('id', lot.id);
+        if (error) { alert('Save failed: ' + error.message); return; }
+        setLots(prev => prev.map(l => l.id === lot.id ? { ...l, ...patch } as Lot : l));
+        return;
+      }
+
       async function uploadSide(side: 'front' | 'back'): Promise<string | null> {
         const blob = await buildSideCollage(items, side, collageBg);
         if (!blob) return null;
@@ -584,15 +629,19 @@ export default function ManageClaimSalePage() {
                     {(['front', 'back'] as const).map(side => {
                       const url = side === 'front' ? lot.collage_url : lot.back_collage_url;
                       if (!url) return null;
-                      const filename = `lot-${lot.lot_number}-${side === 'front' ? 'fronts' : 'backs'}.jpg`;
+                      const isSingleCombined = lotItems.length === 1 && side === 'front' && !lot.back_collage_url;
+                      const label = isSingleCombined ? 'Front + Back' : (side === 'front' ? 'Fronts' : 'Backs');
+                      const fileTag = isSingleCombined ? 'front-back' : (side === 'front' ? 'fronts' : 'backs');
+                      const filename = `lot-${lot.lot_number}-${fileTag}.jpg`;
+                      const thumbWidth = isSingleCombined ? 220 : 160;
                       return (
                         <div key={side} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 700, textTransform: 'uppercase' }}>
-                            {side === 'front' ? 'Fronts' : 'Backs'}
+                            {label}
                           </div>
                           <a href={url} target="_blank" rel="noopener noreferrer"
-                            style={{ display: 'block', width: 160, height: 110, background: 'var(--paper)', borderRadius: 6, border: '1.5px solid var(--rule)', overflow: 'hidden' }}>
-                            <img src={url} alt={`${side} collage`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            style={{ display: 'block', width: thumbWidth, height: 110, background: 'var(--paper)', borderRadius: 6, border: '1.5px solid var(--rule)', overflow: 'hidden' }}>
+                            <img src={url} alt={`${label} collage`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           </a>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button type="button" onClick={() => downloadJpeg(url, filename)}
