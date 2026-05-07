@@ -411,12 +411,14 @@ function NewFbAuctionPageInner() {
 
   const bidderSuggestions: BidderSuggestion[] = useMemo(() => {
     if (suggestionListings.length === 0 || activity.length === 0) return [];
+    const YEAR_TOLERANCE = 5;
     const byBidder = new Map<string, BidderSuggestion>();
     for (const l of suggestionListings) {
       for (const a of activity) {
         const playerMatch = !!l.player && !!a.listing_player && l.player.toLowerCase() === a.listing_player.toLowerCase();
-        const brandYearMatch = !!l.brand && !!a.listing_brand && l.brand.toLowerCase() === a.listing_brand.toLowerCase()
-          && l.year !== null && a.listing_year !== null && l.year === a.listing_year;
+        const sameBrand = !!l.brand && !!a.listing_brand && l.brand.toLowerCase() === a.listing_brand.toLowerCase();
+        const yearWithin = l.year !== null && a.listing_year !== null && Math.abs(l.year - a.listing_year) <= YEAR_TOLERANCE;
+        const brandYearMatch = sameBrand && yearWithin;
         if (!playerMatch && !brandYearMatch) continue;
         const bidder = bidders.find(b => b.id === a.bidder_id);
         if (!bidder) continue;
@@ -651,6 +653,12 @@ function NewFbAuctionPageInner() {
                 selectedIds={selectedIds} toggleSelect={toggleSelect}
                 minBid={minBid} setMinBid={setMinBid}
               />
+            )}
+
+            {bidderSuggestions.length > 0 && (
+              <div style={{ marginTop: 24 }}>
+                <BidderSuggestionsPanel suggestions={bidderSuggestions} />
+              </div>
             )}
 
             <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
