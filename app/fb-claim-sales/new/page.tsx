@@ -111,6 +111,7 @@ export default function NewClaimSalePage() {
 
   // Sale-level
   const [title, setTitle] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
   const [groupId, setGroupId] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [paymentText, setPaymentText] = useState('');
@@ -162,6 +163,26 @@ export default function NewClaimSalePage() {
     if (postBodyTouched) return;
     setPostBody(buildPostBody(title, lots, shippingText, activeTemplate?.post_footer || ''));
   }, [title, lots, shippingText, activeTemplate, postBodyTouched]);
+
+  // Auto-fill the sale title from the picked card when the sale is a single
+  // single-card lot (and the user hasn't typed a title themselves).
+  useEffect(() => {
+    if (titleTouched) return;
+    if (lots.length !== 1) return;
+    const lot = lots[0];
+    if (lot.kind !== 'single') return;
+    const id = lot.listingIds[0];
+    if (!id) return;
+    const l = listings.find(x => x.id === id);
+    if (!l) return;
+    const auto = [
+      l.year ? String(l.year) : '',
+      l.brand || '',
+      l.player || '',
+      l.card_number ? `#${l.card_number}` : '',
+    ].filter(Boolean).join(' ').trim();
+    if (auto && auto !== title) setTitle(auto);
+  }, [lots, listings, titleTouched, title]);
 
   function addLot(kind: 'single' | 'group') {
     setLots(prev => [...prev, {
@@ -313,7 +334,7 @@ export default function NewClaimSalePage() {
           <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 14 }}>Sale info</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <Field label="Sale title">
-              <input value={title} onChange={e => setTitle(e.target.value)} className="input-sc" style={{ width: '100%' }} placeholder="Wacky Wednesday Claim Sale" />
+              <input value={title} onChange={e => { setTitle(e.target.value); setTitleTouched(true); }} className="input-sc" style={{ width: '100%' }} placeholder="Wacky Wednesday Claim Sale" />
             </Field>
             <Field label="FB Group (optional)">
               <select value={groupId} onChange={e => setGroupId(e.target.value)} className="input-sc" style={{ width: '100%' }}>
