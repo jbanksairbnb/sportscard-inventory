@@ -181,7 +181,7 @@ function NewClaimSalePageInner() {
           .eq('user_id', user.id)
           .not('claim_buyer_id', 'is', null),
         supabase.from('historical_transactions')
-          .select('bidder_id, year, brand, player, amount, channel')
+          .select('bidder_id, year, brand, player, amount, channel, engagement_type')
           .eq('user_id', user.id)
           .not('bidder_id', 'is', null),
       ]);
@@ -236,7 +236,7 @@ function NewClaimSalePageInner() {
           listing_player: l.listing?.player ?? null,
         });
       }
-      type HistoricalRow = { bidder_id: string; year: number | null; brand: string | null; player: string | null; amount: number | null; channel: string | null };
+      type HistoricalRow = { bidder_id: string; year: number | null; brand: string | null; player: string | null; amount: number | null; channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request' };
       const historicalRows = (historicalRes?.data || []) as HistoricalRow[];
       const liveActivity: LiveActivity[] = [
         ...auctionActivity,
@@ -253,9 +253,9 @@ function NewClaimSalePageInner() {
         ...historicalRows.map(h => ({
           bidder_id: h.bidder_id,
           source: (h.channel === 'fb_claim' ? 'claim' : 'auction') as 'auction' | 'claim',
-          is_winner: true,
-          is_paid: true,
-          bid_amount: h.amount,
+          is_winner: h.engagement_type === 'won',
+          is_paid: h.engagement_type === 'won',
+          bid_amount: h.engagement_type === 'won' ? h.amount : null,
           listing_year: h.year,
           listing_brand: h.brand,
           listing_player: h.player,

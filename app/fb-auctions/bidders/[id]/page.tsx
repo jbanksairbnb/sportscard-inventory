@@ -374,20 +374,23 @@ export default function BidderProfilePage() {
       // Imported historical transactions for this bidder.
       const { data: historicalRows } = await supabase
         .from('historical_transactions')
-        .select('id, occurred_at, created_at, amount, year, brand, card_number, player, condition_note, channel, notes')
+        .select('id, occurred_at, created_at, amount, year, brand, card_number, player, condition_note, channel, engagement_type, notes')
         .eq('user_id', user.id)
         .eq('bidder_id', bidderId);
       type HistoricalRow = {
         id: string; occurred_at: string | null; created_at: string;
         amount: number | null; year: number | null; brand: string | null;
         card_number: string | null; player: string | null; condition_note: string | null;
-        channel: string | null; notes: string | null;
+        channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request'; notes: string | null;
       };
       for (const h of (historicalRows || []) as HistoricalRow[]) {
+        const engagementIcon = h.engagement_type === 'won' ? '🏆' : h.engagement_type === 'bid' ? '👋' : '👀';
+        const engagementLabel = h.engagement_type === 'won' ? 'Won' : h.engagement_type === 'bid' ? 'Bid' : 'Tag req';
+        const channelText = h.channel === 'fb_auction' ? 'FB Auction' : h.channel === 'fb_claim' ? 'Claim Sale' : h.channel === 'other' ? 'Other' : null;
         history.push({
           id: `hist:${h.id}`,
           createdAt: h.occurred_at ? `${h.occurred_at}T00:00:00Z` : h.created_at,
-          amount: h.amount,
+          amount: h.engagement_type === 'tag_request' ? null : h.amount,
           lotId: null,
           auctionId: null,
           auctionTitle: h.notes || null,
@@ -401,7 +404,7 @@ export default function BidderProfilePage() {
             player: h.player,
           },
           source: 'historical' as const,
-          channelLabel: h.channel === 'fb_auction' ? 'FB Auction' : h.channel === 'fb_claim' ? 'Claim Sale' : h.channel === 'other' ? 'Other' : null,
+          channelLabel: [`${engagementIcon} ${engagementLabel}`, channelText].filter(Boolean).join(' · '),
         });
       }
       history.sort((a, b1) => (b1.createdAt > a.createdAt ? 1 : b1.createdAt < a.createdAt ? -1 : 0));

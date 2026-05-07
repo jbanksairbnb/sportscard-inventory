@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
-import { insertHistoricalTransaction, type HistoricalChannel } from '@/lib/historicalTransactions';
+import { insertHistoricalTransaction, type HistoricalChannel, type HistoricalEngagement } from '@/lib/historicalTransactions';
 
 type Row = {
   id: string;
@@ -19,7 +19,14 @@ type Row = {
   condition_note: string | null;
   amount: number | null;
   channel: HistoricalChannel | null;
+  engagement_type: HistoricalEngagement;
   notes: string | null;
+};
+
+const ENGAGEMENT_LABEL: Record<HistoricalEngagement, string> = {
+  won: '🏆 Won',
+  bid: '👋 Bid',
+  tag_request: '👀 Tag req',
 };
 
 function fmtMoney(n: number | null): string {
@@ -54,6 +61,7 @@ export default function HistoricalTransactionsPage() {
   const [conditionNote, setConditionNote] = useState('');
   const [amount, setAmount] = useState('');
   const [channel, setChannel] = useState<HistoricalChannel>('fb_auction');
+  const [engagement, setEngagement] = useState<HistoricalEngagement>('won');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
@@ -64,7 +72,7 @@ export default function HistoricalTransactionsPage() {
       setUserId(user.id);
       const { data } = await supabase
         .from('historical_transactions')
-        .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, channel, notes')
+        .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, channel, engagement_type, notes')
         .eq('user_id', user.id)
         .order('occurred_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false });
@@ -85,7 +93,7 @@ export default function HistoricalTransactionsPage() {
     setConditionNote('');
     setAmount('');
     setNotes('');
-    // keep channel as last-used so consecutive entries are quick
+    // keep channel + engagement as last-used so consecutive entries are quick
   }
 
   async function handleSubmit() {
@@ -105,6 +113,7 @@ export default function HistoricalTransactionsPage() {
       conditionNote: conditionNote || null,
       amount: amount ? Number(amount) : null,
       channel,
+      engagement,
       notes: notes || null,
     });
     setSaving(false);
@@ -112,7 +121,7 @@ export default function HistoricalTransactionsPage() {
     // Refresh list (cheap reload of just this user's rows).
     const { data } = await supabase
       .from('historical_transactions')
-      .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, channel, notes')
+      .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, channel, engagement_type, notes')
       .eq('user_id', userId)
       .order('occurred_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
@@ -141,8 +150,12 @@ export default function HistoricalTransactionsPage() {
     });
   }, [rows, search]);
 
-  const totalSpend = useMemo(() => rows.reduce((s, r) => s + (r.amount || 0), 0), [rows]);
+  const totalSpend = useMemo(
+    () => rows.filter(r => r.engagement_type === 'won').reduce((s, r) => s + (r.amount || 0), 0),
+    [rows],
+  );
   const uniqueBidders = useMemo(() => new Set(rows.map(r => r.bidder_name.trim().toLowerCase())).size, [rows]);
+  const wonCount = useMemo(() => rows.filter(r => r.engagement_type === 'won').length, [rows]);
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
 
@@ -207,6 +220,19 @@ export default function HistoricalTransactionsPage() {
                   </select>
                 </Field>
               </div>
+              <Field label="Engagement type">
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {(['won', 'bid', 'tag_request'] as HistoricalEngagement[]).map(e => (
+                    <button key={e} type="button" onClick={() => setEngagement(e)}
+                      className={`btn btn-sm ${engagement === e ? 'btn-primary' : 'btn-ghost'}`}>
+                      {ENGAGEMENT_LABEL[e]}
+                    </button>
+                  ))}
+                </div>
+                <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 4 }}>
+                  Won = paid winning bid · Bid = lost bidder · Tag req = FB &ldquo;w&rdquo; comment / watcher
+                </div>
+              </Field>
               <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 90px', gap: 10 }}>
                 <Field label="Year">
                   <input type="number" value={year} onChange={e => setYear(e.target.value)} className="input-sc" style={{ width: '100%' }}
@@ -230,10 +256,12 @@ export default function HistoricalTransactionsPage() {
                   <input value={conditionNote} onChange={e => setConditionNote(e.target.value)} className="input-sc" style={{ width: '100%' }}
                     placeholder="PSA 5 EX" />
                 </Field>
-                <Field label="Amount ($)">
-                  <input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} className="input-sc" style={{ width: '100%' }}
-                    placeholder="125.00" />
-                </Field>
+                {engagement !== 'tag_request' && (
+                  <Field label={engagement === 'won' ? 'Sale price ($)' : 'Bid amount ($)'}>
+                    <input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} className="input-sc" style={{ width: '100%' }}
+                      placeholder="125.00" />
+                  </Field>
+                )}
               </div>
               <Field label="Notes">
                 <textarea value={notes} onChange={e => setNotes(e.target.value)} className="input-sc" rows={2}
@@ -259,7 +287,7 @@ export default function HistoricalTransactionsPage() {
                 Imported transactions ({rows.length})
               </div>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-                {uniqueBidders} unique buyer{uniqueBidders === 1 ? '' : 's'} · {fmtMoney(totalSpend)} total
+                {uniqueBidders} unique buyer{uniqueBidders === 1 ? '' : 's'} · {wonCount} won · {fmtMoney(totalSpend)} sales
               </span>
               <div style={{
                 marginLeft: 'auto',
@@ -286,6 +314,7 @@ export default function HistoricalTransactionsPage() {
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Date</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Buyer</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Card</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'left' }}>Type</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Channel</th>
                       <th style={{ padding: '6px 10px', textAlign: 'right' }}>Amount</th>
                       <th style={{ padding: '6px 10px', textAlign: 'center', width: 36 }}></th>
@@ -307,11 +336,14 @@ export default function HistoricalTransactionsPage() {
                           </div>
                           {r.condition_note && <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>{r.condition_note}</div>}
                         </td>
+                        <td style={{ padding: '6px 10px' }} className="mono">
+                          {ENGAGEMENT_LABEL[r.engagement_type]}
+                        </td>
                         <td style={{ padding: '6px 10px' }}>
                           {r.channel ? CHANNEL_LABEL[r.channel] : '—'}
                         </td>
                         <td style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>
-                          {fmtMoney(r.amount)}
+                          {r.engagement_type === 'tag_request' ? '—' : fmtMoney(r.amount)}
                         </td>
                         <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                           <button type="button" onClick={() => handleDelete(r.id)} title="Delete"

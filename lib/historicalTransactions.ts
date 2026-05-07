@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type HistoricalChannel = 'fb_auction' | 'fb_claim' | 'other';
+export type HistoricalEngagement = 'won' | 'bid' | 'tag_request';
 
 export type HistoricalInput = {
   bidderName: string;
@@ -13,6 +14,7 @@ export type HistoricalInput = {
   conditionNote?: string | null;
   amount?: number | null;
   channel?: HistoricalChannel | null;
+  engagement?: HistoricalEngagement;
   notes?: string | null;
 };
 
@@ -70,8 +72,10 @@ export async function insertHistoricalTransaction(
       card_number: input.cardNumber?.trim() || null,
       player: input.player?.trim() || null,
       condition_note: input.conditionNote?.trim() || null,
-      amount: input.amount ?? null,
+      // Tag requests don't have a bid amount.
+      amount: input.engagement === 'tag_request' ? null : (input.amount ?? null),
       channel: input.channel || null,
+      engagement_type: input.engagement || 'won',
       notes: input.notes?.trim() || null,
     })
     .select('id')

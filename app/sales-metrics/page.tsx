@@ -61,7 +61,7 @@ export default function SalesMetricsPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      const [aucsRes, lotsRes, salesRes, itemsRes, marketRes] = await Promise.all([
+      const [aucsRes, lotsRes, salesRes, itemsRes, marketRes, historicalRes] = await Promise.all([
         supabase.from('fb_auctions').select('id, created_at').eq('user_id', user.id),
         supabase.from('fb_auction_lots')
           .select('auction_id, current_bid, status, bidder_id, bidder_name, listing:listings(cost)')
@@ -74,6 +74,9 @@ export default function SalesMetricsPage() {
           .select('sold_at, sold_price, cost, status')
           .eq('user_id', user.id)
           .eq('status', 'sold'),
+        supabase.from('historical_transactions')
+          .select('occurred_at, created_at, amount, channel, engagement_type, bidder_id, bidder_name')
+          .eq('user_id', user.id),
       ]);
 
       type AucRow = { id: string; created_at: string };
@@ -147,6 +150,25 @@ export default function SalesMetricsPage() {
           buyerKey: null,
           buyerName: null,
         });
+      }
+      // Imported historical transactions feed both revenue (won only) and the
+      // bidder-activity charts (any engagement counts).
+      type HistRow = { occurred_at: string | null; created_at: string; amount: number | null; channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request'; bidder_id: string | null; bidder_name: string | null };
+      for (const h of (historicalRes.data || []) as HistRow[]) {
+        const date = h.occurred_at ? `${h.occurred_at}T00:00:00Z` : h.created_at;
+        const buyerKey = h.bidder_id ? `id:${h.bidder_id}`
+          : (h.bidder_name ? `name:${h.bidder_name.trim().toLowerCase()}` : null);
+        if (h.engagement_type === 'won' && h.amount) {
+          evs.push({
+            source: h.channel === 'fb_claim' ? 'claim' : h.channel === 'fb_auction' ? 'auction' : 'marketplace',
+            date,
+            revenue: h.amount,
+            cost: 0,
+            buyerKey,
+            buyerName: h.bidder_name,
+          });
+        }
+        if (buyerKey) bids.push({ date, bidderKey: buyerKey });
       }
       setEvents(evs);
       setBidEvents(bids);

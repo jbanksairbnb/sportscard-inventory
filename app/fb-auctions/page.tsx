@@ -119,6 +119,7 @@ export default function FbAuctionsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
+  const [historicalSales, setHistoricalSales] = useState<{ amount: number; occurred_at: string | null }[]>([]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -189,6 +190,17 @@ export default function FbAuctionsPage() {
       const allLotIds = aucData.flatMap(a => a.fb_auction_lots.map(l => l.id));
       const stats = await fetchLotBidStats(supabase, allLotIds);
       setLotStats(stats);
+      // Imported historical FB auction sales (won) — fold into Sales $.
+      const { data: histRows } = await supabase
+        .from('historical_transactions')
+        .select('amount, occurred_at, channel, engagement_type')
+        .eq('user_id', user.id)
+        .eq('engagement_type', 'won')
+        .eq('channel', 'fb_auction');
+      const rows = ((histRows || []) as { amount: number | null; occurred_at: string | null }[])
+        .filter(r => r.amount != null)
+        .map(r => ({ amount: r.amount as number, occurred_at: r.occurred_at }));
+      setHistoricalSales(rows);
       setLoading(false);
     }
     load();
@@ -294,8 +306,18 @@ export default function FbAuctionsPage() {
         else if (l.bidder_name && l.bidder_name.trim()) bidderKeys.add(`name:${l.bidder_name.trim().toLowerCase()}`);
       }
     }
+    // Fold imported historical FB auction sales into Sales $ within the same date window.
+    const cutoff = dateRangeMs(dateRange);
+    const since = cutoff ? Date.now() - cutoff : null;
+    for (const h of historicalSales) {
+      if (since !== null) {
+        const t = h.occurred_at ? new Date(`${h.occurred_at}T00:00:00Z`).getTime() : 0;
+        if (t < since) continue;
+      }
+      sales += h.amount;
+    }
     return { totalLots, activeBids, outstanding, sales, uniqueBidders: bidderKeys.size };
-  }, [filtered]);
+  }, [filtered, historicalSales, dateRange]);
 
   function toggleDraftSelect(id: string) {
     setSelectedDrafts(prev => {
