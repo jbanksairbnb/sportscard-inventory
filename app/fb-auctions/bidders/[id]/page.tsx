@@ -87,11 +87,15 @@ type BidHistoryItem = {
   id: string;
   createdAt: string;
   amount: number | null;
-  lotId: string;
-  auctionId: string;
+  lotId: string | null;
+  auctionId: string | null;
   auctionTitle: string | null;
   lotNumber: number | null;
   listing: ListingRef | null;
+  // 'live' = recorded from a real bid event; 'historical' = imported by seller
+  // covering pre-Sports-Collective sales.
+  source: 'live' | 'historical';
+  channelLabel?: string | null;
 };
 
 type ClaimActivityItem = {
@@ -363,8 +367,46 @@ export default function BidderProfilePage() {
           auctionTitle: auction?.title || null,
           lotNumber: meta?.lot_number ?? null,
           listing,
+          source: 'live' as const,
         };
       });
+
+      // Imported historical transactions for this bidder.
+      const { data: historicalRows } = await supabase
+        .from('historical_transactions')
+        .select('id, occurred_at, created_at, amount, year, brand, card_number, player, condition_note, channel, engagement_type, notes')
+        .eq('user_id', user.id)
+        .eq('bidder_id', bidderId);
+      type HistoricalRow = {
+        id: string; occurred_at: string | null; created_at: string;
+        amount: number | null; year: number | null; brand: string | null;
+        card_number: string | null; player: string | null; condition_note: string | null;
+        channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request'; notes: string | null;
+      };
+      for (const h of (historicalRows || []) as HistoricalRow[]) {
+        const engagementIcon = h.engagement_type === 'won' ? '🏆' : h.engagement_type === 'bid' ? '👋' : '👀';
+        const engagementLabel = h.engagement_type === 'won' ? 'Won' : h.engagement_type === 'bid' ? 'Bid' : 'Tag req';
+        const channelText = h.channel === 'fb_auction' ? 'FB Auction' : h.channel === 'fb_claim' ? 'Claim Sale' : h.channel === 'other' ? 'Other' : null;
+        history.push({
+          id: `hist:${h.id}`,
+          createdAt: h.occurred_at ? `${h.occurred_at}T00:00:00Z` : h.created_at,
+          amount: h.engagement_type === 'tag_request' ? null : h.amount,
+          lotId: null,
+          auctionId: null,
+          auctionTitle: h.notes || null,
+          lotNumber: null,
+          listing: {
+            id: `hist:${h.id}`,
+            title: null,
+            year: h.year,
+            brand: h.brand,
+            card_number: h.card_number,
+            player: h.player,
+          },
+          source: 'historical' as const,
+          channelLabel: [`${engagementIcon} ${engagementLabel}`, channelText].filter(Boolean).join(' · '),
+        });
+      }
       history.sort((a, b1) => (b1.createdAt > a.createdAt ? 1 : b1.createdAt < a.createdAt ? -1 : 0));
       setBidHistory(history);
 
@@ -534,28 +576,38 @@ export default function BidderProfilePage() {
                     const cardLabel = h.listing
                       ? cardSummary(h.listing)
                       : h.lotNumber !== null ? `Lot #${h.lotNumber}` : 'Lot';
-                    return (
-                      <Link key={h.id} href={`/fb-auctions/${h.auctionId}`}
-                        style={{ textDecoration: 'none', color: 'inherit' }}>
-                        <div style={{
-                          display: 'grid', gridTemplateColumns: '150px 70px 1fr auto',
-                          gap: 10, alignItems: 'center', padding: '8px 10px',
-                          background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
-                        }}>
-                          <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-                            {new Date(h.createdAt).toLocaleString()}
-                          </div>
-                          <div className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--plum)' }}>
-                            #{h.lotNumber ?? '?'}
-                          </div>
-                          <div style={{ fontSize: 12.5, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            <span style={{ fontWeight: 600 }}>{cardLabel}</span>
-                            {h.auctionTitle && <span style={{ color: 'var(--ink-mute)', marginLeft: 8 }}>· {h.auctionTitle}</span>}
-                          </div>
-                          <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--orange)' }}>
-                            {h.amount != null ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(h.amount) : '—'}
-                          </div>
+                    const inner = (
+                      <div style={{
+                        display: 'grid', gridTemplateColumns: '150px 70px 1fr auto',
+                        gap: 10, alignItems: 'center', padding: '8px 10px',
+                        background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
+                      }}>
+                        <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                          {h.source === 'historical'
+                            ? (h.createdAt.slice(0, 10) || 'historical')
+                            : new Date(h.createdAt).toLocaleString()}
                         </div>
+                        <div className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--plum)' }}>
+                          {h.source === 'historical' ? '📜' : `#${h.lotNumber ?? '?'}`}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: 600 }}>{cardLabel}</span>
+                          {h.source === 'historical' && h.channelLabel && (
+                            <span className="mono" style={{ color: 'var(--teal)', marginLeft: 8, fontSize: 10 }}>{h.channelLabel}</span>
+                          )}
+                          {h.source === 'live' && h.auctionTitle && <span style={{ color: 'var(--ink-mute)', marginLeft: 8 }}>· {h.auctionTitle}</span>}
+                        </div>
+                        <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--orange)' }}>
+                          {h.amount != null ? new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(h.amount) : '—'}
+                        </div>
+                      </div>
+                    );
+                    if (h.source === 'historical' || !h.auctionId) {
+                      return <div key={h.id}>{inner}</div>;
+                    }
+                    return (
+                      <Link key={h.id} href={`/fb-auctions/${h.auctionId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        {inner}
                       </Link>
                     );
                   })}

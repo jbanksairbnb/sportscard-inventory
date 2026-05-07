@@ -106,6 +106,7 @@ export default function ClaimSalesPage() {
   const [items, setItems] = useState<ItemRow[]>([]);
   const [groupsById, setGroupsById] = useState<Record<string, GroupRow>>({});
   const [bidders, setBidders] = useState<BidderRow[]>([]);
+  const [historicalSales, setHistoricalSales] = useState<{ amount: number; occurred_at: string | null }[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
@@ -141,6 +142,19 @@ export default function ClaimSalesPage() {
       for (const g of (groupsRes.data || []) as GroupRow[]) gMap[g.id] = g;
       setGroupsById(gMap);
       setBidders((biddersRes.data || []) as BidderRow[]);
+
+      // Imported historical FB claim sales (won) — fold into Sales $.
+      const { data: histRows } = await supabase
+        .from('historical_transactions')
+        .select('amount, occurred_at, channel, engagement_type')
+        .eq('user_id', user.id)
+        .eq('engagement_type', 'won')
+        .eq('channel', 'fb_claim');
+      const rows = ((histRows || []) as { amount: number | null; occurred_at: string | null }[])
+        .filter(r => r.amount != null)
+        .map(r => ({ amount: r.amount as number, occurred_at: r.occurred_at }));
+      setHistoricalSales(rows);
+
       setLoading(false);
     }
     load();
@@ -221,8 +235,18 @@ export default function ClaimSalesPage() {
         }
       }
     }
+    // Fold imported historical claim sales into Sales $ within the same date window.
+    const cutoff = dateRangeMs(dateRange);
+    const since = cutoff ? Date.now() - cutoff : null;
+    for (const h of historicalSales) {
+      if (since !== null) {
+        const t = h.occurred_at ? new Date(`${h.occurred_at}T00:00:00Z`).getTime() : 0;
+        if (t < since) continue;
+      }
+      totalSales += h.amount;
+    }
     return { listedOpen, claimedOutstanding, totalSales, uniqueBuyers: buyerKeys.size };
-  }, [visibleSales, itemsBySaleId]);
+  }, [visibleSales, itemsBySaleId, historicalSales, dateRange]);
 
   const biddersByLowerName = useMemo(() => {
     const m = new Map<string, BidderRow>();
