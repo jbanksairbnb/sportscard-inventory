@@ -18,10 +18,14 @@ type Row = {
   player: string | null;
   condition_note: string | null;
   amount: number | null;
+  cost: number | null;
   channel: HistoricalChannel | null;
   engagement_type: HistoricalEngagement;
+  group_id: string | null;
   notes: string | null;
 };
+
+type Group = { id: string; name: string };
 
 const ENGAGEMENT_LABEL: Record<HistoricalEngagement, string> = {
   won: '🏆 Won',
@@ -60,9 +64,18 @@ export default function HistoricalTransactionsPage() {
   const [player, setPlayer] = useState('');
   const [conditionNote, setConditionNote] = useState('');
   const [amount, setAmount] = useState('');
+  const [cost, setCost] = useState('');
   const [channel, setChannel] = useState<HistoricalChannel>('fb_auction');
   const [engagement, setEngagement] = useState<HistoricalEngagement>('won');
   const [notes, setNotes] = useState('');
+
+  // Groups
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [groupId, setGroupId] = useState<string>('');
+  const [showAddGroup, setShowAddGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupUrl, setNewGroupUrl] = useState('');
+  const [addingGroup, setAddingGroup] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -70,17 +83,40 @@ export default function HistoricalTransactionsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const { data } = await supabase
-        .from('historical_transactions')
-        .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, channel, engagement_type, notes')
-        .eq('user_id', user.id)
-        .order('occurred_at', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false });
+      const [{ data }, { data: groupRows }] = await Promise.all([
+        supabase
+          .from('historical_transactions')
+          .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, cost, channel, engagement_type, group_id, notes')
+          .eq('user_id', user.id)
+          .order('occurred_at', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false }),
+        supabase.from('fb_groups').select('id, name').eq('user_id', user.id).order('name'),
+      ]);
       setRows((data || []) as Row[]);
+      setGroups((groupRows || []) as Group[]);
       setLoading(false);
     }
     load();
   }, [router]);
+
+  async function handleAddGroup() {
+    if (!newGroupName.trim() || !userId) return;
+    setAddingGroup(true);
+    const supabase = createClient();
+    const { data, error: gErr } = await supabase
+      .from('fb_groups')
+      .insert({ user_id: userId, name: newGroupName.trim(), url: newGroupUrl.trim() || null })
+      .select('id, name')
+      .single();
+    setAddingGroup(false);
+    if (gErr || !data) { alert(gErr?.message || 'Could not add group'); return; }
+    const g = data as Group;
+    setGroups(prev => [...prev, g].sort((a, b) => a.name.localeCompare(b.name)));
+    setGroupId(g.id);
+    setNewGroupName('');
+    setNewGroupUrl('');
+    setShowAddGroup(false);
+  }
 
   function resetForm() {
     setBidderName('');
@@ -92,8 +128,9 @@ export default function HistoricalTransactionsPage() {
     setPlayer('');
     setConditionNote('');
     setAmount('');
+    setCost('');
     setNotes('');
-    // keep channel + engagement as last-used so consecutive entries are quick
+    // keep channel + engagement + groupId as last-used so consecutive entries are quick
   }
 
   async function handleSubmit() {
@@ -112,8 +149,10 @@ export default function HistoricalTransactionsPage() {
       player: player || null,
       conditionNote: conditionNote || null,
       amount: amount ? Number(amount) : null,
+      cost: cost ? Number(cost) : null,
       channel,
       engagement,
+      groupId: groupId || null,
       notes: notes || null,
     });
     setSaving(false);
@@ -121,7 +160,7 @@ export default function HistoricalTransactionsPage() {
     // Refresh list (cheap reload of just this user's rows).
     const { data } = await supabase
       .from('historical_transactions')
-      .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, channel, engagement_type, notes')
+      .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, cost, channel, engagement_type, group_id, notes')
       .eq('user_id', userId)
       .order('occurred_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
@@ -154,8 +193,18 @@ export default function HistoricalTransactionsPage() {
     () => rows.filter(r => r.engagement_type === 'won').reduce((s, r) => s + (r.amount || 0), 0),
     [rows],
   );
+  const totalProfit = useMemo(
+    () => rows.filter(r => r.engagement_type === 'won').reduce((s, r) => s + ((r.amount || 0) - (r.cost || 0)), 0),
+    [rows],
+  );
   const uniqueBidders = useMemo(() => new Set(rows.map(r => r.bidder_name.trim().toLowerCase())).size, [rows]);
   const wonCount = useMemo(() => rows.filter(r => r.engagement_type === 'won').length, [rows]);
+
+  const groupNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) m.set(g.id, g.name);
+    return m;
+  }, [groups]);
 
   if (loading) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
 
@@ -263,6 +312,43 @@ export default function HistoricalTransactionsPage() {
                   </Field>
                 )}
               </div>
+              {engagement === 'won' && (
+                <Field label="My cost ($)">
+                  <input type="number" step="0.01" value={cost} onChange={e => setCost(e.target.value)} className="input-sc" style={{ width: '100%' }}
+                    placeholder="50.00" />
+                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 4 }}>
+                    Used for profit math. Leave blank if unknown — it counts as $0 profit, not a loss.
+                  </div>
+                </Field>
+              )}
+              <Field label="FB group">
+                {showAddGroup ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8, border: '1.5px dashed var(--plum)', borderRadius: 6 }}>
+                    <input value={newGroupName} onChange={e => setNewGroupName(e.target.value)} className="input-sc" style={{ width: '100%' }}
+                      placeholder="Group name" autoFocus />
+                    <input value={newGroupUrl} onChange={e => setNewGroupUrl(e.target.value)} className="input-sc" style={{ width: '100%' }}
+                      placeholder="Group URL (optional)" />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={handleAddGroup} disabled={!newGroupName.trim() || addingGroup}
+                        className="btn btn-primary btn-sm" style={{ flex: 1 }}>
+                        {addingGroup ? 'Saving…' : 'Save group'}
+                      </button>
+                      <button type="button" onClick={() => { setShowAddGroup(false); setNewGroupName(''); setNewGroupUrl(''); }}
+                        className="btn btn-ghost btn-sm">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <select value={groupId} onChange={e => setGroupId(e.target.value)} className="input-sc" style={{ flex: 1 }}>
+                      <option value="">— No group —</option>
+                      {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setShowAddGroup(true)} className="btn btn-ghost btn-sm" title="Add a new group">
+                      + New
+                    </button>
+                  </div>
+                )}
+              </Field>
               <Field label="Notes">
                 <textarea value={notes} onChange={e => setNotes(e.target.value)} className="input-sc" rows={2}
                   style={{ width: '100%', resize: 'vertical' }} placeholder="Optional context" />
@@ -287,7 +373,7 @@ export default function HistoricalTransactionsPage() {
                 Imported transactions ({rows.length})
               </div>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-                {uniqueBidders} unique buyer{uniqueBidders === 1 ? '' : 's'} · {wonCount} won · {fmtMoney(totalSpend)} sales
+                {uniqueBidders} unique buyer{uniqueBidders === 1 ? '' : 's'} · {wonCount} won · {fmtMoney(totalSpend)} sales · {fmtMoney(totalProfit)} profit
               </span>
               <div style={{
                 marginLeft: 'auto',
@@ -315,13 +401,20 @@ export default function HistoricalTransactionsPage() {
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Buyer</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Card</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Type</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'left' }}>Channel</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'left' }}>Channel · Group</th>
                       <th style={{ padding: '6px 10px', textAlign: 'right' }}>Amount</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'right' }}>Cost</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'right' }}>Profit</th>
                       <th style={{ padding: '6px 10px', textAlign: 'center', width: 36 }}></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRows.map(r => (
+                    {filteredRows.map(r => {
+                      const profit = r.engagement_type === 'won' && r.amount != null
+                        ? r.amount - (r.cost || 0)
+                        : null;
+                      const groupName = r.group_id ? groupNameById.get(r.group_id) : null;
+                      return (
                       <tr key={r.id} style={{ borderTop: '1px solid var(--rule)', fontSize: 12.5, color: 'var(--plum)' }}>
                         <td style={{ padding: '6px 10px' }} className="mono">
                           {r.occurred_at || '—'}
@@ -340,17 +433,25 @@ export default function HistoricalTransactionsPage() {
                           {ENGAGEMENT_LABEL[r.engagement_type]}
                         </td>
                         <td style={{ padding: '6px 10px' }}>
-                          {r.channel ? CHANNEL_LABEL[r.channel] : '—'}
+                          <div>{r.channel ? CHANNEL_LABEL[r.channel] : '—'}</div>
+                          {groupName && <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>{groupName}</div>}
                         </td>
                         <td style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>
                           {r.engagement_type === 'tag_request' ? '—' : fmtMoney(r.amount)}
+                        </td>
+                        <td style={{ padding: '6px 10px', textAlign: 'right', color: 'var(--ink-soft)' }}>
+                          {r.engagement_type === 'won' ? fmtMoney(r.cost) : '—'}
+                        </td>
+                        <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 700, color: profit !== null && profit < 0 ? 'var(--rust)' : 'var(--teal)' }}>
+                          {profit !== null ? fmtMoney(profit) : '—'}
                         </td>
                         <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                           <button type="button" onClick={() => handleDelete(r.id)} title="Delete"
                             style={{ background: 'transparent', border: 0, cursor: 'pointer', color: 'var(--rust)', fontSize: 14 }}>×</button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

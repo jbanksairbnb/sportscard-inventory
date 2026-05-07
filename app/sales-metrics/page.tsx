@@ -75,7 +75,7 @@ export default function SalesMetricsPage() {
           .eq('user_id', user.id)
           .eq('status', 'sold'),
         supabase.from('historical_transactions')
-          .select('occurred_at, created_at, amount, channel, engagement_type, bidder_id, bidder_name')
+          .select('occurred_at, created_at, amount, cost, channel, engagement_type, bidder_id, bidder_name')
           .eq('user_id', user.id),
       ]);
 
@@ -153,7 +153,7 @@ export default function SalesMetricsPage() {
       }
       // Imported historical transactions feed both revenue (won only) and the
       // bidder-activity charts (any engagement counts).
-      type HistRow = { occurred_at: string | null; created_at: string; amount: number | null; channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request'; bidder_id: string | null; bidder_name: string | null };
+      type HistRow = { occurred_at: string | null; created_at: string; amount: number | null; cost: number | null; channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request'; bidder_id: string | null; bidder_name: string | null };
       for (const h of (historicalRes.data || []) as HistRow[]) {
         const date = h.occurred_at ? `${h.occurred_at}T00:00:00Z` : h.created_at;
         const buyerKey = h.bidder_id ? `id:${h.bidder_id}`
@@ -163,7 +163,7 @@ export default function SalesMetricsPage() {
             source: h.channel === 'fb_claim' ? 'claim' : h.channel === 'fb_auction' ? 'auction' : 'marketplace',
             date,
             revenue: h.amount,
-            cost: 0,
+            cost: h.cost ?? 0,
             buyerKey,
             buyerName: h.bidder_name,
           });

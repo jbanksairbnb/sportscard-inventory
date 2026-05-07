@@ -13,8 +13,10 @@ export type HistoricalInput = {
   player?: string | null;
   conditionNote?: string | null;
   amount?: number | null;
+  cost?: number | null;
   channel?: HistoricalChannel | null;
   engagement?: HistoricalEngagement;
+  groupId?: string | null;
   notes?: string | null;
 };
 
@@ -74,8 +76,11 @@ export async function insertHistoricalTransaction(
       condition_note: input.conditionNote?.trim() || null,
       // Tag requests don't have a bid amount.
       amount: input.engagement === 'tag_request' ? null : (input.amount ?? null),
+      // Cost only meaningful for wins (profit math); ignored otherwise.
+      cost: input.engagement === 'won' ? (input.cost ?? null) : null,
       channel: input.channel || null,
       engagement_type: input.engagement || 'won',
+      group_id: input.groupId || null,
       notes: input.notes?.trim() || null,
     })
     .select('id')
