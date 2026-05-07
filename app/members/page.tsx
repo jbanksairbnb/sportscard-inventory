@@ -102,7 +102,8 @@ export default function MembersPage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Members ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <Link href="/home" className="btn btn-outline btn-sm">← My Shelf</Link>
+            <Link href="/" className="btn btn-ghost btn-sm">My Shelf</Link>
+            <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
         </div>
       </header>
