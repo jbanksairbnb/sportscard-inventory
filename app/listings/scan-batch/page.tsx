@@ -171,6 +171,28 @@ export default function ScanBatchToListingsPage() {
     });
   }
 
+  // Cache object URLs for File previews so the browser doesn't churn them on
+  // every render. Revoke on file removal / unmount.
+  const [thumbUrls, setThumbUrls] = useState<Map<File, string>>(new Map());
+  useEffect(() => {
+    setThumbUrls(prev => {
+      const next = new Map(prev);
+      for (const f of files) {
+        if (!next.has(f)) next.set(f, URL.createObjectURL(f));
+      }
+      for (const f of Array.from(next.keys())) {
+        if (!files.includes(f)) {
+          URL.revokeObjectURL(next.get(f) as string);
+          next.delete(f);
+        }
+      }
+      return next;
+    });
+  }, [files]);
+  useEffect(() => () => {
+    thumbUrls.forEach(u => URL.revokeObjectURL(u));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function saveAll() {
     if (!userId) return;
     setError('');
@@ -430,23 +452,40 @@ export default function ScanBatchToListingsPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {selectedListings.map((l, i) => {
                   const p = pairs[i];
+                  const frontUrl = p?.front ? thumbUrls.get(p.front) : null;
+                  const backUrl = p?.back ? thumbUrls.get(p.back) : null;
+                  const slotStyle: React.CSSProperties = {
+                    width: 56, height: 78, borderRadius: 4,
+                    background: 'var(--cream)', border: '1.5px solid var(--rule)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, color: 'var(--ink-mute)', overflow: 'hidden',
+                  };
                   return (
                     <div key={l.id} style={{
-                      display: 'grid', gridTemplateColumns: '40px 1fr 60px 60px 36px',
+                      display: 'grid', gridTemplateColumns: '40px 1fr 56px 56px 36px',
                       gap: 8, alignItems: 'center',
                       background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 6,
-                      padding: '6px 10px',
+                      padding: '8px 10px',
                     }}>
                       <span className="mono" style={{ fontWeight: 700, color: 'var(--orange)' }}>#{i + 1}</span>
-                      <span style={{ fontSize: 12.5, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {listingLabel(l)}
-                      </span>
-                      <span className="mono" style={{ fontSize: 10, color: p?.front ? 'var(--teal)' : 'var(--ink-mute)' }}>
-                        {p?.front ? '✓ F' : '— F'}
-                      </span>
-                      <span className="mono" style={{ fontSize: 10, color: p?.back ? 'var(--teal)' : 'var(--ink-mute)' }}>
-                        {p?.back ? '✓ B' : '— B'}
-                      </span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, color: 'var(--plum)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {listingLabel(l)}
+                        </div>
+                        <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginTop: 2 }}>
+                          {p?.front?.name || (p?.back ? '—' : 'no file')}{p?.front && p?.back ? ' · ' : ''}{p?.back?.name || ''}
+                        </div>
+                      </div>
+                      <div style={slotStyle} title={p?.front?.name || 'front missing'}>
+                        {frontUrl
+                          ? <img src={frontUrl} alt="front" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          : '— F'}
+                      </div>
+                      <div style={slotStyle} title={p?.back?.name || 'back missing'}>
+                        {backUrl
+                          ? <img src={backUrl} alt="back" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          : '— B'}
+                      </div>
                       <button type="button" onClick={() => swapPair(i)}
                         disabled={!p?.front || !p?.back}
                         title="Swap front/back" className="btn btn-ghost btn-sm" style={{ padding: '0 4px', fontSize: 12 }}>⇄</button>
