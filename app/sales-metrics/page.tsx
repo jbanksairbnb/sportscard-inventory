@@ -262,6 +262,7 @@ export default function SalesMetricsPage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ 📊 Sales Metrics ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Link href="/sales-metrics/historical" className="btn btn-ghost btn-sm">📜 Historical</Link>
             <Link href="/fb-auctions" className="btn btn-ghost btn-sm">FB Auctions</Link>
             <Link href="/fb-claim-sales" className="btn btn-ghost btn-sm">Claim Sales</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>

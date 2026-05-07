@@ -161,7 +161,7 @@ function NewClaimSalePageInner() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [listRes, grpRes, tmplRes, biddersRes, lotsRes, eventsRes, claimsRes] = await Promise.all([
+      const [listRes, grpRes, tmplRes, biddersRes, lotsRes, eventsRes, claimsRes, historicalRes] = await Promise.all([
         supabase.from('listings')
           .select('id, title, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number')
           .eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
@@ -180,6 +180,10 @@ function NewClaimSalePageInner() {
           .select('claim_buyer_id, price, claim_status, listing:listings(year, brand, player)')
           .eq('user_id', user.id)
           .not('claim_buyer_id', 'is', null),
+        supabase.from('historical_transactions')
+          .select('bidder_id, year, brand, player, amount, channel')
+          .eq('user_id', user.id)
+          .not('bidder_id', 'is', null),
       ]);
       const loadedListings = (listRes.data || []) as Listing[];
       setListings(loadedListings);
@@ -232,6 +236,8 @@ function NewClaimSalePageInner() {
           listing_player: l.listing?.player ?? null,
         });
       }
+      type HistoricalRow = { bidder_id: string; year: number | null; brand: string | null; player: string | null; amount: number | null; channel: string | null };
+      const historicalRows = (historicalRes?.data || []) as HistoricalRow[];
       const liveActivity: LiveActivity[] = [
         ...auctionActivity,
         ...claimRows.map(c => ({
@@ -243,6 +249,16 @@ function NewClaimSalePageInner() {
           listing_year: c.listing?.year ?? null,
           listing_brand: c.listing?.brand ?? null,
           listing_player: c.listing?.player ?? null,
+        })),
+        ...historicalRows.map(h => ({
+          bidder_id: h.bidder_id,
+          source: (h.channel === 'fb_claim' ? 'claim' : 'auction') as 'auction' | 'claim',
+          is_winner: true,
+          is_paid: true,
+          bid_amount: h.amount,
+          listing_year: h.year,
+          listing_brand: h.brand,
+          listing_player: h.player,
         })),
       ];
       setActivity(liveActivity);
