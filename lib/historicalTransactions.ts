@@ -55,6 +55,32 @@ export async function findOrCreateBidder(
   return (created as { id: string }).id;
 }
 
+// Resolve a group by case-insensitive name for this seller, creating it if
+// missing. Used by CSV import so users can reference groups by name without
+// pre-creating them.
+export async function findOrCreateGroup(
+  supabase: SupabaseClient,
+  userId: string,
+  name: string,
+): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const { data: existing } = await supabase
+    .from('fb_groups')
+    .select('id')
+    .eq('user_id', userId)
+    .ilike('name', trimmed)
+    .limit(1);
+  if (existing && existing[0]) return (existing[0] as { id: string }).id;
+  const { data: created, error } = await supabase
+    .from('fb_groups')
+    .insert({ user_id: userId, name: trimmed })
+    .select('id')
+    .single();
+  if (error || !created) return null;
+  return (created as { id: string }).id;
+}
+
 export async function insertHistoricalTransaction(
   supabase: SupabaseClient,
   userId: string,
