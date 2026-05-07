@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import { insertHistoricalTransaction, findOrCreateGroup, type HistoricalChannel, type HistoricalEngagement } from '@/lib/historicalTransactions';
-import { parseCsv, toCsv, downloadCsv } from '@/lib/csv';
+import { parseCsv } from '@/lib/csv';
+import { buildTemplateWorkbook, downloadBlob } from '@/lib/xlsx';
 
 type Row = {
   id: string;
@@ -124,28 +125,66 @@ export default function HistoricalTransactionsPage() {
     setShowAddGroup(false);
   }
 
-  function handleDownloadTemplate() {
-    const headers = [
-      'bidder_name', 'bidder_fb_handle', 'occurred_at', 'engagement', 'channel',
-      'year', 'brand', 'card_number', 'player', 'condition_note',
-      'amount', 'cost', 'group_name', 'notes',
-    ];
-    const example = [
-      'Henry Humm', 'henry.humm', '2025-08-14', 'won', 'fb_auction',
-      '1968', 'Topps', '150', 'Roberto Clemente', 'PSA 5 EX',
-      '125.00', '50.00', 'Vintage Baseball Cards', 'Won outright',
-    ];
-    const exampleBid = [
-      'Jeff Bennett', '', '2025-08-14', 'bid', 'fb_auction',
-      '1968', 'Topps', '150', 'Roberto Clemente', '',
-      '110.00', '', 'Vintage Baseball Cards', 'Lost bidder',
-    ];
-    const exampleTag = [
-      'Doran Braun', '', '2025-08-14', 'tag_request', 'fb_auction',
-      '1968', 'Topps', '150', 'Roberto Clemente', '',
-      '', '', 'Vintage Baseball Cards', 'Watched, never bid',
-    ];
-    downloadCsv('historical-transactions-template.csv', toCsv([headers, example, exampleBid, exampleTag]));
+  async function handleDownloadTemplate() {
+    const blob = await buildTemplateWorkbook({
+      sheetName: 'Transactions',
+      columns: [
+        { key: 'bidder_name', header: 'bidder_name', width: 22, help: 'Required. Buyer / bidder display name. Same name = same person.' },
+        { key: 'bidder_fb_handle', header: 'bidder_fb_handle', width: 22, help: 'Optional. FB handle (no @).' },
+        { key: 'occurred_at', header: 'occurred_at', width: 14, help: 'Date of the transaction in YYYY-MM-DD format.' },
+        { key: 'engagement', header: 'engagement', width: 14, list: ['won', 'bid', 'tag_request'], help: 'won = paid winning bid. bid = lost bidder. tag_request = FB "w" comment.' },
+        { key: 'channel', header: 'channel', width: 14, list: ['fb_auction', 'fb_claim', 'other'], help: 'Where the sale happened.' },
+        { key: 'year', header: 'year', width: 8 },
+        { key: 'brand', header: 'brand', width: 14 },
+        { key: 'card_number', header: 'card_number', width: 12 },
+        { key: 'player', header: 'player', width: 22 },
+        { key: 'condition_note', header: 'condition_note', width: 18 },
+        { key: 'amount', header: 'amount', width: 12, help: 'Sale price (won) or bid amount (bid). Leave blank for tag_request.' },
+        { key: 'cost', header: 'cost', width: 12, help: 'My cost basis. Used for profit math on won rows. Blank counts as $0 profit.' },
+        { key: 'group_name', header: 'group_name', width: 26, help: 'FB group name. New names auto-create a group.' },
+        { key: 'notes', header: 'notes', width: 26 },
+      ],
+      examples: [
+        {
+          bidder_name: 'Henry Humm', bidder_fb_handle: 'henry.humm', occurred_at: '2025-08-14',
+          engagement: 'won', channel: 'fb_auction',
+          year: 1968, brand: 'Topps', card_number: '150', player: 'Roberto Clemente',
+          condition_note: 'PSA 5 EX', amount: 125, cost: 50,
+          group_name: 'Vintage Baseball Cards', notes: 'Won outright',
+        },
+        {
+          bidder_name: 'Jeff Bennett', bidder_fb_handle: '', occurred_at: '2025-08-14',
+          engagement: 'bid', channel: 'fb_auction',
+          year: 1968, brand: 'Topps', card_number: '150', player: 'Roberto Clemente',
+          condition_note: '', amount: 110, cost: '',
+          group_name: 'Vintage Baseball Cards', notes: 'Lost bidder',
+        },
+        {
+          bidder_name: 'Doran Braun', bidder_fb_handle: '', occurred_at: '2025-08-14',
+          engagement: 'tag_request', channel: 'fb_auction',
+          year: 1968, brand: 'Topps', card_number: '150', player: 'Roberto Clemente',
+          condition_note: '', amount: '', cost: '',
+          group_name: 'Vintage Baseball Cards', notes: 'Watched, never bid',
+        },
+      ],
+      instructions: [
+        'Sports Collective — Historical Transactions Template',
+        '',
+        '1. Fill in the Transactions sheet. Each row is one transaction.',
+        '2. bidder_name is the only required column. Engagement and channel use dropdowns — pick one of the listed values.',
+        '3. Dates go in YYYY-MM-DD format (Excel formats may differ; type the value as text if Excel reformats it).',
+        '4. amount is the sale price for won rows or the bid amount for bid rows. Leave blank for tag_request.',
+        '5. cost is your cost basis for the card. It only applies to won rows and is used for profit math; blank counts as $0 profit, not a loss.',
+        '6. group_name is the Facebook group the sale happened in. New names auto-create a group on import.',
+        '7. Delete the three example rows before saving.',
+        '',
+        '⚠ IMPORTANT: Save this file as CSV before uploading.',
+        '   Excel: File → Save As → choose "CSV UTF-8 (Comma delimited) (*.csv)".',
+        '   Google Sheets: File → Download → "Comma-separated values (.csv)".',
+        '   Then return to the Historical Transactions page and click ⬆ Upload CSV.',
+      ],
+    });
+    downloadBlob('historical-transactions-template.xlsx', blob);
   }
 
   async function handleUploadCsv(file: File) {
@@ -351,7 +390,7 @@ export default function HistoricalTransactionsPage() {
           </div>
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <button type="button" onClick={handleDownloadTemplate} className="btn btn-ghost btn-sm">
-              ⬇ Download CSV template
+              ⬇ Download Excel template
             </button>
             <label className="btn btn-primary btn-sm" style={{ cursor: importing ? 'not-allowed' : 'pointer', opacity: importing ? 0.6 : 1 }}>
               ⬆ Upload CSV
@@ -374,7 +413,7 @@ export default function HistoricalTransactionsPage() {
               </span>
             )}
             <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-              Required: bidder_name. Engagement: won / bid / tag_request. Channel: fb_auction / fb_claim / other.
+              Excel template has dropdowns for engagement + channel. <strong>Save As CSV before uploading</strong> — see the Instructions sheet.
             </span>
           </div>
           {importReport && importReport.failed.length > 0 && (
