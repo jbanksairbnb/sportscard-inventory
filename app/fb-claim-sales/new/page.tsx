@@ -6,6 +6,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import MarketResearchModal, { CardDescriptor } from '@/components/MarketResearchModal';
+import {
+  BidderSuggestionsPanel,
+  computeBidderSuggestions,
+  type BidderRow as BidderSuggestionRow,
+  type LiveActivity,
+} from '@/components/BidderSuggestions';
 
 type Listing = {
   id: string;
@@ -121,6 +127,9 @@ function NewClaimSalePageInner() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [research, setResearch] = useState<{ descriptor: CardDescriptor; apply: (value: number) => void } | null>(null);
+  const [bidders, setBidders] = useState<BidderSuggestionRow[]>([]);
+  const [activity, setActivity] = useState<LiveActivity[]>([]);
+  const [bidderTotals, setBidderTotals] = useState<Map<string, { auctionWins: number; claimCount: number }>>(new Map());
 
   // Sale-level
   const [title, setTitle] = useState('');
@@ -152,17 +161,99 @@ function NewClaimSalePageInner() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
-      const [listRes, grpRes, tmplRes] = await Promise.all([
+      const [listRes, grpRes, tmplRes, biddersRes, lotsRes, eventsRes, claimsRes] = await Promise.all([
         supabase.from('listings')
           .select('id, title, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number')
           .eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         supabase.from('fb_auction_templates').select('id, name, template_type, post_header, post_footer').eq('user_id', user.id),
+        supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id),
+        supabase.from('fb_auction_lots')
+          .select('id, bidder_id, current_bid, status, listing:listings(year, brand, player)')
+          .eq('user_id', user.id)
+          .not('bidder_id', 'is', null),
+        supabase.from('fb_auction_bid_events')
+          .select('bidder_id, lot_id, amount, lot:fb_auction_lots(bidder_id, status, current_bid, listing:listings(year, brand, player))')
+          .eq('user_id', user.id)
+          .not('bidder_id', 'is', null),
+        supabase.from('fb_claim_sale_items')
+          .select('claim_buyer_id, price, claim_status, listing:listings(year, brand, player)')
+          .eq('user_id', user.id)
+          .not('claim_buyer_id', 'is', null),
       ]);
       const loadedListings = (listRes.data || []) as Listing[];
       setListings(loadedListings);
       setGroups((grpRes.data || []) as Group[]);
       setTemplates((tmplRes.data || []) as Template[]);
+      setBidders((biddersRes.data || []) as BidderSuggestionRow[]);
+      // Fold past auction lots, every individual bid, and claim items into a
+      // single activity stream. Pulling fb_auction_bid_events ensures every
+      // historical bidder is matched, not just the current high bidder.
+      type LotJoin = { id: string; bidder_id: string; current_bid: number | null; status: 'open' | 'sold' | 'no_sale' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null };
+      type EventJoin = { bidder_id: string; lot_id: string; amount: number | null; lot: { bidder_id: string | null; current_bid: number | null; status: 'open' | 'sold' | 'no_sale' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null } | null };
+      type ClaimJoin = { claim_buyer_id: string; price: number | null; claim_status: 'open' | 'claimed' | 'sold' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null };
+      const lotRows = (lotsRes.data || []) as unknown as LotJoin[];
+      const eventRows = (eventsRes?.data || []) as unknown as EventJoin[];
+      const claimRows = (claimsRes.data || []) as unknown as ClaimJoin[];
+
+      const seenPairs = new Set<string>();
+      const auctionActivity: LiveActivity[] = [];
+      for (const e of eventRows) {
+        const lot = e.lot;
+        if (!lot) continue;
+        const key = `${e.bidder_id}|${e.lot_id}`;
+        if (seenPairs.has(key)) continue;
+        seenPairs.add(key);
+        const isWinner = lot.bidder_id === e.bidder_id && (lot.status === 'sold' || lot.status === 'paid');
+        const isPaid = lot.bidder_id === e.bidder_id && lot.status === 'paid';
+        auctionActivity.push({
+          bidder_id: e.bidder_id,
+          source: 'auction' as const,
+          is_winner: isWinner,
+          is_paid: isPaid,
+          bid_amount: isPaid ? (lot.current_bid ?? null) : null,
+          listing_year: lot.listing?.year ?? null,
+          listing_brand: lot.listing?.brand ?? null,
+          listing_player: lot.listing?.player ?? null,
+        });
+      }
+      for (const l of lotRows) {
+        const key = `${l.bidder_id}|${l.id}`;
+        if (seenPairs.has(key)) continue;
+        seenPairs.add(key);
+        auctionActivity.push({
+          bidder_id: l.bidder_id,
+          source: 'auction' as const,
+          is_winner: l.status === 'sold' || l.status === 'paid',
+          is_paid: l.status === 'paid',
+          bid_amount: l.status === 'paid' ? (l.current_bid ?? null) : null,
+          listing_year: l.listing?.year ?? null,
+          listing_brand: l.listing?.brand ?? null,
+          listing_player: l.listing?.player ?? null,
+        });
+      }
+      const liveActivity: LiveActivity[] = [
+        ...auctionActivity,
+        ...claimRows.map(c => ({
+          bidder_id: c.claim_buyer_id,
+          source: 'claim' as const,
+          is_winner: c.claim_status !== 'open',
+          is_paid: c.claim_status === 'paid',
+          bid_amount: c.price ?? null,
+          listing_year: c.listing?.year ?? null,
+          listing_brand: c.listing?.brand ?? null,
+          listing_player: c.listing?.player ?? null,
+        })),
+      ];
+      setActivity(liveActivity);
+      const totals = new Map<string, { auctionWins: number; claimCount: number }>();
+      for (const a of liveActivity) {
+        const e = totals.get(a.bidder_id) || { auctionWins: 0, claimCount: 0 };
+        if (a.source === 'auction' && a.is_winner) e.auctionWins += 1;
+        if (a.source === 'claim' && a.is_winner) e.claimCount += 1;
+        totals.set(a.bidder_id, e);
+      }
+      setBidderTotals(totals);
       // Pre-fill lots from ?listing_ids=... — one single-card lot per id.
       if (prefillIds.length > 0) {
         const valid = prefillIds.filter(id => loadedListings.some(l => l.id === id));
@@ -189,6 +280,15 @@ function NewClaimSalePageInner() {
   const claimTemplates = useMemo(() => templates.filter(t => (t.template_type || 'multi') === 'claim'), [templates]);
   const fallbackTemplate = useMemo(() => templates.find(t => (t.template_type || 'multi') === 'multi'), [templates]);
   const activeTemplate = templates.find(t => t.id === templateId) || (claimTemplates[0] || fallbackTemplate);
+
+  // Tag suggestions across all listings selected for this sale.
+  const bidderSuggestions = useMemo(() => {
+    const ids = new Set<string>();
+    for (const lot of lots) for (const id of lot.listingIds) if (id) ids.add(id);
+    const sel = listings.filter(l => ids.has(l.id))
+      .map(l => ({ id: l.id, year: l.year, brand: l.brand, player: l.player }));
+    return computeBidderSuggestions(sel, activity, bidders, bidderTotals, { source: 'claim' });
+  }, [lots, listings, activity, bidders, bidderTotals]);
 
   // Auto-fill post body when inputs change unless the user has touched it.
   useEffect(() => {
@@ -456,6 +556,13 @@ function NewClaimSalePageInner() {
         {error && (
           <div style={{ padding: '10px 12px', background: 'rgba(192,57,43,0.12)', border: '1.5px solid var(--rust)', borderRadius: 8, color: 'var(--rust)', fontSize: 12.5, fontWeight: 600, marginBottom: 12 }}>
             {error}
+          </div>
+        )}
+
+        {bidderSuggestions.length > 0 && (
+          <div style={{ marginBottom: 18 }}>
+            <BidderSuggestionsPanel suggestions={bidderSuggestions}
+              hint="Past buyers/bidders interested in similar player or brand within ±5 years." />
           </div>
         )}
 
