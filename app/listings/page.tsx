@@ -957,6 +957,12 @@ function ListingsPageContent() {
               onClick: () => { setScansPickerOpen(false); router.push('/listings/scan-inbox'); },
             },
             {
+              icon: '🗂',
+              label: 'Bulk Scan to Selected Listings',
+              hint: 'Pick listings in scan order, drop fronts + backs, app pairs them positionally.',
+              onClick: () => { setScansPickerOpen(false); router.push('/listings/scan-batch'); },
+            },
+            {
               icon: '📚',
               label: 'Add Scans to Set Inventory',
               hint: 'Bulk attach scans to rows in one of your sets.',
