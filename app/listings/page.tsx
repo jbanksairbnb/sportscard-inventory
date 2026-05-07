@@ -552,6 +552,27 @@ function ListingsPageContent() {
     setSelectedIds(new Set());
   }
 
+  // Promote any draft listings in `ids` to active (so they're pickable in the
+  // FB sale picker), then route to the new auction or claim sale page with the
+  // ids pre-selected via URL param. Each FB-new page reads `listing_ids`.
+  async function sendListingsToFB(ids: string[], target: 'auction' | 'claim') {
+    if (ids.length === 0) return;
+    const idsInUse = listings.filter(l => ids.includes(l.id));
+    const draftIds = idsInUse.filter(l => l.status === 'draft').map(l => l.id);
+    if (draftIds.length > 0) {
+      const supabase = createClient();
+      const { error } = await supabase.from('listings').update({ status: 'active' }).in('id', draftIds);
+      if (error) { alert('Could not activate the listing(s): ' + error.message); return; }
+      setListings(prev => prev.map(l => draftIds.includes(l.id) ? { ...l, status: 'active' } : l));
+    }
+    const path = target === 'auction' ? '/fb-auctions/new' : '/fb-claim-sales/new';
+    router.push(`${path}?listing_ids=${ids.join(',')}`);
+  }
+  async function bulkSendToFB(target: 'auction' | 'claim') {
+    if (selectedIds.size === 0) return;
+    await sendListingsToFB(Array.from(selectedIds), target);
+  }
+
   async function bulkDelete() {
     if (selectedIds.size === 0) return;
     const n = selectedIds.size;
@@ -719,6 +740,14 @@ function ListingsPageContent() {
               className="btn btn-sm" style={{ background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--mustard)' }}>
               ⏸ Pause
             </button>
+            <button type="button" onClick={() => bulkSendToFB('auction')} disabled={bulkWorking}
+              className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
+              📣 Send to Auction
+            </button>
+            <button type="button" onClick={() => bulkSendToFB('claim')} disabled={bulkWorking}
+              className="btn btn-sm" style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>
+              🎯 Send to Claim Sale
+            </button>
             <button type="button" onClick={bulkDelete} disabled={bulkWorking}
               className="btn btn-sm" style={{ background: 'var(--rust)', color: 'var(--cream)', border: '1.5px solid var(--rust)' }}>
               🗑 Delete
@@ -825,6 +854,16 @@ function ListingsPageContent() {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, minWidth: 130 }}>
                       <button onClick={() => openEdit(l)} className="btn btn-ghost btn-sm" style={{ justifyContent: 'center' }}>Edit</button>
+                      {(l.status === 'active' || l.status === 'draft') && (
+                        <>
+                          <button onClick={() => sendListingsToFB([l.id], 'auction')} className="btn btn-sm" style={{ justifyContent: 'center', background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
+                            📣 Auction
+                          </button>
+                          <button onClick={() => sendListingsToFB([l.id], 'claim')} className="btn btn-sm" style={{ justifyContent: 'center', background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>
+                            🎯 Claim Sale
+                          </button>
+                        </>
+                      )}
                       {l.status === 'draft' && (
                         <button onClick={() => setStatus(l.id, 'active')} disabled={working === l.id} className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }}>
                           {working === l.id ? '…' : '✓ Activate'}

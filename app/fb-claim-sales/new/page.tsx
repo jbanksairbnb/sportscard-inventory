@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import MarketResearchModal, { CardDescriptor } from '@/components/MarketResearchModal';
@@ -98,7 +98,20 @@ function buildPostBody(title: string, lots: LotDraft[], shippingText: string, fo
 }
 
 export default function NewClaimSalePage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>}>
+      <NewClaimSalePageInner />
+    </Suspense>
+  );
+}
+
+function NewClaimSalePageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillIds = useMemo(() => {
+    const raw = searchParams?.get('listing_ids') || '';
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  }, [searchParams]);
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -146,13 +159,32 @@ export default function NewClaimSalePage() {
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         supabase.from('fb_auction_templates').select('id, name, template_type, post_header, post_footer').eq('user_id', user.id),
       ]);
-      setListings((listRes.data || []) as Listing[]);
+      const loadedListings = (listRes.data || []) as Listing[];
+      setListings(loadedListings);
       setGroups((grpRes.data || []) as Group[]);
       setTemplates((tmplRes.data || []) as Template[]);
+      // Pre-fill lots from ?listing_ids=... — one single-card lot per id.
+      if (prefillIds.length > 0) {
+        const valid = prefillIds.filter(id => loadedListings.some(l => l.id === id));
+        if (valid.length > 0) {
+          setLots(valid.map(id => ({
+            id: shortId(),
+            kind: 'single',
+            pricing: 'per_item',
+            listingIds: [id],
+            itemPrices: [null],
+            groupPrice: null,
+            collageUrl: '',
+            backCollageUrl: '',
+            commentBody: '',
+            commentTouched: false,
+          })));
+        }
+      }
       setLoading(false);
     }
     load();
-  }, [router]);
+  }, [router, prefillIds]);
 
   const claimTemplates = useMemo(() => templates.filter(t => (t.template_type || 'multi') === 'claim'), [templates]);
   const fallbackTemplate = useMemo(() => templates.find(t => (t.template_type || 'multi') === 'multi'), [templates]);
