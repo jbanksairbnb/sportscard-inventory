@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -1480,7 +1481,12 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
 function FbSalesPicker({ onAuctions, onClaim, onClose }: {
   onAuctions: () => void; onClaim: () => void; onClose: () => void;
 }) {
-  return (
+  // Render via portal so the modal escapes the sticky header's stacking
+  // context (the header uses backdrop-filter, which clips fixed children).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted || typeof document === 'undefined') return null;
+  return createPortal(
     <div onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
@@ -1522,7 +1528,8 @@ function FbSalesPicker({ onAuctions, onClaim, onClose }: {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
