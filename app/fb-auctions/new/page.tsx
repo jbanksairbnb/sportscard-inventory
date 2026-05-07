@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { syncAuctionListings } from '@/lib/listingStatusSync';
@@ -158,7 +158,20 @@ async function copyText(text: string) {
 }
 
 export default function NewFbAuctionPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>}>
+      <NewFbAuctionPageInner />
+    </Suspense>
+  );
+}
+
+function NewFbAuctionPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillIds = useMemo(() => {
+    const raw = searchParams?.get('listing_ids') || '';
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  }, [searchParams]);
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
@@ -269,9 +282,21 @@ export default function NewFbAuctionPage() {
           .eq('user_id', user.id)
           .not('claim_buyer_id', 'is', null),
       ]);
-      setListings((listingsRes.data || []) as Listing[]);
+      const loadedListings = (listingsRes.data || []) as Listing[];
+      setListings(loadedListings);
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
+      // Apply ?listing_ids=... pre-selection.
+      if (prefillIds.length > 0) {
+        const valid = prefillIds.filter(id => loadedListings.some(l => l.id === id));
+        if (valid.length === 1) {
+          setType('single');
+          setSingleListingId(valid[0]);
+        } else if (valid.length > 1) {
+          setType('multi');
+          setSelectedIds(valid);
+        }
+      }
       if (biddersRes.error) console.warn('fb_bidders not available:', biddersRes.error.message);
       setBidders((biddersRes.data || []) as BidderRow[]);
 
