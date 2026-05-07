@@ -453,16 +453,6 @@ function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onR
       return (a.player || '').localeCompare(b.player || '');
     });
   }, [listings]);
-  function optionsForSlot(slotPos: number): Listing[] {
-    const currentId = lot.listingIds[slotPos] || null;
-    return sortedListings.filter(l => {
-      if (currentId === l.id) return true;
-      if (usedInOtherLots.has(l.id)) return false;
-      // Skip listings already used in another slot of THIS lot.
-      if (lot.listingIds.some((id, i) => id === l.id && i !== slotPos)) return false;
-      return true;
-    });
-  }
   function descriptorFromListing(id: string | null): CardDescriptor {
     const l = id ? listings.find(x => x.id === id) : null;
     return {
@@ -475,11 +465,6 @@ function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onR
       raw_grade: l?.raw_grade ?? null,
       listing_id: l?.id ?? null,
     };
-  }
-  function setListingAt(pos: number, id: string) {
-    const next = [...lot.listingIds];
-    next[pos] = id || null;
-    onPatch({ listingIds: next });
   }
   function setPriceAt(pos: number, val: string) {
     const next = [...lot.itemPrices];
@@ -541,38 +526,67 @@ function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onR
         )}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {lot.listingIds.map((id, pos) => (
-          <div key={pos} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {lot.kind === 'group' && (
-              <div style={{
-                width: 28, height: 28, background: 'var(--paper)', color: 'var(--plum)',
-                border: '1.5px solid var(--plum)', borderRadius: 4,
-                display: 'grid', placeItems: 'center',
-                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-              }}>{pos + 1}</div>
-            )}
-            <select value={id || ''} onChange={e => setListingAt(pos, e.target.value)} className="input-sc" style={{ flex: 1 }}>
-              <option value="">— pick a listing —</option>
-              {optionsForSlot(pos).map(l => (
-                <option key={l.id} value={l.id}>{listingLabel(l)}</option>
-              ))}
-            </select>
-            {lot.pricing === 'per_item' && (
-              <>
-                <input type="number" step="0.01" placeholder="$"
-                  value={lot.itemPrices[pos] ?? ''}
-                  onChange={e => setPriceAt(pos, e.target.value)}
-                  className="input-sc" style={{ width: 90 }} />
-                <button type="button"
-                  onClick={() => onResearch(descriptorFromListing(id),
-                    v => setPriceAt(pos, (Math.round(v * 100) / 100).toString()))}
-                  title="Research market price" aria-label="Research market price"
-                  style={{ background: 'transparent', border: 0, color: 'var(--teal)', cursor: 'pointer', fontSize: 14, padding: 2 }}>📈</button>
-              </>
-            )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <ListingPicker
+          listings={sortedListings}
+          excludeIds={usedInOtherLots}
+          selectedIds={lot.listingIds}
+          maxSelect={lot.kind === 'single' ? 1 : lot.listingIds.length}
+          onToggle={(id) => {
+            // If id already in lot, remove it (compact remaining + null pad).
+            // Otherwise add to next open slot (or replace if single).
+            const cur = lot.listingIds;
+            const idx = cur.indexOf(id);
+            if (idx >= 0) {
+              const nextIds = cur.filter((_, i) => i !== idx);
+              const nextPrices = lot.itemPrices.filter((_, i) => i !== idx);
+              while (nextIds.length < cur.length) { nextIds.push(null); nextPrices.push(null); }
+              onPatch({ listingIds: nextIds, itemPrices: nextPrices });
+              return;
+            }
+            if (lot.kind === 'single') {
+              onPatch({ listingIds: [id], itemPrices: [lot.itemPrices[0] ?? null] });
+              return;
+            }
+            const openSlot = cur.findIndex(x => !x);
+            if (openSlot < 0) return; // capped
+            const nextIds = [...cur];
+            nextIds[openSlot] = id;
+            onPatch({ listingIds: nextIds });
+          }}
+          renderRowExtras={(l) => {
+            const slot = lot.listingIds.indexOf(l.id);
+            if (slot < 0) return null;
+            return (
+              <span className="mono" style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 700 }}>#{slot + 1}</span>
+            );
+          }}
+        />
+
+        {lot.pricing === 'per_item' && lot.listingIds.some(Boolean) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 10, background: 'var(--paper)', borderRadius: 6, border: '1.5px dashed var(--rule)' }}>
+            <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>Per-item prices</div>
+            {lot.listingIds.map((id, pos) => {
+              if (!id) return null;
+              const l = listings.find(x => x.id === id);
+              return (
+                <div key={pos} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ width: 28, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--plum)' }}>#{pos + 1}</div>
+                  <div style={{ flex: 1, fontSize: 12.5, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{listingLabel(l)}</div>
+                  <input type="number" step="0.01" placeholder="$"
+                    value={lot.itemPrices[pos] ?? ''}
+                    onChange={e => setPriceAt(pos, e.target.value)}
+                    className="input-sc" style={{ width: 90 }} />
+                  <button type="button"
+                    onClick={() => onResearch(descriptorFromListing(id),
+                      v => setPriceAt(pos, (Math.round(v * 100) / 100).toString()))}
+                    title="Research market price"
+                    style={{ background: 'transparent', border: 0, color: 'var(--teal)', cursor: 'pointer', fontSize: 14, padding: 2 }}>📈</button>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        )}
       </div>
 
       <div style={{ marginTop: 12 }}>
@@ -588,6 +602,108 @@ function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onR
         )}
       </div>
 
+    </div>
+  );
+}
+
+function ListingPicker({
+  listings, excludeIds, selectedIds, maxSelect, onToggle, renderRowExtras,
+}: {
+  listings: Listing[];
+  excludeIds: Set<string>;
+  selectedIds: (string | null)[];
+  maxSelect: number;
+  onToggle: (id: string) => void;
+  renderRowExtras?: (l: Listing) => React.ReactNode;
+}) {
+  const [search, setSearch] = useState('');
+  const selectedSet = React.useMemo(() => new Set(selectedIds.filter((x): x is string => !!x)), [selectedIds]);
+  const filteredListings = React.useMemo(() => {
+    const visible = listings.filter(l => !excludeIds.has(l.id));
+    const q = search.trim();
+    if (!q) return visible;
+    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+    return visible.filter(l => {
+      const hay = [l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '', l.raw_grade, l.grading_company, l.grade]
+        .filter(Boolean).join(' ').toLowerCase();
+      return terms.every(t => hay.includes(t));
+    });
+  }, [listings, excludeIds, search]);
+  const filledCount = selectedIds.filter(Boolean).length;
+  const atCap = filledCount >= maxSelect;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 10, flexWrap: 'wrap' }}>
+        <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>
+          Listings ({filledCount}/{maxSelect} selected)
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
+          border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
+          flex: 1, minWidth: 200, maxWidth: 360,
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--plum)' }}>🔍</span>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search active listings — multi-term"
+            style={{ border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-body)', fontSize: 12, flex: 1, color: 'var(--plum)' }} />
+          {search && <button onClick={() => setSearch('')} style={{ background: 'transparent', border: 'none', color: 'var(--plum)', cursor: 'pointer', fontSize: 13 }}>×</button>}
+        </div>
+      </div>
+      {filteredListings.length === 0 ? (
+        <div style={{ padding: 20, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 12, border: '1.5px dashed var(--rule)', borderRadius: 6 }}>
+          {listings.length === 0 ? 'No active listings.' : 'No listings match your search.'}
+        </div>
+      ) : (
+        <div style={{ maxHeight: 320, overflowY: 'auto', border: '1.5px solid var(--rule)', borderRadius: 6 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              <tr>
+                <th style={{ padding: '6px 10px', textAlign: 'left', width: 32 }}></th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', width: 32 }}></th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', width: 56 }}>Photo</th>
+                <th style={{ padding: '6px 10px', textAlign: 'left' }}>Listing</th>
+                <th style={{ padding: '6px 10px', textAlign: 'right', width: 80 }}>Asking</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredListings.map(l => {
+                const isSel = selectedSet.has(l.id);
+                const disabled = !isSel && atCap;
+                return (
+                  <tr key={l.id}
+                    onClick={() => { if (!disabled) onToggle(l.id); }}
+                    style={{
+                      borderTop: '1px solid var(--rule)',
+                      cursor: disabled ? 'not-allowed' : 'pointer',
+                      background: isSel ? 'rgba(184,146,58,0.18)' : 'transparent',
+                      opacity: disabled ? 0.45 : 1,
+                    }}>
+                    <td style={{ padding: '6px 10px' }}>
+                      <input type="checkbox" checked={isSel} disabled={disabled} readOnly style={{ accentColor: 'var(--plum)' }} />
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 11 }}>{renderRowExtras ? renderRowExtras(l) : null}</td>
+                    <td style={{ padding: '6px 10px' }}>
+                      {l.photos && l.photos[0]
+                        ? <img src={l.photos[0]} alt="" style={{ width: 36, height: 50, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
+                        : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 12.5, color: 'var(--plum)' }}>
+                      <div style={{ fontWeight: 600 }}>{l.title}</div>
+                      <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
+                        {l.year} {l.brand} #{l.card_number}
+                      </div>
+                    </td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right', fontSize: 12, color: 'var(--orange)', fontWeight: 700 }}>
+                      {l.asking_price !== null && l.asking_price !== undefined ? `$${l.asking_price}` : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
