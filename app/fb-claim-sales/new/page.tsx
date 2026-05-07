@@ -630,13 +630,16 @@ function ListingPicker({
     });
   }, [listings, excludeIds, search]);
   const filledCount = selectedIds.filter(Boolean).length;
-  const atCap = filledCount >= maxSelect;
+  const isSingle = maxSelect === 1;
+  const atCap = !isSingle && filledCount >= maxSelect;
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 10, flexWrap: 'wrap' }}>
         <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', fontWeight: 700 }}>
-          Listings ({filledCount}/{maxSelect} selected)
+          {isSingle
+            ? (filledCount === 1 ? 'Listing selected' : 'Pick one listing')
+            : `Listings (${filledCount}/${maxSelect} selected)`}
         </div>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
@@ -660,7 +663,7 @@ function ListingPicker({
             <thead style={{ position: 'sticky', top: 0, background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               <tr>
                 <th style={{ padding: '6px 10px', textAlign: 'left', width: 32 }}></th>
-                <th style={{ padding: '6px 10px', textAlign: 'left', width: 32 }}></th>
+                <th style={{ padding: '6px 10px', textAlign: 'left', width: 80 }}></th>
                 <th style={{ padding: '6px 10px', textAlign: 'left', width: 56 }}>Photo</th>
                 <th style={{ padding: '6px 10px', textAlign: 'left' }}>Listing</th>
                 <th style={{ padding: '6px 10px', textAlign: 'right', width: 80 }}>Asking</th>
@@ -680,9 +683,21 @@ function ListingPicker({
                       opacity: disabled ? 0.45 : 1,
                     }}>
                     <td style={{ padding: '6px 10px' }}>
-                      <input type="checkbox" checked={isSel} disabled={disabled} readOnly style={{ accentColor: 'var(--plum)' }} />
+                      {isSingle
+                        ? <input type="radio" name="listing-pick" checked={isSel} readOnly style={{ accentColor: 'var(--plum)' }} />
+                        : <input type="checkbox" checked={isSel} disabled={disabled} readOnly style={{ accentColor: 'var(--plum)' }} />
+                      }
                     </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11 }}>{renderRowExtras ? renderRowExtras(l) : null}</td>
+                    <td style={{ padding: '6px 10px', fontSize: 11 }}>
+                      {isSingle && isSel ? (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+                          padding: '2px 8px', borderRadius: 100,
+                          background: 'var(--orange)', color: 'var(--cream)',
+                          textTransform: 'uppercase',
+                        }}>✓ Selected</span>
+                      ) : (renderRowExtras ? renderRowExtras(l) : null)}
+                    </td>
                     <td style={{ padding: '6px 10px' }}>
                       {l.photos && l.photos[0]
                         ? <img src={l.photos[0]} alt="" style={{ width: 36, height: 50, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
