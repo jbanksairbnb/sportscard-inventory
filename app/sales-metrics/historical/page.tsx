@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
-import { insertHistoricalTransaction, type HistoricalChannel, type HistoricalEngagement } from '@/lib/historicalTransactions';
+import { insertHistoricalTransaction, findOrCreateGroup, type HistoricalChannel, type HistoricalEngagement } from '@/lib/historicalTransactions';
+import { parseCsv, toCsv, downloadCsv } from '@/lib/csv';
 
 type Row = {
   id: string;
@@ -77,6 +78,11 @@ export default function HistoricalTransactionsPage() {
   const [newGroupUrl, setNewGroupUrl] = useState('');
   const [addingGroup, setAddingGroup] = useState(false);
 
+  // CSV import
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
+  const [importReport, setImportReport] = useState<{ ok: number; failed: { row: number; reason: string }[] } | null>(null);
+
   useEffect(() => {
     const supabase = createClient();
     async function load() {
@@ -116,6 +122,109 @@ export default function HistoricalTransactionsPage() {
     setNewGroupName('');
     setNewGroupUrl('');
     setShowAddGroup(false);
+  }
+
+  function handleDownloadTemplate() {
+    const headers = [
+      'bidder_name', 'bidder_fb_handle', 'occurred_at', 'engagement', 'channel',
+      'year', 'brand', 'card_number', 'player', 'condition_note',
+      'amount', 'cost', 'group_name', 'notes',
+    ];
+    const example = [
+      'Henry Humm', 'henry.humm', '2025-08-14', 'won', 'fb_auction',
+      '1968', 'Topps', '150', 'Roberto Clemente', 'PSA 5 EX',
+      '125.00', '50.00', 'Vintage Baseball Cards', 'Won outright',
+    ];
+    const exampleBid = [
+      'Jeff Bennett', '', '2025-08-14', 'bid', 'fb_auction',
+      '1968', 'Topps', '150', 'Roberto Clemente', '',
+      '110.00', '', 'Vintage Baseball Cards', 'Lost bidder',
+    ];
+    const exampleTag = [
+      'Doran Braun', '', '2025-08-14', 'tag_request', 'fb_auction',
+      '1968', 'Topps', '150', 'Roberto Clemente', '',
+      '', '', 'Vintage Baseball Cards', 'Watched, never bid',
+    ];
+    downloadCsv('historical-transactions-template.csv', toCsv([headers, example, exampleBid, exampleTag]));
+  }
+
+  async function handleUploadCsv(file: File) {
+    if (!userId) return;
+    setError('');
+    setImportReport(null);
+    const text = await file.text();
+    const rows = parseCsv(text).filter(r => r.length > 0 && r.some(c => c.trim() !== ''));
+    if (rows.length < 2) { setError('CSV is empty or has no data rows.'); return; }
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const idx = (k: string) => header.indexOf(k);
+    const need = ['bidder_name'];
+    for (const k of need) {
+      if (idx(k) === -1) { setError(`CSV missing required column "${k}". Use the template as a starting point.`); return; }
+    }
+    const dataRows = rows.slice(1);
+    setImporting(true);
+    setImportProgress({ done: 0, total: dataRows.length });
+    const supabase = createClient();
+    const groupCache = new Map<string, string | null>();
+    let ok = 0;
+    const failed: { row: number; reason: string }[] = [];
+    for (let i = 0; i < dataRows.length; i++) {
+      const r = dataRows[i];
+      const get = (k: string) => { const j = idx(k); return j === -1 ? '' : (r[j] || '').trim(); };
+      const name = get('bidder_name');
+      if (!name) { failed.push({ row: i + 2, reason: 'bidder_name is required' }); setImportProgress({ done: i + 1, total: dataRows.length }); continue; }
+      const engagementRaw = (get('engagement') || 'won').toLowerCase();
+      const engagement: HistoricalEngagement = engagementRaw === 'bid' || engagementRaw === 'tag_request' ? engagementRaw : 'won';
+      const channelRaw = (get('channel') || '').toLowerCase();
+      const channel: HistoricalChannel | null = channelRaw === 'fb_auction' || channelRaw === 'fb_claim' || channelRaw === 'other' ? channelRaw : null;
+      const groupName = get('group_name');
+      let groupIdResolved: string | null = null;
+      if (groupName) {
+        const key = groupName.toLowerCase();
+        if (groupCache.has(key)) groupIdResolved = groupCache.get(key) || null;
+        else {
+          groupIdResolved = await findOrCreateGroup(supabase, userId, groupName);
+          groupCache.set(key, groupIdResolved);
+        }
+      }
+      const yearStr = get('year');
+      const amountStr = get('amount');
+      const costStr = get('cost');
+      const result = await insertHistoricalTransaction(supabase, userId, {
+        bidderName: name,
+        bidderFbHandle: get('bidder_fb_handle') || null,
+        occurredAt: get('occurred_at') || null,
+        year: yearStr ? Number(yearStr) : null,
+        brand: get('brand') || null,
+        cardNumber: get('card_number') || null,
+        player: get('player') || null,
+        conditionNote: get('condition_note') || null,
+        amount: amountStr ? Number(amountStr) : null,
+        cost: costStr ? Number(costStr) : null,
+        channel: channel,
+        engagement,
+        groupId: groupIdResolved,
+        notes: get('notes') || null,
+      });
+      if (result.id) ok++;
+      else failed.push({ row: i + 2, reason: result.error || 'unknown' });
+      setImportProgress({ done: i + 1, total: dataRows.length });
+    }
+    setImporting(false);
+    setImportProgress(null);
+    setImportReport({ ok, failed });
+    // Refresh rows + groups
+    const [{ data }, { data: groupRows }] = await Promise.all([
+      supabase
+        .from('historical_transactions')
+        .select('id, occurred_at, bidder_name, bidder_fb_handle, year, brand, card_number, player, condition_note, amount, cost, channel, engagement_type, group_id, notes')
+        .eq('user_id', userId)
+        .order('occurred_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }),
+      supabase.from('fb_groups').select('id, name').eq('user_id', userId).order('name'),
+    ]);
+    setRows((data || []) as Row[]);
+    setGroups((groupRows || []) as Group[]);
   }
 
   function resetForm() {
@@ -238,8 +347,44 @@ export default function HistoricalTransactionsPage() {
           <div style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
             Bring your past Facebook auction and claim sale activity into Sports Collective. Each entry is matched to a bidder by name —
             same name twice means same buyer. New names auto-create a bidder profile so future tag suggestions, metrics, and bidder
-            history pages light up immediately. CSV import is coming next; this form covers single entries.
+            history pages light up immediately. Use the bulk uploader below for big batches; the form on the left handles one-offs.
           </div>
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <button type="button" onClick={handleDownloadTemplate} className="btn btn-ghost btn-sm">
+              ⬇ Download CSV template
+            </button>
+            <label className="btn btn-primary btn-sm" style={{ cursor: importing ? 'not-allowed' : 'pointer', opacity: importing ? 0.6 : 1 }}>
+              ⬆ Upload CSV
+              <input type="file" accept=".csv,text/csv" disabled={importing}
+                onChange={async e => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) await handleUploadCsv(f);
+                }}
+                style={{ display: 'none' }} />
+            </label>
+            {importing && importProgress && (
+              <span className="mono" style={{ fontSize: 11.5, color: 'var(--plum)', fontWeight: 700 }}>
+                Importing {importProgress.done}/{importProgress.total}…
+              </span>
+            )}
+            {!importing && importReport && (
+              <span className="mono" style={{ fontSize: 11.5, fontWeight: 700, color: importReport.failed.length === 0 ? 'var(--teal)' : 'var(--rust)' }}>
+                ✓ {importReport.ok} added{importReport.failed.length > 0 ? ` · ${importReport.failed.length} failed` : ''}
+              </span>
+            )}
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+              Required: bidder_name. Engagement: won / bid / tag_request. Channel: fb_auction / fb_claim / other.
+            </span>
+          </div>
+          {importReport && importReport.failed.length > 0 && (
+            <div style={{ marginTop: 10, padding: 8, border: '1.5px solid var(--rust)', borderRadius: 6, background: 'rgba(197,74,44,0.08)', maxHeight: 180, overflowY: 'auto' }}>
+              <div className="eyebrow" style={{ fontSize: 10, color: 'var(--rust)', fontWeight: 700, marginBottom: 4 }}>Failed rows</div>
+              <ul className="mono" style={{ margin: 0, paddingLeft: 18, fontSize: 11.5, color: 'var(--rust)', lineHeight: 1.55 }}>
+                {importReport.failed.map((f, i) => <li key={i}>Row {f.row}: {f.reason}</li>)}
+              </ul>
+            </div>
+          )}
         </section>
 
         <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: 20 }}>
