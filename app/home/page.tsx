@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -1358,6 +1359,7 @@ const NAV_LINKS = ['My Shelf'];
 function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void }) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
+  const [fbSalesOpen, setFbSalesOpen] = useState(false);
   function submitSearch() {
     const q = searchQuery.trim();
     if (!q) return;
@@ -1412,20 +1414,13 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
           }}>
             My Listings
           </Link>
-          <Link href="/fb-auctions" style={{
-            color: 'inherit',
-            cursor: 'pointer',
-            textDecoration: 'none',
-          }}>
-            Auctions
-          </Link>
-          <Link href="/fb-claim-sales" style={{
-            color: 'inherit',
-            cursor: 'pointer',
-            textDecoration: 'none',
-          }}>
-            Claim Sales
-          </Link>
+          <button type="button" onClick={() => setFbSalesOpen(true)}
+            style={{
+              color: 'inherit', cursor: 'pointer', background: 'transparent', border: 0, padding: 0,
+              font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit',
+            }}>
+            FB Sales
+          </button>
           <Link href="/purchases" style={{
             color: 'inherit',
             cursor: 'pointer',
@@ -1472,7 +1467,69 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
           <button className="btn btn-ghost btn-sm" onClick={onLogout}>Sign out</button>
         </div>
       </div>
+      {fbSalesOpen && (
+        <FbSalesPicker
+          onAuctions={() => { setFbSalesOpen(false); router.push('/fb-auctions'); }}
+          onClaim={() => { setFbSalesOpen(false); router.push('/fb-claim-sales'); }}
+          onClose={() => setFbSalesOpen(false)}
+        />
+      )}
     </header>
+  );
+}
+
+function FbSalesPicker({ onAuctions, onClaim, onClose }: {
+  onAuctions: () => void; onClaim: () => void; onClose: () => void;
+}) {
+  // Render via portal so the modal escapes the sticky header's stacking
+  // context (the header uses backdrop-filter, which clips fixed children).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted || typeof document === 'undefined') return null;
+  return createPortal(
+    <div onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(42,20,52,0.82)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '60px 20px', overflowY: 'auto',
+      }}>
+      <div onClick={e => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>FB Sales</div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>
+          Which kind of Facebook sale do you want to manage?
+        </p>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <button type="button" onClick={onAuctions}
+            className="panel-bordered"
+            style={{
+              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+            }}>
+            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
+              🔨 Auctions
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Bidding-style sales with current high bid per lot.</div>
+          </button>
+          <button type="button" onClick={onClaim}
+            className="panel-bordered"
+            style={{
+              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+            }}>
+            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
+              🏷 Claim Sales
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Fixed-price multi-lot posts where buyers claim in the comments.</div>
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
