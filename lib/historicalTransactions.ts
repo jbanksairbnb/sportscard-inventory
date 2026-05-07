@@ -59,7 +59,7 @@ export async function insertHistoricalTransaction(
   supabase: SupabaseClient,
   userId: string,
   input: HistoricalInput,
-): Promise<string | null> {
+): Promise<{ id: string | null; error: string | null }> {
   const bidderId = await findOrCreateBidder(supabase, userId, input.bidderName, input.bidderFbHandle ?? null);
   const { data, error } = await supabase
     .from('historical_transactions')
@@ -86,8 +86,8 @@ export async function insertHistoricalTransaction(
     .select('id')
     .single();
   if (error || !data) {
-    console.error('[historical_transactions insert] failed:', error?.message);
-    return null;
+    console.error('[historical_transactions insert] failed:', error);
+    return { id: null, error: error?.message || 'Insert returned no row' };
   }
-  return (data as { id: string }).id;
+  return { id: (data as { id: string }).id, error: null };
 }

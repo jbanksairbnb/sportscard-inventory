@@ -139,7 +139,7 @@ export default function HistoricalTransactionsPage() {
     if (!bidderName.trim()) { setError('Buyer / bidder name is required.'); return; }
     setSaving(true);
     const supabase = createClient();
-    const id = await insertHistoricalTransaction(supabase, userId, {
+    const result = await insertHistoricalTransaction(supabase, userId, {
       bidderName: bidderName.trim(),
       bidderFbHandle: bidderHandle.trim() || null,
       occurredAt: occurredAt || null,
@@ -156,7 +156,7 @@ export default function HistoricalTransactionsPage() {
       notes: notes || null,
     });
     setSaving(false);
-    if (!id) { setError('Save failed.'); return; }
+    if (!result.id) { setError(`Save failed: ${result.error || 'unknown error'}`); return; }
     // Refresh list (cheap reload of just this user's rows).
     const { data } = await supabase
       .from('historical_transactions')
