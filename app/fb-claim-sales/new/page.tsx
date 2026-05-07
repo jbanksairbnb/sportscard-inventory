@@ -350,7 +350,7 @@ export default function NewClaimSalePage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <div className="display" style={{ fontSize: 17, color: 'var(--plum)' }}>Lots ({lots.length})</div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => addLot('single')} className="btn btn-ghost btn-sm">+ Single card</button>
+              <button onClick={() => addLot('single')} className="btn btn-primary btn-sm">+ Single card</button>
               <button onClick={() => addLot('group')} className="btn btn-primary btn-sm">+ Group lot (up to 6)</button>
             </div>
           </div>
@@ -382,7 +382,7 @@ export default function NewClaimSalePage() {
           )}
           {lots.length > 0 && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1.5px dashed var(--rule)' }}>
-              <button onClick={() => addLot('single')} className="btn btn-ghost btn-sm">+ Single card</button>
+              <button onClick={() => addLot('single')} className="btn btn-primary btn-sm">+ Single card</button>
               <button onClick={() => addLot('group')} className="btn btn-primary btn-sm">+ Group lot (up to 6)</button>
             </div>
           )}
