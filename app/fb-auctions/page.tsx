@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { logBidEvent, fetchLotBidStats, type LotBidStats } from '@/lib/fbBidEvents';
+import { logBidEvent, fetchLotBidStats, fetchLotBidHistory, type LotBidStats, type BidHistoryEvent } from '@/lib/fbBidEvents';
 import { syncAuctionListings } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
@@ -120,6 +120,9 @@ export default function FbAuctionsPage() {
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
   const [historicalSales, setHistoricalSales] = useState<{ amount: number; occurred_at: string | null }[]>([]);
+  const [historyLotId, setHistoryLotId] = useState<string | null>(null);
+  const [historyEvents, setHistoryEvents] = useState<BidHistoryEvent[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -436,6 +439,16 @@ export default function FbAuctionsPage() {
     setSavingLots(prev => { const next = new Set(prev); next.delete(lotId); return next; });
   }
 
+  async function openBidHistory(lotId: string) {
+    setHistoryLotId(lotId);
+    setHistoryEvents([]);
+    setHistoryLoading(true);
+    const supabase = createClient();
+    const events = await fetchLotBidHistory(supabase, lotId);
+    setHistoryEvents(events);
+    setHistoryLoading(false);
+  }
+
   async function savePostUrl(auctionId: string, url: string) {
     const supabase = createClient();
     const trimmed = url.trim() || null;
@@ -712,9 +725,14 @@ export default function FbAuctionsPage() {
                                   const s = lotStats.get(lot.id);
                                   if (!s || s.bid_count === 0) return null;
                                   return (
-                                    <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 2 }}>
+                                    <button type="button" onClick={() => openBidHistory(lot.id)}
+                                      className="mono" style={{
+                                        background: 'transparent', border: 0, padding: 0, marginTop: 2,
+                                        fontSize: 10, color: 'var(--teal)', fontWeight: 700, cursor: 'pointer',
+                                        textDecoration: 'underline', fontFamily: 'inherit',
+                                      }}>
                                       🔨 {s.bid_count} bid{s.bid_count === 1 ? '' : 's'} · {s.unique_bidders} bidder{s.unique_bidders === 1 ? '' : 's'}
-                                    </div>
+                                    </button>
                                   );
                                 })()}
                               </div>
@@ -771,6 +789,57 @@ export default function FbAuctionsPage() {
           </div>
         )}
       </div>
+
+      {historyLotId && (
+        <div onClick={() => setHistoryLotId(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(63, 27, 56, 0.55)', zIndex: 100,
+            display: 'grid', placeItems: 'center', padding: 20,
+          }}>
+          <div onClick={e => e.stopPropagation()} className="panel-bordered"
+            style={{ background: 'var(--cream)', maxWidth: 540, width: '100%', maxHeight: '80vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '14px 18px', borderBottom: '2px solid var(--plum)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1 }}>Bid history</div>
+              <button onClick={() => setHistoryLotId(null)} className="btn btn-ghost btn-sm">✕ Close</button>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '8px 0' }}>
+              {historyLoading ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
+              ) : historyEvents.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No bid events recorded for this lot.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '6px 14px', textAlign: 'left' }}>#</th>
+                      <th style={{ padding: '6px 14px', textAlign: 'left' }}>When</th>
+                      <th style={{ padding: '6px 14px', textAlign: 'left' }}>Bidder</th>
+                      <th style={{ padding: '6px 14px', textAlign: 'right' }}>Bid</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyEvents.map((e, i) => (
+                      <tr key={e.id} style={{ borderTop: '1px solid var(--rule)', fontSize: 12.5, color: 'var(--plum)' }}>
+                        <td className="mono" style={{ padding: '6px 14px', color: 'var(--ink-mute)' }}>{i + 1}</td>
+                        <td className="mono" style={{ padding: '6px 14px' }}>
+                          {new Date(e.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </td>
+                        <td style={{ padding: '6px 14px' }}>
+                          <div style={{ fontWeight: 600 }}>{e.bidder_name || <span style={{ color: 'var(--ink-mute)' }}>—</span>}</div>
+                          {e.bidder_fb_handle && <div className="mono" style={{ fontSize: 10, color: 'var(--teal)' }}>@{e.bidder_fb_handle}</div>}
+                        </td>
+                        <td className="mono" style={{ padding: '6px 14px', textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>
+                          {e.amount != null ? fmtMoney(e.amount) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

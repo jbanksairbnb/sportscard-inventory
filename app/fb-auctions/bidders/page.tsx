@@ -59,6 +59,7 @@ export default function BiddersListPage() {
   const [claimItems, setClaimItems] = useState<ClaimItemRow[]>([]);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims' | 'bids'>('bids');
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const supabase = createClient();
@@ -180,6 +181,20 @@ export default function BiddersListPage() {
     return Array.from(map.entries()).filter(([, arr]) => arr.length > 1);
   }, [stats]);
 
+  async function handleDelete(s: BidderStats) {
+    const activity = s.totalBids + s.leadingCount + s.wonCount + s.claimCount;
+    const msg = activity > 0
+      ? `Delete bidder "${s.name}"?\n\nThis bidder has activity (${s.totalBids} bid${s.totalBids === 1 ? '' : 's'}, ${s.wonCount} won, ${s.claimCount} claim${s.claimCount === 1 ? '' : 's'}). The profile will be removed but historical bid records remain — they'll just show the name without a linked profile.`
+      : `Delete bidder "${s.name}"?\n\nThey have no activity recorded. This is safe to remove.`;
+    if (!confirm(msg)) return;
+    setDeletingIds(prev => new Set(prev).add(s.id));
+    const supabase = createClient();
+    const { error } = await supabase.from('fb_bidders').delete().eq('id', s.id);
+    setDeletingIds(prev => { const n = new Set(prev); n.delete(s.id); return n; });
+    if (error) { alert('Delete failed: ' + error.message); return; }
+    setBidders(prev => prev.filter(b => b.id !== s.id));
+  }
+
   if (loading) {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
   }
@@ -265,6 +280,7 @@ export default function BiddersListPage() {
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Claims</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Paid</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>$ Spent</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'center', width: 36 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -283,6 +299,13 @@ export default function BiddersListPage() {
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.paidCount + s.claimPaidCount}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
                       {s.totalSpend > 0 ? fmtMoney(s.totalSpend) : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                      <button type="button" onClick={() => handleDelete(s)} disabled={deletingIds.has(s.id)}
+                        title="Delete bidder"
+                        style={{ background: 'transparent', border: 0, cursor: 'pointer', color: 'var(--rust)', fontSize: 16, fontWeight: 700, opacity: deletingIds.has(s.id) ? 0.4 : 1 }}>
+                        {deletingIds.has(s.id) ? '…' : '×'}
+                      </button>
                     </td>
                   </tr>
                 ))}
