@@ -37,19 +37,26 @@ export default function SetHeaderBanner({
 
   if (!header || (!header.image_url && !header.description)) return null;
 
+  const MAX_PANEL_HEIGHT = 320;
+
   return (
     <div className="panel-bordered" style={{
       padding: 0, overflow: 'hidden', background: 'var(--paper)',
       display: 'flex', alignItems: 'stretch', gap: 0, flexWrap: 'wrap',
+      maxHeight: MAX_PANEL_HEIGHT,
     }}>
       {header.image_url && (
         <div style={{
-          width: 280, minHeight: 180, flexShrink: 0,
-          background: `var(--cream) url(${header.image_url}) center/cover no-repeat`,
+          width: 280, flexShrink: 0,
+          background: `var(--cream) url(${header.image_url}) center/contain no-repeat`,
           borderRight: '2px solid var(--plum)',
         }} />
       )}
-      <div style={{ flex: 1, minWidth: 280, padding: '20px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      <div style={{
+        flex: 1, minWidth: 280, padding: '20px 24px',
+        display: 'flex', flexDirection: 'column',
+        maxHeight: MAX_PANEL_HEIGHT, overflowY: 'auto',
+      }}>
         <div className="eyebrow" style={{ fontSize: 10.5, color: 'var(--orange)', fontWeight: 700, marginBottom: 6, letterSpacing: '0.18em' }}>
           ★ About this set ★
         </div>
