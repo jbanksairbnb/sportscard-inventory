@@ -15,11 +15,16 @@ export type LogBidEventInput = {
 // should surface failures so missed events get noticed (the table is the
 // source of truth for bidder analytics).
 //
-// Coalescing: when the user fills the bid amount and the bidder name in two
-// successive blurs, we'd otherwise log two events for what's really one bid.
-// Before inserting, we look for a recent event on the same lot whose amount
-// matches and whose bidder slot is empty (or matches the new id) — if we find
-// one, we patch it instead of inserting a new row.
+// Coalescing handles the form's two-blur pattern, where a single new bid is
+// entered as separate updates to the bid amount and the bidder name. Two
+// scenarios collapse into the existing event instead of inserting a new one:
+//
+//   1. Same amount, empty bidder slot being filled in (e.g. "$15 then Jason").
+//   2. Same amount, different bidder taking over (e.g. user typed $20 while
+//      the old bidder Jason was still in the name field, then changed the
+//      name to Jeff — Jeff's the real $20 bidder, not Jason).
+//
+// A different amount always inserts (a same-bidder raise is a real new bid).
 const COALESCE_WINDOW_MS = 2 * 60 * 1000;
 
 export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInput): Promise<string | null> {
@@ -37,16 +42,15 @@ export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInp
       && ((candidate.amount ?? null) === (args.amount ?? null)
         || candidate.amount == null
         || args.amount == null);
-    const compatibleBidder = candidate
-      && (candidate.bidder_id == null
-        || args.bidderId == null
-        || candidate.bidder_id === args.bidderId);
-    if (candidate && sameAmount && compatibleBidder) {
+    if (candidate && sameAmount) {
+      // Same amount within the window — overwrite this event with whatever new
+      // values we have. Covers both filling in a missing bidder and replacing
+      // a phantom (old-bidder-at-new-amount) with the real winner.
       const patch: Record<string, unknown> = {};
       if (args.amount != null) patch.amount = args.amount;
-      if (args.bidderId) patch.bidder_id = args.bidderId;
+      if (args.bidderId !== undefined) patch.bidder_id = args.bidderId;
       if (args.bidderName) patch.bidder_name = args.bidderName;
-      if (args.bidderFbHandle) patch.bidder_fb_handle = args.bidderFbHandle;
+      if (args.bidderFbHandle !== undefined) patch.bidder_fb_handle = args.bidderFbHandle;
       if (Object.keys(patch).length === 0) return null;
       const { error } = await supabase.from('fb_auction_bid_events').update(patch).eq('id', candidate.id);
       if (error) {
