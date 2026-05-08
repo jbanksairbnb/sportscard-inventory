@@ -761,10 +761,18 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
       ? [defaultTarget.type, dtRange, defaultTarget.companies].filter(Boolean).join(" · ")
       : null;
 
+    // Strip the team / suffix off the description so only the player name
+    // is printed: most card descriptions follow "Player – Team" with an
+    // em-dash, en-dash, or hyphen surrounded by spaces. If no separator is
+    // found, keep the full description unchanged.
+    function playerOnly(desc: string): string {
+      return desc.replace(/\s+[–—-]\s+.*$/, '').trim();
+    }
+
     const yearBrand = [year, brand].filter(Boolean).join(" ");
     const pdfRows = needed.map(r => ({
       cardNumber: String(r["Card #"] ?? "").trim(),
-      description: String(r["Description"] ?? "").trim(),
+      description: playerOnly(String(r["Description"] ?? "").trim()),
       targetGrade: rowTarget(r),
     }));
 
