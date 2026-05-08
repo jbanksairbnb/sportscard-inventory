@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
+import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
@@ -736,6 +737,48 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     downloadCSV(datasetTitle || "sportscard-export", rows);
   }
 
+  async function handleExportWantListPdf() {
+    if (!rows.length) { alert("No data to export."); return; }
+    const needed = rows.filter(r => String(r["Owned"] ?? "").toLowerCase() !== "yes");
+    if (!needed.length) {
+      alert("No needed cards to export — every card in this set is marked Owned.");
+      return;
+    }
+
+    function rowTarget(r: Record<string, any>): string {
+      const lo = String(r["Target Condition - Low"] ?? "").trim();
+      const hi = String(r["Target Condition - High"] ?? "").trim();
+      const type = String(r["Target Type"] ?? "").trim();
+      const range = lo && hi && lo !== hi ? `${lo}–${hi}` : (lo || hi);
+      if (!range) return "";
+      return type ? `${type} ${range}` : range;
+    }
+
+    const dtRange = defaultTarget.low && defaultTarget.high && defaultTarget.low !== defaultTarget.high
+      ? `${defaultTarget.low}–${defaultTarget.high}`
+      : (defaultTarget.low || defaultTarget.high || "");
+    const defaultLine = dtRange
+      ? [defaultTarget.type, dtRange, defaultTarget.companies].filter(Boolean).join(" · ")
+      : null;
+
+    const yearBrand = [year, brand].filter(Boolean).join(" ");
+    const pdfRows = needed.map(r => ({
+      cardNumber: String(r["Card #"] ?? "").trim(),
+      description: String(r["Description"] ?? "").trim(),
+      targetGrade: rowTarget(r),
+    }));
+
+    const blob = await generateWantListPdf({
+      setTitle: datasetTitle || "Untitled set",
+      yearBrand,
+      defaultTargetLine: defaultLine,
+      rows: pdfRows,
+      contactNote: "Bring this sheet to the table — checked rows are picked up.",
+    });
+    const fname = (datasetTitle || "want-list").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    downloadPdf(`${fname}-want-list.pdf`, blob);
+  }
+
   async function handleToggleShare() {
     if (!datasetTitle || !rows.length || !userId || !slug || slug === 'new') return;
     const supabase = createClient();
@@ -866,6 +909,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             <button type="button" onClick={handleExport} disabled={!rows.length}
               className="btn btn-sm btn-outline">
               Export CSV
+            </button>
+            <button type="button" onClick={handleExportWantListPdf} disabled={!rows.length}
+              className="btn btn-sm btn-outline"
+              title="PDF want list with checkboxes — bring it to the card show">
+              📄 Want List PDF
             </button>
           </div>
         </div>
