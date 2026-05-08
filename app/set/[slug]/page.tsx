@@ -770,11 +770,17 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     }
 
     const yearBrand = [year, brand].filter(Boolean).join(" ");
-    const pdfRows = needed.map(r => ({
-      cardNumber: String(r["Card #"] ?? "").trim(),
-      description: playerOnly(String(r["Description"] ?? "").trim()),
-      targetGrade: rowTarget(r),
-    }));
+    const pdfRows = needed.map(r => {
+      // The column was renamed "Description" → "Player" some time ago.
+      // New rows store under "Player"; legacy rows still carry
+      // "Description". Prefer Player and fall back to Description.
+      const raw = String(r["Player"] ?? r["Description"] ?? "").trim();
+      return {
+        cardNumber: String(r["Card #"] ?? "").trim(),
+        description: playerOnly(raw),
+        targetGrade: rowTarget(r),
+      };
+    });
 
     const blob = await generateWantListPdf({
       setTitle: datasetTitle || "Untitled set",
