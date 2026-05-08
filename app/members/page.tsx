@@ -29,6 +29,9 @@ export default function MembersPage() {
   useEffect(() => {
     const supabase = createClient();
     async function load() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.push('/login'); return; }
+
       const { data: profiles } = await supabase
         .from('user_profiles')
         .select('user_id, display_name, handle, avatar_url, bio, city, profile_shared')
@@ -64,7 +67,7 @@ export default function MembersPage() {
       setLoading(false);
     }
     load();
-  }, []);
+  }, [router]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
