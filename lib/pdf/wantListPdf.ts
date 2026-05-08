@@ -152,12 +152,29 @@ export async function generateWantListPdf(opts: WantListPdfOptions): Promise<Blo
     );
   }
 
-  // ── BODY: 3 columns of checklist rows ────────────────
-  const COLS = 3;
-  const COL_GAP = 12;
+  // ── BODY: 2 columns of checklist rows ────────────────
+  // 2 columns (not 3) so long descriptions like
+  // "Jackie Robinson – Brooklyn Dodgers" always have room. A 274-card
+  // set still fits on 4 pages.
+  const COLS = 2;
+  const COL_GAP = 16;
   const colW = (pageW - marginX * 2 - COL_GAP * (COLS - 1)) / COLS;
   const rowH = 14;
   const checkboxSize = 9;
+
+  // Truncate `text` so it fits in maxWidth, appending an ellipsis when
+  // we have to cut. Always returns *something* — never an empty string
+  // when the source has content. Replaces the previous splitTextToSize
+  // + take-line-0 hack which could drop the player name on tight rows.
+  function fitWithEllipsis(text: string, maxWidth: number): string {
+    if (!text) return '';
+    if (doc.getTextWidth(text) <= maxWidth) return text;
+    let cut = text.length;
+    while (cut > 0 && doc.getTextWidth(text.slice(0, cut).trimEnd() + '…') > maxWidth) {
+      cut--;
+    }
+    return cut > 0 ? text.slice(0, cut).trimEnd() + '…' : text.slice(0, 1);
+  }
 
   drawHeader();
   let bodyTop = drawTitleBlock(96);
@@ -200,23 +217,26 @@ export async function generateWantListPdf(opts: WantListPdfOptions): Promise<Blo
     doc.text(numText, x + checkboxSize + 5, y);
     const numW = doc.getTextWidth(numText);
 
-    // Description (player / card title) — truncated to fit column
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(INK);
-    const remaining = colW - (checkboxSize + 5 + numW + 6);
-    const reservedForGrade = row.targetGrade ? 36 : 0;
-    const descMaxW = Math.max(20, remaining - reservedForGrade);
-    const descLines = doc.splitTextToSize(row.description || '', descMaxW);
-    const descLine = (descLines[0] || '').toString();
-    doc.text(descLine, x + checkboxSize + 5 + numW + 4, y);
-
-    // Target grade (right-aligned in column)
+    // Target grade (right-aligned in column) — measured first so the
+    // description gets the remaining horizontal space.
+    let gradeWidth = 0;
     if (row.targetGrade) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
+      gradeWidth = doc.getTextWidth(row.targetGrade) + 6;
       doc.setTextColor(ORANGE);
       doc.text(row.targetGrade, x + colW, y, { align: 'right' });
     }
+
+    // Description (player / card title) — truncates with ellipsis but
+    // always renders something so the player name is never silently
+    // dropped.
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(INK);
+    const descX = x + checkboxSize + 5 + numW + 4;
+    const descMaxW = Math.max(20, x + colW - descX - gradeWidth);
+    doc.text(fitWithEllipsis(row.description || '', descMaxW), descX, y);
   }
 
   // After we know total pages, paint footers.
