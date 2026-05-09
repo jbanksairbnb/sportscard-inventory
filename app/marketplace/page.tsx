@@ -85,6 +85,11 @@ function MarketplacePageInner() {
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [buyTarget, setBuyTarget] = useState<MarketplaceListing | null>(null);
+  // Want-list filter: opt-in. Defaults off so the marketplace shows every
+  // active listing to a fresh visitor. Built from the user's sets — keyed by
+  // `${year}|${brand}|${card_number}` for cards they have not marked Owned.
+  const [wantListOnly, setWantListOnly] = useState(searchParams.get('wantlist') === '1');
+  const [wantListKeys, setWantListKeys] = useState<Set<string>>(new Set());
 
   function onPurchaseComplete(listingId: string) {
     setListings(prev => prev.filter(l => l.id !== listingId));
@@ -98,12 +103,34 @@ function MarketplacePageInner() {
       if (!user) { router.push('/login'); return; }
       setCurrentUserId(user.id);
 
-      const { data: rows } = await supabase
-        .from('listings')
-        .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at')
-        .eq('status', 'active')
-        .gt('asking_price', 0)
-        .order('created_at', { ascending: false });
+      const [{ data: rows }, { data: setRows }] = await Promise.all([
+        supabase
+          .from('listings')
+          .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at')
+          .eq('status', 'active')
+          .gt('asking_price', 0)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('sets')
+          .select('year, brand, rows')
+          .eq('user_id', user.id),
+      ]);
+
+      // Build a key set of every card across the user's sets that isn't
+      // marked Owned. Used by the optional Want-list filter below.
+      const keys = new Set<string>();
+      for (const s of (setRows || []) as Array<{ year: number | null; brand: string | null; rows: any }>) {
+        const sr = Array.isArray(s.rows) ? s.rows : [];
+        for (const r of sr) {
+          if (String(r?.['Owned'] ?? '').toLowerCase() === 'yes') continue;
+          const cardNum = String(r?.['Card #'] ?? '').trim();
+          if (!cardNum) continue;
+          const yr = s.year ?? '';
+          const br = (s.brand || '').toString().trim().toLowerCase();
+          keys.add(`${yr}|${br}|${cardNum}`);
+        }
+      }
+      setWantListKeys(keys);
 
       const sellerIds = Array.from(new Set((rows || []).map(r => r.user_id)));
       const { data: profiles } = sellerIds.length > 0
@@ -121,9 +148,17 @@ function MarketplacePageInner() {
     load();
   }, [router]);
 
+  function isOnWantList(l: MarketplaceListing): boolean {
+    if (!l.card_number) return false;
+    const yr = l.year ?? '';
+    const br = (l.brand || '').toString().trim().toLowerCase();
+    return wantListKeys.has(`${yr}|${br}|${String(l.card_number).trim()}`);
+  }
+
   const filtered = useMemo(() => {
     return listings.filter(l => {
       if (l.user_id === currentUserId) return false;
+      if (wantListOnly && !isOnWantList(l)) return false;
       if (conditionFilter !== 'all' && l.condition_type !== conditionFilter) return false;
       if (minPrice) {
         const m = Number(minPrice);
@@ -140,7 +175,13 @@ function MarketplacePageInner() {
       }
       return true;
     });
-  }, [listings, currentUserId, conditionFilter, minPrice, maxPrice, search]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listings, currentUserId, conditionFilter, minPrice, maxPrice, search, wantListOnly, wantListKeys]);
+
+  const wantListMatchCount = useMemo(
+    () => listings.filter(l => l.user_id !== currentUserId && isOnWantList(l)).length,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [listings, currentUserId, wantListKeys]);
 
   if (loading) {
     return (
@@ -189,6 +230,14 @@ function MarketplacePageInner() {
               </button>
             ))}
           </div>
+          <button type="button" onClick={() => setWantListOnly(v => !v)}
+            disabled={wantListKeys.size === 0}
+            title={wantListKeys.size === 0
+              ? 'Build a set on My Shelf to enable want-list filtering'
+              : 'Show only listings of cards on your want list'}
+            className={`btn btn-sm ${wantListOnly ? 'btn-primary' : 'btn-outline'}`}>
+            ⭐ Want list {wantListOnly ? 'on' : 'only'}{wantListKeys.size > 0 ? ` · ${wantListMatchCount}` : ''}
+          </button>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Price $</span>
             <input type="number" value={minPrice} onChange={e => setMinPrice(e.target.value)} placeholder="min"
