@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { REQUIRE_APPLICATION } from '@/lib/featureFlags';
 import SCLogo from '@/components/SCLogo';
 
 export default function PendingPage() {
@@ -17,6 +18,19 @@ export default function PendingPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setEmail(user.email || '');
+      // Pilot mode: skip the gate. Anyone landing here gets auto-approved
+      // and bounced to /home. Flip REQUIRE_APPLICATION back to true in
+      // lib/featureFlags.ts to restore the waiting screen.
+      if (!REQUIRE_APPLICATION) {
+        await supabase.from('user_profiles').upsert({
+          user_id: user.id,
+          email: user.email,
+          application_status: 'approved',
+          applied_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+        router.push('/home');
+        return;
+      }
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('application_status')
