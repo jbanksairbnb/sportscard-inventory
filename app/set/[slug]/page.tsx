@@ -531,7 +531,15 @@ export default function SetEditorPage() {
       setUserId(user.id);
       setUserEmail(user.email || '');
            if (paramSlug !== "new") {
-        const { data } = await supabase.from("sets").select("*").eq("slug", paramSlug).single();
+        const { data, error } = await supabase
+          .from("sets")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("slug", paramSlug)
+          .maybeSingle();
+        if (error) {
+          console.error("[set editor] failed to load set:", error);
+        }
         if (data) {
           setSlug(paramSlug);
           setDatasetTitle(data.title || "");

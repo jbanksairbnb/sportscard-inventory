@@ -196,11 +196,17 @@ export default function InventoryViewPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sets')
         .select('title, year, brand, rows')
+        .eq('user_id', user.id)
         .eq('slug', slug)
-        .single();
+        .maybeSingle();
+      if (error) {
+        console.error('[set view] failed to load set:', error);
+        setLoading(false);
+        return;
+      }
       if (data) {
         setTitle(data.title || '');
         setYear(data.year ? String(data.year) : '');

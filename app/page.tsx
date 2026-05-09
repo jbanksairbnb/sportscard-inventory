@@ -258,7 +258,13 @@ export default function HomePage() {
   async function handleDeleteSet(slug: string, title: string) {
     if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
     const supabase = createClient();
-    const { error } = await supabase.from('sets').delete().eq('slug', slug);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    const { error } = await supabase
+      .from('sets')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('slug', slug);
     if (error) { alert('Failed to delete: ' + error.message); return; }
     setSets((prev) => prev.filter((s) => s.slug !== slug));
   }
