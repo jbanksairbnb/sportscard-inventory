@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { REQUIRE_APPLICATION } from '@/lib/featureFlags'
 import SCLogo from '@/components/SCLogo'
 
 type Mode = 'login' | 'register' | 'forgot'
@@ -41,8 +42,22 @@ export default function LoginPage() {
       const { data, error } = await supabase.auth.signUp({ email, password })
       if (error) {
         setError(error.message)
-      } else if (data.session) {
-        router.push('/apply')
+      } else if (data.session && data.user) {
+        // When the application gate is off (pilot mode), auto-approve the
+        // brand-new account so the user lands straight on /home instead of
+        // bouncing through /apply → /pending. Flipping REQUIRE_APPLICATION
+        // back to true restores the screening flow.
+        if (!REQUIRE_APPLICATION) {
+          await supabase.from('user_profiles').upsert({
+            user_id: data.user.id,
+            email: data.user.email,
+            application_status: 'approved',
+            applied_at: new Date().toISOString(),
+          }, { onConflict: 'user_id' })
+          router.push('/home')
+        } else {
+          router.push('/apply')
+        }
         router.refresh()
       } else {
         setMessage('Account created! Check your email to confirm, then sign in.')
