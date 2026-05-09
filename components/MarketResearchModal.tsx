@@ -43,6 +43,9 @@ export type CardDescriptor = {
   grade: string | null;
   grading_company: string | null;
   raw_grade: string | null;
+  // Photos of *this specific card* — surfaced in the modal so the user can
+  // eyeball centering / corners / surface while weighting comps.
+  image_urls?: string[];
   // Optional FK / breadcrumbs back to the source record.
   listing_id?: string | null;
   set_slug?: string | null;
@@ -406,6 +409,21 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, notes, open, loading]);
 
+  // Photos lightbox — hooked into the card's image_urls so the user can
+  // eyeball corners / centering / surface while weighting comps.
+  const photoUrls = (card.image_urls || []).filter((u): u is string => !!u && typeof u === 'string');
+  const [photoIdx, setPhotoIdx] = useState<number | null>(null);
+  useEffect(() => {
+    if (photoIdx === null) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPhotoIdx(null);
+      else if (e.key === 'ArrowLeft') setPhotoIdx(i => (i === null ? null : (i - 1 + photoUrls.length) % photoUrls.length));
+      else if (e.key === 'ArrowRight') setPhotoIdx(i => (i === null ? null : (i + 1) % photoUrls.length));
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [photoIdx, photoUrls.length]);
+
   if (!open) return null;
 
   const cardTitle = [
@@ -443,8 +461,48 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               Weights total: {totals.totalWeight.toFixed(1)}% {totals.weightOk ? '✓' : '(must = 100%)'}
             </div>
           </div>
+          {photoUrls.length > 0 && (
+            <button type="button" onClick={() => setPhotoIdx(0)}
+              title="View photos of this card"
+              className="btn btn-ghost btn-sm">
+              📷 View photos {photoUrls.length > 1 ? `(${photoUrls.length})` : ''}
+            </button>
+          )}
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
+
+        {photoIdx !== null && photoUrls.length > 0 && (
+          <div onClick={() => setPhotoIdx(null)} style={{
+            position: 'fixed', inset: 0, zIndex: 300,
+            background: 'rgba(42,20,52,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
+              <img src={photoUrls[photoIdx]} alt="Card photo"
+                style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 10, display: 'block' }} />
+              {photoUrls.length > 1 && (
+                <>
+                  <button type="button" onClick={() => setPhotoIdx(i => i === null ? null : (i - 1 + photoUrls.length) % photoUrls.length)}
+                    title="Previous (←)" style={lightboxArrow('left')}>‹</button>
+                  <button type="button" onClick={() => setPhotoIdx(i => i === null ? null : (i + 1) % photoUrls.length)}
+                    title="Next (→)" style={lightboxArrow('right')}>›</button>
+                  <div className="mono" style={{
+                    position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+                    padding: '4px 10px', borderRadius: 6, background: 'rgba(248,236,208,0.96)',
+                    color: 'var(--plum)', fontSize: 11, fontWeight: 700,
+                  }}>
+                    {photoIdx + 1} / {photoUrls.length}
+                  </div>
+                </>
+              )}
+              <button type="button" onClick={() => setPhotoIdx(null)} className="btn btn-sm"
+                style={{ position: 'absolute', top: 4, right: 4 }}>
+                ✕ Close
+              </button>
+            </div>
+          </div>
+        )}
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px' }}>{INSTRUCTIONS}</p>
         {latestSession && !sessionId && (
@@ -631,6 +689,15 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       </div>
     </div>
   );
+}
+
+function lightboxArrow(side: 'left' | 'right'): React.CSSProperties {
+  return {
+    position: 'absolute', top: '50%', [side]: -52, transform: 'translateY(-50%)',
+    background: 'rgba(248,236,208,0.92)', color: '#3D1F4A',
+    border: 0, borderRadius: 8, padding: '8px 16px', fontSize: 26,
+    cursor: 'pointer', lineHeight: 1, fontWeight: 700,
+  } as React.CSSProperties;
 }
 
 function fieldStyle(): React.CSSProperties {

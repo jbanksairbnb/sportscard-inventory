@@ -496,6 +496,9 @@ export default function SetEditorPage() {
     const gradingCompany = String(row['Grading Company'] || '').trim() || null;
     const rawGrade = String(row['Raw Grade'] || '').trim() || null;
     const isGraded = String(row['Graded'] || '').toLowerCase() === 'yes';
+    const img1 = String(row['Image 1'] || '').trim();
+    const img2 = String(row['Image 2'] || '').trim();
+    const image_urls = [img1, img2].filter(Boolean);
     return {
       year: year ? Number(year) || null : null,
       brand: brand || null,
@@ -504,6 +507,7 @@ export default function SetEditorPage() {
       grade: isGraded ? grade : null,
       grading_company: isGraded ? gradingCompany : null,
       raw_grade: !isGraded ? rawGrade : null,
+      image_urls: image_urls.length > 0 ? image_urls : undefined,
       set_slug: slug,
       set_card_number: String(row['Card #'] || '').trim() || null,
     };
