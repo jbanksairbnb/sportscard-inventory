@@ -272,9 +272,11 @@ export default function FbAuctionsPage() {
     const cutoff = dateRangeMs(dateRange);
     const since = cutoff ? Date.now() - cutoff : null;
     return auctions.filter(a => {
-      if (filter === 'all') {
-        if (a.status === 'settled') return false;
-      } else if (a.status !== filter) {
+      // 'all' includes every status — including 'settled' (fully-paid
+      // auctions) — so the snapshot Sales $ on the ALL tab correctly
+      // sums every paid lot, not just paid lots inside auctions that
+      // still have open or unpaid lots.
+      if (filter !== 'all' && a.status !== filter) {
         return false;
       }
       if (since !== null) {
