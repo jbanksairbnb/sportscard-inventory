@@ -84,10 +84,6 @@ def styles():
 # ── Page chrome ────────────────────────────────────────────────────────────
 
 def draw_page_chrome(canv: canvas.Canvas, doc):
-    # Skip chrome on the cover (page 1).
-    if canv.getPageNumber() == 1:
-        return
-
     width, height = LETTER
 
     # Top band
@@ -128,7 +124,7 @@ def draw_page_chrome(canv: canvas.Canvas, doc):
     canv.setFillColor(INK_SOFT)
     canv.setFont('Helvetica', 8.5)
     canv.drawString(36, 22, 'Built by a collector, for the collection.')
-    canv.drawRightString(width - 36, 22, f'Page {canv.getPageNumber() - 1}')
+    canv.drawRightString(width - 36, 22, f'Page {canv.getPageNumber()}')
 
 
 def draw_cover(canv: canvas.Canvas, doc):
@@ -203,20 +199,9 @@ def step(num, time_hint, body_html):
 def build_story():
     story = []
 
-    # ── Cover ──────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 1.0 * inch))
-    story.append(Paragraph('SPORTS COLLECTIVE', S['cover_brand']))
-    story.append(Spacer(1, 0.05 * inch))
-    story.append(Paragraph('PILOT  WALKTHROUGH', S['cover_sub']))
-    story.append(Spacer(1, 0.4 * inch))
-    story.append(Paragraph('Built by a collector, for the collection.', S['cover_tagline']))
-    story.append(Spacer(1, 1.4 * inch))
-    story.append(Paragraph('A 25-minute hands-on tour:<br/>'
-                           'inventory → market research → marketplace → FB auction.',
-                           S['cover_meta']))
-    story.append(Spacer(1, 0.4 * inch))
-    story.append(Paragraph('sports-collective.com  ·  v1.0', S['cover_meta']))
-    story.append(PageBreak())
+    # Cover page removed per pilot feedback. The first interior page now
+    # opens with the Problem / Solution / Getting-in panel; page chrome
+    # carries the brand on every page.
 
     # ── Problem / Solution ─────────────────────────────────────────────────
     story.append(Paragraph('Why this exists', S['h1']))
@@ -258,62 +243,63 @@ def build_story():
     story.append(PageBreak())
 
     # ── Walkthrough I — Inventory (10 min) ─────────────────────────────────
+    # Designed to fit on a single page. Bodies are intentionally tight — the
+    # full prose lives in the original draft if anyone needs more depth.
     story.append(Paragraph('10-minute walkthrough — your first set', S['h1']))
-    story.append(Paragraph('Card inventory management — set tracking, scans, '
-                           'default target, and the eBay want-list scanner.',
-                           S['body_soft']))
-    story.append(Spacer(1, 8))
+
+    # Tightened step style for this section so all 10 steps clear one page.
+    step_num_tight = ParagraphStyle(
+        'step_num_tight', parent=S['step_num'],
+        fontSize=10, leading=12, spaceAfter=1,
+    )
+    step_body_tight = ParagraphStyle(
+        'step_body_tight', parent=S['step_body'],
+        fontSize=9.5, leading=12.5,
+        leftIndent=14, spaceAfter=3,
+    )
+
+    def tight_step(num, time_hint, body_html):
+        head = Paragraph(
+            f'<b>{num}. <font color="#E25A1C">({time_hint})</font></b>', step_num_tight,
+        )
+        body = Paragraph(body_html, step_body_tight)
+        return KeepTogether([head, body])
 
     inv_steps = [
         ('1', '60 sec',
-         '<b>Add a cover + avatar.</b> From the home feed, hover the cover area / round '
-         'avatar and drop in any photos with the badges. Keeps the page from looking '
-         'empty later.'),
+         '<b>Add a cover + avatar.</b> From the home feed, hover the cover / avatar and '
+         'drop any photos in. Keeps the page from looking empty later.'),
         ('2', '5 sec',
          'Click <b>MY SHELF</b> in the top nav. Empty for now — about to change.'),
         ('3', '45 sec',
-         '<b>Click + NEW UPLOAD → Select a set</b> from the dropdown. Pick a year + brand '
-         'you actually collect — 1971 Topps, 1955 Bowman, whatever you\'ve got going. '
-         'Click <b>Save &amp; Edit Set</b>.'),
+         '<b>+ NEW UPLOAD → Select a set</b> from the dropdown. Pick a year + brand you '
+         'collect (1971 Topps, 1955 Bowman). Click <b>Save &amp; Edit Set</b>.'),
         ('4', '2 min',
-         '<b>You\'re in the set table — one row per card.</b> Top-row checkbox to select all '
-         '→ in the bulk-edit bar set <b>Owned → Yes → Apply to N rows</b>. Now go through '
-         'and flip 5–10 cards you don\'t own to <b>No</b> with the dropdown. Don\'t be '
-         'precise yet — just enough to feel it.'),
-        ('5', '~2 min',
-         'Click <b>DEFAULT TARGET</b> at the top. Pick the condition you\'d actually buy — '
-         'Raw, VG–EX to EX-MT works for most vintage. Click <b>Save Target</b>.'),
+         '<b>One row per card.</b> Top-row checkbox to select all → bulk-edit bar set '
+         '<b>Owned → Yes → Apply to N rows</b>. Then flip 5–10 cards you don\'t own to '
+         '<b>No</b>. Just enough to feel it.'),
+        ('5', '30 sec',
+         '<b>DEFAULT TARGET</b> at the top → pick the condition you\'d actually buy '
+         '(Raw VG–EX to EX-MT for most vintage). Click <b>Save Target</b>.'),
         ('6', '~2 min',
-         '<b>Click ADD SCANS</b>, then <b>Add Scans to Set Inventory</b>. Pick the set you just '
-         'created. Select one of the cards from the list, click <b>Start Scanning</b>, drop '
-         '2 photos in the box (or click <b>Choose Files</b>). Click <b>Save All</b> → <b>View Set</b>. '
-         'Scroll right on the table to see the images attached. Works for batches too — '
-         'just keep your scans in the same order as the cards you selected.'),
+         '<b>ADD SCANS → Add Scans to Set Inventory</b> → pick your set, select a card, '
+         '<b>Start Scanning</b>, drop 2 photos. <b>Save All → View Set</b>. Works in batches '
+         'too — keep scans in card order.'),
         ('7', '5 sec',
-         'Click the <b>SC logo</b> top-left to go home. Scroll down to <b>Your Feed</b>.'),
+         'Click the <b>SC logo</b> top-left → scroll down to <b>Your Feed</b>.'),
         ('8', '~2 min',
-         '<b>Click eBay HITS → pick your set → Search eBay.</b> This pulls active eBay listings '
-         'for every card you don\'t own, filtered to your target condition. Watch the matches '
-         'roll in. Click any hit — opens straight to the eBay listing.'),
+         '<b>eBay HITS → pick your set → Search eBay.</b> Pulls active listings for every '
+         'card you don\'t own, filtered to your target. Click a hit to open the listing.'),
         ('9', '30 sec',
-         'Back to your set: <b>MY SHELF</b> top-left → click your set → <b>Want List PDF</b>. '
-         'Take a look at the download — that\'s the checklist you\'d carry to a card show.'),
+         '<b>MY SHELF</b> → your set → <b>Want List PDF</b>. The checklist you\'d carry to '
+         'a card show.'),
         ('10', '90 sec',
-         '<b>Explore.</b> Logo → top nav → <b>Marketplace</b>, then <b>Members</b>. If you have card '
-         'scans handy, try <b>Add Scans</b> on your set.'),
+         '<b>Explore.</b> Logo → top nav → <b>Marketplace</b>, then <b>Members</b>. Try '
+         '<b>Add Scans</b> on your set if you have images handy.'),
     ]
     for num, t, html in inv_steps:
-        story.append(step(num, t, html))
+        story.append(tight_step(num, t, html))
 
-    story.append(Spacer(1, 6))
-    story.append(callout_box(
-        [
-            Paragraph('That\'s the inventory loop.', S['eyebrow']),
-            Paragraph('Hit me when you\'re done — I want to know what felt good and what '
-                      'felt confusing.', S['body']),
-        ],
-        fill_hex='FBF3DD', border_hex='E25A1C', pad=12,
-    ))
     story.append(PageBreak())
 
     # ── Walkthrough II — Selling (15 min) ──────────────────────────────────
@@ -422,13 +408,12 @@ def main():
         author='Sports Collective',
     )
 
-    def first_page(canv, doc):
-        draw_cover(canv, doc)
-
-    def later_page(canv, doc):
+    # No cover page anymore — every page (incl. the first) gets the same
+    # branded chrome (logo, wordmark, eyebrow, footer + page number).
+    def page_chrome(canv, doc):
         draw_page_chrome(canv, doc)
 
-    doc.build(build_story(), onFirstPage=first_page, onLaterPages=later_page)
+    doc.build(build_story(), onFirstPage=page_chrome, onLaterPages=page_chrome)
     print(f'Wrote {OUT_PATH}')
 
 
