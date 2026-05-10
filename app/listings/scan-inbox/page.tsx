@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 
 type PairMode = 'fronts-only' | 'fronts-then-backs' | 'interleaved';
@@ -93,6 +94,7 @@ export default function ScanInboxPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
       const { data: profile } = await supabase
         .from('user_profiles')

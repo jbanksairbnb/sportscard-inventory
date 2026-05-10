@@ -127,7 +127,7 @@ export async function GET() {
 
   const { data, error } = await admin
     .from('user_profiles')
-    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin')
+    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin, can_sell, wants_to_sell')
     .not('application_status', 'is', null)
     .order('applied_at', { ascending: false })
 
@@ -145,7 +145,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { userId, status, isAdmin } = await req.json()
+  const { userId, status, isAdmin, canSell } = await req.json()
   if (!userId) return NextResponse.json({ error: 'Missing userId' }, { status: 400 })
 
   if (status !== undefined) {
@@ -183,6 +183,17 @@ export async function PATCH(req: Request) {
     const { error } = await admin
       .from('user_profiles')
       .update({ is_admin: isAdmin })
+      .eq('user_id', userId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  if (canSell !== undefined) {
+    if (typeof canSell !== 'boolean') {
+      return NextResponse.json({ error: 'Invalid canSell' }, { status: 400 })
+    }
+    const { error } = await admin
+      .from('user_profiles')
+      .update({ can_sell: canSell })
       .eq('user_id', userId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }

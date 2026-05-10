@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 
 // A single sale event — a paid auction lot, a paid claim sale item, or a
@@ -61,6 +62,7 @@ export default function SalesMetricsPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       const [aucsRes, lotsRes, salesRes, itemsRes, marketRes, historicalRes] = await Promise.all([
         supabase.from('fb_auctions').select('id, created_at').eq('user_id', user.id),
         supabase.from('fb_auction_lots')

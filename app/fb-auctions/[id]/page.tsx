@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { substitute, listingVars } from '@/lib/fbAuctionText';
 import { logBidEvent } from '@/lib/fbBidEvents';
@@ -129,6 +130,7 @@ export default function ManageFbAuctionPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
 
       const [aucRes, lotsRes, biddersRes] = await Promise.all([

@@ -15,6 +15,8 @@ type Applicant = {
   handle: string | null;
   email?: string;
   is_admin?: boolean;
+  can_sell?: boolean;
+  wants_to_sell?: boolean;
 };
 
 export default function AdminPage() {
@@ -27,6 +29,7 @@ export default function AdminPage() {
   const [working, setWorking] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [adminWorking, setAdminWorking] = useState<string | null>(null);
+  const [sellerWorking, setSellerWorking] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -89,6 +92,22 @@ export default function AdminPage() {
       alert('Update failed: ' + error);
     }
     setAdminWorking(null);
+  }
+
+  async function toggleSeller(userId: string, canSell: boolean) {
+    setSellerWorking(userId);
+    const res = await fetch('/api/admin/applicants', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, canSell }),
+    });
+    if (res.ok) {
+      setApplicants(prev => prev.map(a => a.user_id === userId ? { ...a, can_sell: canSell } : a));
+    } else {
+      const { error } = await res.json();
+      alert('Update failed: ' + error);
+    }
+    setSellerWorking(null);
   }
 
   const filtered = applicants.filter(a => filter === 'all' || a.application_status === filter);
@@ -237,6 +256,23 @@ export default function AdminPage() {
                           ★ ADMIN
                         </span>
                       )}
+                      {a.can_sell && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
+                          background: 'var(--teal)', color: 'var(--cream)',
+                        }}>
+                          ✓ SELLER
+                        </span>
+                      )}
+                      {a.wants_to_sell && !a.can_sell && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
+                          background: 'var(--mustard)', color: 'var(--plum)',
+                        }}
+                          title="Applicant requested selling privileges">
+                          REQUESTED SELLING
+                        </span>
+                      )}
                     </div>
                     {a.applied_at && (
                       <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 12 }}>
@@ -301,6 +337,21 @@ export default function AdminPage() {
                         style={{ justifyContent: 'center' }}
                       >
                         {working === a.user_id ? '…' : a.application_status === 'approved' ? 'Revoke' : 'Approve'}
+                      </button>
+                    )}
+                    {a.application_status === 'approved' && (
+                      <button
+                        onClick={() => toggleSeller(a.user_id, !a.can_sell)}
+                        disabled={sellerWorking === a.user_id}
+                        className="btn btn-sm"
+                        style={{
+                          justifyContent: 'center',
+                          background: a.can_sell ? 'transparent' : 'var(--teal)',
+                          color: a.can_sell ? 'var(--teal)' : 'var(--cream)',
+                          border: '2px solid var(--teal)',
+                        }}
+                      >
+                        {sellerWorking === a.user_id ? '…' : a.can_sell ? 'Revoke Selling' : '✓ Grant Selling'}
                       </button>
                     )}
                     {a.application_status === 'approved' && a.user_id !== currentUserId && (

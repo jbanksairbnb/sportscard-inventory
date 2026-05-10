@@ -1356,7 +1356,7 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
 
 const NAV_LINKS = ['My Shelf'];
 
-function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void }) {
+function TopNav({ isAdmin, canSell, onLogout }: { isAdmin: boolean; canSell: boolean; onLogout: () => void }) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [fbSalesOpen, setFbSalesOpen] = useState(false);
@@ -1407,20 +1407,24 @@ function TopNav({ isAdmin, onLogout }: { isAdmin: boolean; onLogout: () => void 
           }}>
             Marketplace
           </Link>
-          <Link href="/listings" style={{
-            color: 'inherit',
-            cursor: 'pointer',
-            textDecoration: 'none',
-          }}>
-            My Listings
-          </Link>
-          <button type="button" onClick={() => setFbSalesOpen(true)}
-            style={{
-              color: 'inherit', cursor: 'pointer', background: 'transparent', border: 0, padding: 0,
-              font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit',
+          {canSell && (
+            <Link href="/listings" style={{
+              color: 'inherit',
+              cursor: 'pointer',
+              textDecoration: 'none',
             }}>
-            FB Sales
-          </button>
+              My Listings
+            </Link>
+          )}
+          {canSell && (
+            <button type="button" onClick={() => setFbSalesOpen(true)}
+              style={{
+                color: 'inherit', cursor: 'pointer', background: 'transparent', border: 0, padding: 0,
+                font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit',
+              }}>
+              FB Sales
+            </button>
+          )}
           <Link href="/purchases" style={{
             color: 'inherit',
             cursor: 'pointer',
@@ -1537,6 +1541,7 @@ export default function HomePage() {
   const BOOTSTRAP_ADMIN_EMAIL = 'jbanks@sports-collective.com';
   const [userId, setUserId] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canSell, setCanSell] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sets, setSets] = useState<SetRow[]>([]);
   const [avatar, setAvatar] = useState<string | null>(null);
@@ -1553,7 +1558,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
             const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, value_private, profile_shared, cover_position_x, cover_position_y')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, value_private, profile_shared, cover_position_x, cover_position_y')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1568,7 +1573,9 @@ export default function HomePage() {
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
-        setIsAdmin(!!profileData.is_admin || user.email === BOOTSTRAP_ADMIN_EMAIL);
+        const adminFlag = !!profileData.is_admin || user.email === BOOTSTRAP_ADMIN_EMAIL;
+        setIsAdmin(adminFlag);
+        setCanSell(!!profileData.can_sell || adminFlag);
       } else {
         setIsAdmin(user.email === BOOTSTRAP_ADMIN_EMAIL);
       }
@@ -1602,7 +1609,7 @@ export default function HomePage() {
 
   return (
     <div style={{ minHeight: '100vh' }}>
-            <TopNav isAdmin={isAdmin} onLogout={handleLogout} />
+            <TopNav isAdmin={isAdmin} canSell={canSell} onLogout={handleLogout} />
       <LogoShowcase />
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}

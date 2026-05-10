@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { replaceImageBg } from '@/lib/collageBg';
 import { setListingsStatus } from '@/lib/listingStatusSync';
@@ -296,6 +297,7 @@ export default function ManageClaimSalePage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
       const [saleRes, lotsRes, itemsRes, biddersRes] = await Promise.all([
         supabase.from('fb_claim_sales').select('*').eq('id', saleId).eq('user_id', user.id).maybeSingle(),

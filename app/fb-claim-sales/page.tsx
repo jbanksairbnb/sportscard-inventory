@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import { setListingsStatus } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
@@ -99,6 +101,7 @@ function fmtMoney(n: number | null | undefined) {
 }
 
 export default function ClaimSalesPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string>('');
   const [sales, setSales] = useState<SaleRow[]>([]);
@@ -116,6 +119,7 @@ export default function ClaimSalesPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setLoading(false); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
 
       const [salesRes, lotsRes, itemsRes, groupsRes, biddersRes] = await Promise.all([
