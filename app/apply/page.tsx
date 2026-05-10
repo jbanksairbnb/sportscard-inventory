@@ -8,6 +8,7 @@ import SCLogo from '@/components/SCLogo';
 type Stage = 'loading' | 'form' | 'pending' | 'rejected';
 
 const SIGNUP_INTENT_KEY = 'sc:signup-intent';
+const MIN_REFERENCES = 5;
 
 // Apply to Sell on Sports Collective.
 //
@@ -33,9 +34,10 @@ export default function ApplyPage() {
   const [email, setEmail] = useState('');
   const [stage, setStage] = useState<Stage>('loading');
   const [fullName, setFullName] = useState('');
-  const [collectionDescription, setCollectionDescription] = useState('');
   const [ebayProfile, setEbayProfile] = useState('');
   const [fbGroups, setFbGroups] = useState('');
+  const [refs, setRefs] = useState<string[]>(() => Array.from({ length: MIN_REFERENCES }, () => ''));
+  const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -82,9 +84,32 @@ export default function ApplyPage() {
     check();
   }, [router]);
 
+  function setRefAt(i: number, value: string) {
+    setRefs(prev => {
+      const next = [...prev];
+      next[i] = value;
+      return next;
+    });
+  }
+  function addRef() {
+    setRefs(prev => [...prev, '']);
+  }
+  function removeRef(i: number) {
+    if (refs.length <= MIN_REFERENCES) return;
+    setRefs(prev => prev.filter((_, idx) => idx !== i));
+  }
+
+  const cleanRefs = refs.map(r => r.trim()).filter(Boolean);
+  const hasMinRefs = cleanRefs.length >= MIN_REFERENCES;
+  const formValid =
+    !!fullName.trim() &&
+    !!ebayProfile.trim() &&
+    !!fbGroups.trim() &&
+    hasMinRefs;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!fullName.trim() || !collectionDescription.trim()) return;
+    if (!formValid) return;
     setSubmitting(true);
     const supabase = createClient();
     await supabase.from('user_profiles').upsert({
@@ -94,16 +119,25 @@ export default function ApplyPage() {
       // a seller application. We only flip wants_to_sell so /admin sees them.
       application_status: 'approved',
       full_name: fullName.trim(),
-      collection_description: collectionDescription,
-      ebay_profile: ebayProfile,
-      fb_groups: fbGroups,
+      collection_description: notes.trim() || null,
+      ebay_profile: ebayProfile.trim(),
+      fb_groups: fbGroups.trim(),
+      seller_references: cleanRefs,
       wants_to_sell: true,
       applied_at: new Date().toISOString(),
     });
     await fetch('/api/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ applicantEmail: email, fullName: fullName.trim(), collectionDescription, ebayProfile, fbGroups, wantsToSell: true }),
+      body: JSON.stringify({
+        applicantEmail: email,
+        fullName: fullName.trim(),
+        ebayProfile: ebayProfile.trim(),
+        fbGroups: fbGroups.trim(),
+        references: cleanRefs,
+        notes: notes.trim(),
+        wantsToSell: true,
+      }),
     });
     setStage('pending');
     setSubmitting(false);
@@ -141,7 +175,7 @@ export default function ApplyPage() {
       </header>
 
       <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: '40px 24px 80px' }}>
-        <div style={{ width: '100%', maxWidth: 620 }}>
+        <div style={{ width: '100%', maxWidth: 680 }}>
 
           {stage === 'pending' ? (
             <div style={{ textAlign: 'center' }}>
@@ -153,14 +187,14 @@ export default function ApplyPage() {
               <div className="panel-bordered" style={{ padding: '28px 32px', textAlign: 'left' }}>
                 <p style={{ margin: '0 0 14px', fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
                   Thanks for applying to sell on <strong style={{ color: 'var(--plum)' }}>Sports Collective</strong>.
-                  We&apos;ll review your application within <strong style={{ color: 'var(--plum)' }}>1–3 business days</strong>.
+                  We&apos;ll review your application within <strong style={{ color: 'var(--plum)' }}>24 hours</strong>.
                 </p>
                 <p style={{ margin: '0 0 14px', fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
                   In the meantime, your <strong style={{ color: 'var(--plum)' }}>buying access is fully active</strong> —
                   build your shelf, browse the marketplace, and pick up cards from other members.
                 </p>
                 <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
-                  We may reach out via your eBay profile or Facebook groups as part of verification.
+                  We may reach out via your eBay profile, your Facebook groups, or your references as part of verification.
                   Questions? <a href="mailto:jbanks@sports-collective.com" style={{ color: 'var(--orange)', fontWeight: 600 }}>jbanks@sports-collective.com</a>.
                 </p>
               </div>
@@ -198,13 +232,14 @@ export default function ApplyPage() {
                 </h1>
                 <div className="panel-bordered" style={{ padding: '20px 24px', textAlign: 'left', borderColor: 'var(--mustard)' }}>
                   <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
-                    Selling on <strong style={{ color: 'var(--plum)' }}>Sports Collective</strong> is a privilege we
-                    extend to verified collectors with a track record in the hobby. To keep buyers safe and
-                    protect the trust we&apos;ve built, we personally review every seller application.
+                    <strong style={{ color: 'var(--plum)' }}>Sports Collective</strong> is built to be a safe
+                    sportscard community where collectors trust the people they buy from. Selling here is a
+                    privilege we extend to verified members — we personally review every application.
                   </p>
                   <p style={{ margin: '14px 0 0', fontSize: 14.5, lineHeight: 1.7, color: 'var(--ink-soft)' }}>
-                    We may reach out via your eBay profile or ask for a reference from your Facebook collecting
-                    groups to verify your selling history. <strong>You can keep buying while we review.</strong>
+                    We aim to review every application <strong style={{ color: 'var(--plum)' }}>within 24 hours</strong>.
+                    We may reach out via your eBay profile, your Facebook groups, or your references to verify
+                    your selling history. <strong>You can keep buying while we review.</strong>
                   </p>
                 </div>
               </div>
@@ -234,50 +269,92 @@ export default function ApplyPage() {
 
                 <div>
                   <label style={{ display: 'block', marginBottom: 6 }}>
-                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Tell Us About Your Selling History *</span>
+                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>eBay Profile URL *</span>
+                  </label>
+                  <input
+                    type="url"
+                    value={ebayProfile}
+                    onChange={e => setEbayProfile(e.target.value)}
+                    required
+                    placeholder="https://www.ebay.com/usr/yourusername"
+                    style={fieldStyle}
+                  />
+                  <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 5 }}>
+                    We check feedback score and trading history.
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6 }}>
+                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Facebook Groups You&apos;re a Member Of *</span>
                   </label>
                   <textarea
-                    value={collectionDescription}
-                    onChange={e => setCollectionDescription(e.target.value)}
-                    rows={5}
+                    value={fbGroups}
+                    onChange={e => setFbGroups(e.target.value)}
+                    rows={3}
                     required
-                    placeholder="What kinds of cards do you sell? How long have you been selling, and where (eBay, Facebook groups, card shows)? Roughly how many transactions a year? Anything we should know about how you operate?"
+                    placeholder="List the FB collecting/trading groups you actively participate in — group names or links, one per line."
                     style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.6 }}
                   />
                 </div>
 
                 <div>
                   <label style={{ display: 'block', marginBottom: 6 }}>
-                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>eBay Profile URL</span>
+                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>References * <span style={{ color: 'var(--ink-mute)', fontWeight: 600 }}>(at least {MIN_REFERENCES})</span></span>
                   </label>
-                  <input
-                    type="url"
-                    value={ebayProfile}
-                    onChange={e => setEbayProfile(e.target.value)}
-                    placeholder="https://www.ebay.com/usr/yourusername"
-                    style={fieldStyle}
-                  />
-                  <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 5 }}>
-                    Helps us verify your feedback score and trading history.
+                  <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginBottom: 10 }}>
+                    Five collectors who can vouch for you. For each: name + how to reach them
+                    (FB profile link, email, or phone). We may contact them.
                   </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {refs.map((value, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span className="mono" style={{
+                          minWidth: 24, fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700, textAlign: 'right',
+                        }}>
+                          {i + 1}.
+                        </span>
+                        <input
+                          type="text"
+                          value={value}
+                          onChange={e => setRefAt(i, e.target.value)}
+                          required={i < MIN_REFERENCES}
+                          placeholder={i === 0
+                            ? 'e.g. Jane Doe — facebook.com/jane.doe — jane@example.com'
+                            : 'Name — contact (FB / email / phone)'}
+                          style={{ ...fieldStyle, flex: 1 }}
+                        />
+                        {refs.length > MIN_REFERENCES && (
+                          <button type="button" onClick={() => removeRef(i)}
+                            className="btn btn-ghost btn-sm" style={{ padding: '6px 10px' }}
+                            title="Remove this reference">
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" onClick={addRef} className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}>
+                    + Add another reference
+                  </button>
                 </div>
 
                 <div>
                   <label style={{ display: 'block', marginBottom: 6 }}>
-                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>References</span>
+                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Anything else we should know? <span style={{ fontWeight: 600 }}>(optional)</span></span>
                   </label>
                   <textarea
-                    value={fbGroups}
-                    onChange={e => setFbGroups(e.target.value)}
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
                     rows={3}
-                    placeholder="Facebook groups where you actively sell or trade, plus any collectors who can vouch for you (names, handles, or contact info)."
+                    placeholder="Years selling, what you specialize in, card shows, anything else helpful."
                     style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.6 }}
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={submitting || !fullName.trim() || !collectionDescription.trim()}
+                  disabled={submitting || !formValid}
                   className="btn btn-primary"
                   style={{ justifyContent: 'center', fontSize: 15, padding: '13px 24px' }}
                 >
@@ -285,7 +362,7 @@ export default function ApplyPage() {
                 </button>
 
                 <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-mute)', textAlign: 'center', lineHeight: 1.5 }}>
-                  We typically review applications within 1–3 business days. Buying access stays on the whole time.
+                  We typically review applications within 24 hours. Buying access stays on the whole time.
                 </p>
               </form>
             </>

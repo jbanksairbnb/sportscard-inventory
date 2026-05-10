@@ -175,7 +175,7 @@ export async function GET() {
 
   const { data, error } = await admin
     .from('user_profiles')
-    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin, can_sell, wants_to_sell, full_name, seller_terms_accepted_at')
+    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin, can_sell, wants_to_sell, full_name, seller_terms_accepted_at, seller_references')
     .not('application_status', 'is', null)
     .order('applied_at', { ascending: false })
 

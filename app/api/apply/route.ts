@@ -10,26 +10,41 @@ function escapeHtml(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function adminNotificationHtml(applicantEmail: string, fullName: string, collectionDescription: string, ebayProfile: string, fbGroups: string) {
+function adminNotificationHtml(args: {
+  applicantEmail: string;
+  fullName: string;
+  ebayProfile: string;
+  fbGroups: string;
+  references: string[];
+  notes: string;
+}) {
+  const { applicantEmail, fullName, ebayProfile, fbGroups, references, notes } = args
+  const refsHtml = references.length
+    ? `<ol style="margin: 0; padding-left: 22px;">${references.map(r => `<li style="margin: 4px 0;">${escapeHtml(r)}</li>`).join('')}</ol>`
+    : '—'
   return `
-    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: ${PLUM};">
+    <div style="font-family: Georgia, serif; max-width: 620px; margin: 0 auto; color: ${PLUM};">
       <h2 style="color: ${ORANGE}; border-bottom: 3px solid ${PLUM}; padding-bottom: 10px;">
         ★ New Seller Application ★
       </h2>
       ${fullName ? `<p><strong>Name:</strong> ${escapeHtml(fullName)}</p>` : ''}
       <p><strong>Email:</strong> ${escapeHtml(applicantEmail)}</p>
       <hr style="border-color: ${RULE};" />
-      <p><strong>Selling History:</strong></p>
-      <p style="background: ${CREAM}; padding: 12px; border-left: 4px solid ${ORANGE};">
-        ${escapeHtml(collectionDescription || '—').replace(/\n/g, '<br/>')}
-      </p>
       <p><strong>eBay Profile:</strong><br/>
         ${ebayProfile ? `<a href="${escapeHtml(ebayProfile)}" style="color: ${ORANGE};">${escapeHtml(ebayProfile)}</a>` : '—'}
       </p>
-      <p><strong>References:</strong></p>
-      <p style="background: ${CREAM}; padding: 12px; border-left: 4px solid ${PLUM};">
+      <p><strong>Facebook Groups:</strong></p>
+      <p style="background: ${CREAM}; padding: 12px; border-left: 4px solid ${ORANGE};">
         ${escapeHtml(fbGroups || '—').replace(/\n/g, '<br/>')}
       </p>
+      <p><strong>References (${references.length}):</strong></p>
+      <div style="background: ${CREAM}; padding: 12px 12px 12px 0; border-left: 4px solid ${PLUM};">
+        ${refsHtml}
+      </div>
+      ${notes ? `<p><strong>Additional Notes:</strong></p>
+      <p style="background: ${CREAM}; padding: 12px; border-left: 4px solid ${RULE};">
+        ${escapeHtml(notes).replace(/\n/g, '<br/>')}
+      </p>` : ''}
       <hr style="border-color: ${RULE};" />
       <p style="font-size: 13px; color: ${INK_MUTE};">
         Review and approve at <a href="https://sports-collective.com/admin" style="color: ${ORANGE};">sports-collective.com/admin</a>
@@ -45,10 +60,10 @@ function applicantConfirmationHtml() {
         <div style="font-size: 11px; letter-spacing: 0.2em; color: ${ORANGE}; font-weight: 700; margin-bottom: 6px;">★ SPORTS COLLECTIVE ★</div>
         <h1 style="margin: 0; color: ${PLUM}; font-size: 28px;">Application Received</h1>
       </div>
-      <p style="font-size: 15px; line-height: 1.7;">Thank you for applying to join <strong>Sports Collective</strong>. We've received your application and a member of our team will review it personally.</p>
-      <p style="font-size: 15px; line-height: 1.7;">We typically respond within <strong>1–3 business days</strong>. We may reach out via your eBay profile or ask for a reference from one of your Facebook collecting groups to verify your activity in the hobby.</p>
+      <p style="font-size: 15px; line-height: 1.7;">Thank you for applying to sell on <strong>Sports Collective</strong>. We&apos;ve received your application and a member of our team will review it personally.</p>
+      <p style="font-size: 15px; line-height: 1.7;">We aim to respond <strong>within 24 hours</strong>. We may reach out via your eBay profile, your Facebook groups, or one of your references to verify your selling history.</p>
       <div style="background: #fff8e8; border-left: 4px solid ${ORANGE}; padding: 14px 18px; margin: 22px 0; font-size: 14px; line-height: 1.6;">
-        We appreciate your patience and look forward to welcoming you to the Collective. Until then — happy collecting!
+        Your <strong>buying access is fully active</strong> in the meantime — build your shelf and browse the marketplace.
       </div>
       <p style="font-size: 13px; color: ${INK_MUTE}; margin-top: 28px;">— The Sports Collective Team</p>
       <hr style="border: none; border-top: 1px solid ${RULE}; margin: 24px 0 14px;" />
@@ -61,7 +76,21 @@ function applicantConfirmationHtml() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { applicantEmail, fullName, collectionDescription, ebayProfile, fbGroups } = body
+  const {
+    applicantEmail,
+    fullName,
+    ebayProfile,
+    fbGroups,
+    references,
+    notes,
+  } = body as {
+    applicantEmail: string;
+    fullName?: string;
+    ebayProfile?: string;
+    fbGroups?: string;
+    references?: string[];
+    notes?: string;
+  }
 
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
@@ -79,7 +108,14 @@ export async function POST(req: NextRequest) {
     sendEmail(
       'jbanks@sports-collective.com',
       `New Application: ${applicantEmail}`,
-      adminNotificationHtml(applicantEmail, fullName || '', collectionDescription, ebayProfile, fbGroups)
+      adminNotificationHtml({
+        applicantEmail,
+        fullName: fullName || '',
+        ebayProfile: ebayProfile || '',
+        fbGroups: fbGroups || '',
+        references: Array.isArray(references) ? references.filter(r => typeof r === 'string' && r.trim()) : [],
+        notes: notes || '',
+      })
     ),
     sendEmail(
       applicantEmail,
