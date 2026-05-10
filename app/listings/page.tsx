@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
-import { isSeller } from '@/lib/sellerGuard';
+import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 import MarketResearchModal from '@/components/MarketResearchModal';
@@ -286,7 +286,7 @@ function ListingsPageContent() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
+      { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
       setUserId(user.id);
       const { data: profile } = await supabase
         .from('user_profiles')

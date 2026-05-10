@@ -1356,7 +1356,11 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
 
 const NAV_LINKS = ['My Shelf'];
 
-function TopNav({ isAdmin, canSell, wantsToSell, onLogout }: { isAdmin: boolean; canSell: boolean; wantsToSell: boolean; onLogout: () => void }) {
+function TopNav({ isAdmin, canSell, wantsToSell, termsAccepted, onLogout }: { isAdmin: boolean; canSell: boolean; wantsToSell: boolean; termsAccepted: boolean; onLogout: () => void }) {
+  // canSell here means "the admin granted selling". The full unlock for
+  // seller tools (My Listings, FB Sales) requires termsAccepted too — until
+  // then we surface a single 'Accept Seller Terms' link instead.
+  const sellerActive = canSell && termsAccepted;
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [fbSalesOpen, setFbSalesOpen] = useState(false);
@@ -1407,7 +1411,7 @@ function TopNav({ isAdmin, canSell, wantsToSell, onLogout }: { isAdmin: boolean;
           }}>
             Marketplace
           </Link>
-          {canSell && (
+          {sellerActive && (
             <Link href="/listings" style={{
               color: 'inherit',
               cursor: 'pointer',
@@ -1416,7 +1420,7 @@ function TopNav({ isAdmin, canSell, wantsToSell, onLogout }: { isAdmin: boolean;
               My Listings
             </Link>
           )}
-          {canSell && (
+          {sellerActive && (
             <button type="button" onClick={() => setFbSalesOpen(true)}
               style={{
                 color: 'inherit', cursor: 'pointer', background: 'transparent', border: 0, padding: 0,
@@ -1424,6 +1428,16 @@ function TopNav({ isAdmin, canSell, wantsToSell, onLogout }: { isAdmin: boolean;
               }}>
               FB Sales
             </button>
+          )}
+          {canSell && !termsAccepted && (
+            <Link href="/seller-terms" style={{
+              color: 'var(--orange)',
+              cursor: 'pointer',
+              textDecoration: 'none',
+              fontWeight: 700,
+            }}>
+              🏷️ Accept Seller Terms
+            </Link>
           )}
           <Link href="/purchases" style={{
             color: 'inherit',
@@ -1562,6 +1576,7 @@ export default function HomePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [canSell, setCanSell] = useState(false);
   const [wantsToSell, setWantsToSell] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sets, setSets] = useState<SetRow[]>([]);
   const [avatar, setAvatar] = useState<string | null>(null);
@@ -1578,7 +1593,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
             const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, value_private, profile_shared, cover_position_x, cover_position_y')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, seller_terms_accepted_at, value_private, profile_shared, cover_position_x, cover_position_y')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1597,6 +1612,7 @@ export default function HomePage() {
         setIsAdmin(adminFlag);
         setCanSell(!!profileData.can_sell || adminFlag);
         setWantsToSell(!!profileData.wants_to_sell);
+        setTermsAccepted(!!profileData.seller_terms_accepted_at || adminFlag);
       } else {
         setIsAdmin(user.email === BOOTSTRAP_ADMIN_EMAIL);
       }
@@ -1630,7 +1646,7 @@ export default function HomePage() {
 
   return (
     <div style={{ minHeight: '100vh' }}>
-            <TopNav isAdmin={isAdmin} canSell={canSell} wantsToSell={wantsToSell} onLogout={handleLogout} />
+            <TopNav isAdmin={isAdmin} canSell={canSell} wantsToSell={wantsToSell} termsAccepted={termsAccepted} onLogout={handleLogout} />
       <LogoShowcase />
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}

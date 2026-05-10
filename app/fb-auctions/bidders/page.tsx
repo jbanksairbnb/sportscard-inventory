@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { isSeller } from '@/lib/sellerGuard';
+import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 
 type BidderRow = {
@@ -67,7 +67,7 @@ export default function BiddersListPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
+      { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
       const [bRes, lRes, cRes, eRes] = await Promise.all([
         supabase.from('fb_bidders').select('id, name, fb_handle, notes').eq('user_id', user.id).order('name'),
         supabase.from('fb_auction_lots').select('bidder_id, bidder_name, current_bid, status').eq('user_id', user.id),

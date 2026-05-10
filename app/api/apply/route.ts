@@ -10,22 +10,23 @@ function escapeHtml(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function adminNotificationHtml(applicantEmail: string, collectionDescription: string, ebayProfile: string, fbGroups: string) {
+function adminNotificationHtml(applicantEmail: string, fullName: string, collectionDescription: string, ebayProfile: string, fbGroups: string) {
   return `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: ${PLUM};">
       <h2 style="color: ${ORANGE}; border-bottom: 3px solid ${PLUM}; padding-bottom: 10px;">
-        ★ New Sports Collective Application ★
+        ★ New Seller Application ★
       </h2>
+      ${fullName ? `<p><strong>Name:</strong> ${escapeHtml(fullName)}</p>` : ''}
       <p><strong>Email:</strong> ${escapeHtml(applicantEmail)}</p>
       <hr style="border-color: ${RULE};" />
-      <p><strong>About Their Collection:</strong></p>
+      <p><strong>Selling History:</strong></p>
       <p style="background: ${CREAM}; padding: 12px; border-left: 4px solid ${ORANGE};">
         ${escapeHtml(collectionDescription || '—').replace(/\n/g, '<br/>')}
       </p>
       <p><strong>eBay Profile:</strong><br/>
         ${ebayProfile ? `<a href="${escapeHtml(ebayProfile)}" style="color: ${ORANGE};">${escapeHtml(ebayProfile)}</a>` : '—'}
       </p>
-      <p><strong>Facebook Collecting Groups:</strong></p>
+      <p><strong>References:</strong></p>
       <p style="background: ${CREAM}; padding: 12px; border-left: 4px solid ${PLUM};">
         ${escapeHtml(fbGroups || '—').replace(/\n/g, '<br/>')}
       </p>
@@ -60,7 +61,7 @@ function applicantConfirmationHtml() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { applicantEmail, collectionDescription, ebayProfile, fbGroups } = body
+  const { applicantEmail, fullName, collectionDescription, ebayProfile, fbGroups } = body
 
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
     sendEmail(
       'jbanks@sports-collective.com',
       `New Application: ${applicantEmail}`,
-      adminNotificationHtml(applicantEmail, collectionDescription, ebayProfile, fbGroups)
+      adminNotificationHtml(applicantEmail, fullName || '', collectionDescription, ebayProfile, fbGroups)
     ),
     sendEmail(
       applicantEmail,

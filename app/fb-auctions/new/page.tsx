@@ -4,7 +4,7 @@ import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { isSeller } from '@/lib/sellerGuard';
+import { getSellerStatus } from '@/lib/sellerGuard';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { syncAuctionListings } from '@/lib/listingStatusSync';
 import { replaceImageBg } from '@/lib/collageBg';
@@ -268,7 +268,7 @@ function NewFbAuctionPageInner() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
+      { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
       setUserId(user.id);
       const [listingsRes, templatesRes, groupsRes, biddersRes, lotsRes, eventsRes, claimsRes, historicalRes] = await Promise.all([
         supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
