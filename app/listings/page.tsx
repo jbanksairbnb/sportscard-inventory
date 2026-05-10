@@ -13,7 +13,12 @@ import PhotoEditor from '@/components/PhotoEditor';
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
 
-type ShippingOption = { label: string; cost: number };
+// `cost` is the price for the first card. `additional_cost` is added per
+// additional card when multiple listings ship together (default 0). `cap`
+// caps the total combined-shipping charge for that label (null/undefined =
+// uncapped). Per-listing entries override the seller's defaults so heavier
+// items can carry their own base/additional/cap.
+type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
 type Listing = {
   id: string;
@@ -119,36 +124,59 @@ function ShippingOptionsEditor({
     onChange(options.filter((_, i) => i !== idx));
   }
   function add() {
-    onChange([...options, { label: '', cost: 0 }]);
+    onChange([...options, { label: '', cost: 0, additional_cost: 0, cap: null }]);
   }
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 6,
+    padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
+    color: 'var(--plum)', background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+  const headStyle: React.CSSProperties = {
+    fontSize: 9, color: 'var(--orange)', fontWeight: 700, letterSpacing: '0.08em',
+    textTransform: 'uppercase', marginBottom: 2,
+  };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {options.length === 0 && (
         <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
           No shipping options. Click + Add to require one.
         </div>
       )}
       {options.map((opt, idx) => (
-        <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input value={opt.label} onChange={e => update(idx, { label: e.target.value })}
-            placeholder="Label (e.g. PWE)"
-            style={{
-              flex: 1, border: '1.5px solid var(--plum)', borderRadius: 6,
-              padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
-              color: 'var(--plum)', background: 'var(--cream)',
-            }} />
-          <span style={{ fontSize: 13, color: 'var(--ink-mute)' }}>$</span>
-          <input type="number" step="0.01" value={opt.cost ?? ''} onChange={e => update(idx, { cost: e.target.value ? Number(e.target.value) : 0 })}
-            placeholder="0.00"
-            style={{
-              width: 80, border: '1.5px solid var(--plum)', borderRadius: 6,
-              padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
-              color: 'var(--plum)', background: 'var(--cream)',
-            }} />
+        <div key={idx} style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1.6fr) 80px 80px 80px auto',
+          gap: 6, alignItems: 'end',
+          padding: '8px 10px', border: '1.5px dashed var(--rule)', borderRadius: 8,
+        }}>
+          <div>
+            {idx === 0 && <div style={headStyle}>Label</div>}
+            <input value={opt.label} onChange={e => update(idx, { label: e.target.value })}
+              placeholder="e.g. Bubble Mailer" style={fieldStyle} />
+          </div>
+          <div>
+            {idx === 0 && <div style={headStyle} title="Charge for the first card">Base $</div>}
+            <input type="number" step="0.01" value={opt.cost ?? ''}
+              onChange={e => update(idx, { cost: e.target.value ? Number(e.target.value) : 0 })}
+              placeholder="0.00" style={fieldStyle} />
+          </div>
+          <div>
+            {idx === 0 && <div style={headStyle} title="Added for each card beyond the first when shipped together">+ Each addl $</div>}
+            <input type="number" step="0.01" value={opt.additional_cost ?? ''}
+              onChange={e => update(idx, { additional_cost: e.target.value ? Number(e.target.value) : 0 })}
+              placeholder="0.00" style={fieldStyle} />
+          </div>
+          <div>
+            {idx === 0 && <div style={headStyle} title="Maximum total shipping charge for this label. Leave blank for no cap.">Max $ (cap)</div>}
+            <input type="number" step="0.01" value={opt.cap ?? ''}
+              onChange={e => update(idx, { cap: e.target.value ? Number(e.target.value) : null })}
+              placeholder="—" style={fieldStyle} />
+          </div>
           <button type="button" onClick={() => remove(idx)}
             className="btn btn-sm" style={{
               background: 'transparent', color: 'var(--ink-mute)',
               border: '1.5px solid var(--rule)', padding: '4px 8px',
+              alignSelf: idx === 0 ? 'end' : 'center',
             }}>
             ×
           </button>

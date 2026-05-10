@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
 type ConditionType = 'raw' | 'graded';
-type ShippingOption = { label: string; cost: number };
+type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
 type MarketplaceListing = {
   id: string;
@@ -650,25 +650,51 @@ function BulkBuyModal({
   onRemove: (id: string) => void;
   onComplete: (listingIds: string[]) => void;
 }) {
-  // Shipping options come from the FIRST listing — sellers configure shipping
-  // per-listing, but for a multi-card invoice we need a single number. We
-  // intersect the available labels across the cart so we only show options
-  // every card supports, then take the max cost so the buyer is never
-  // under-charged.
+  // For each shipping label that EVERY card in the cart supports, compute
+  // the combined-shipping total using the per-listing override fields:
+  //   total = max(base across cards) + sum(additional_cost of every other
+  //   card), then clamped at the most restrictive cap defined across cards.
+  // This naturally handles heavy-card overrides — the heavy listing's higher
+  // base wins as the primary, and any tighter cap it carries dominates.
   const sharedOptions = useMemo(() => {
-    if (listings.length === 0) return [] as ShippingOption[];
+    if (listings.length === 0) return [] as Array<{ label: string; total: number; base: number; perAdditional: number; cap: number | null; primaryId: string }>;
     const first = listings[0].shipping_options || [];
     return first
       .map(opt => {
-        let maxCost = opt.cost;
+        let primaryBase = -Infinity;
+        let primaryId = '';
+        let perCardAddl: { id: string; addl: number }[] = [];
+        let tightestCap: number | null = null;
         for (const l of listings) {
           const match = (l.shipping_options || []).find(o => o.label === opt.label);
-          if (!match) return null; // not supported on every card → drop
-          if (match.cost > maxCost) maxCost = match.cost;
+          if (!match) return null; // label not supported on this card → drop entirely
+          if (match.cost > primaryBase) {
+            primaryBase = match.cost;
+            primaryId = l.id;
+          }
+          perCardAddl.push({ id: l.id, addl: Number(match.additional_cost ?? 0) });
+          if (match.cap != null && (tightestCap == null || match.cap < tightestCap)) {
+            tightestCap = Number(match.cap);
+          }
         }
-        return { label: opt.label, cost: maxCost };
+        const additionals = perCardAddl
+          .filter(x => x.id !== primaryId)
+          .reduce((s, x) => s + (x.addl || 0), 0);
+        // Average per-additional figure for display only (e.g. "+ 3 × $1").
+        const nonPrimary = perCardAddl.filter(x => x.id !== primaryId);
+        const perAdditional = nonPrimary.length > 0 ? additionals / nonPrimary.length : 0;
+        let total = primaryBase + additionals;
+        if (tightestCap != null && total > tightestCap) total = tightestCap;
+        return {
+          label: opt.label,
+          total,
+          base: primaryBase,
+          perAdditional,
+          cap: tightestCap,
+          primaryId,
+        };
       })
-      .filter((x): x is ShippingOption => x !== null);
+      .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [listings]);
 
   const [shipIdx, setShipIdx] = useState<number>(sharedOptions.length > 0 ? 0 : -1);
@@ -685,7 +711,7 @@ function BulkBuyModal({
 
   const ship = shipIdx >= 0 ? sharedOptions[shipIdx] : null;
   const subtotal = listings.reduce((s, l) => s + (l.asking_price || 0), 0);
-  const shippingCost = ship?.cost || 0;
+  const shippingCost = ship?.total || 0;
   const total = subtotal + shippingCost;
 
   async function confirm() {
@@ -703,13 +729,16 @@ function BulkBuyModal({
     const failed: string[] = [];
 
     for (const l of listings) {
-      // Each cart item gets its own purchases row. Shipping cost is recorded
-      // on every row at the cart-wide rate; the bulk-email endpoint takes the
-      // max so the buyer is never double-billed.
+      // Each cart item gets its own purchases row. Combined shipping is
+      // assigned in full to the FIRST row and 0 to the rest so the bulk
+      // invoice email can simply SUM shipping_cost across rows and arrive
+      // at the same total without double-billing.
+      const isFirst = l.id === listings[0].id;
+      const rowShipping = isFirst ? shippingCost : 0;
       const { data: purchaseId, error: rpcErr } = await supabase.rpc('purchase_listing', {
         p_listing_id: l.id,
         p_shipping_label: ship.label,
-        p_shipping_cost: ship.cost,
+        p_shipping_cost: rowShipping,
         p_ship_to_name: name.trim(),
         p_ship_to_address1: addr1.trim(),
         p_ship_to_address2: addr2.trim() || null,
@@ -844,19 +873,34 @@ function BulkBuyModal({
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {sharedOptions.map((o, i) => (
-                  <label key={i} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 12px', borderRadius: 8,
-                    border: shipIdx === i ? '2px solid var(--plum)' : '1.5px solid var(--rule)',
-                    background: shipIdx === i ? 'var(--paper)' : 'transparent',
-                    cursor: 'pointer',
-                  }}>
-                    <input type="radio" checked={shipIdx === i} onChange={() => setShipIdx(i)} />
-                    <span style={{ flex: 1, fontSize: 13.5, color: 'var(--plum)' }}>{o.label}</span>
-                    <span className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', fontWeight: 700 }}>${o.cost.toFixed(2)}</span>
-                  </label>
-                ))}
+                {sharedOptions.map((o, i) => {
+                  const otherCount = listings.length - 1;
+                  const uncapped = o.base + o.perAdditional * otherCount;
+                  const wasCapped = o.cap != null && uncapped > o.cap;
+                  const breakdown = otherCount > 0
+                    ? `$${o.base.toFixed(2)} + ${otherCount} × $${o.perAdditional.toFixed(2)}${wasCapped ? ` capped at $${(o.cap as number).toFixed(2)}` : ''}`
+                    : `$${o.base.toFixed(2)}`;
+                  return (
+                    <label key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderRadius: 8,
+                      border: shipIdx === i ? '2px solid var(--plum)' : '1.5px solid var(--rule)',
+                      background: shipIdx === i ? 'var(--paper)' : 'transparent',
+                      cursor: 'pointer',
+                    }}>
+                      <input type="radio" checked={shipIdx === i} onChange={() => setShipIdx(i)} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, color: 'var(--plum)' }}>{o.label}</div>
+                        {otherCount > 0 && (
+                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
+                            {breakdown}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', fontWeight: 700 }}>${o.total.toFixed(2)}</span>
+                    </label>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -204,10 +204,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Cannot resolve emails' }, { status: 500 })
   }
 
-  // Cart shipping is collected once on the cart and applied per-purchase row
-  // by the client. We pull the highest shipping_cost across the rows so we
-  // don't double-bill (rows store the same shipping_label/cost for the cart).
-  const shippingCost = Math.max(...purchases.map(p => Number(p.shipping_cost) || 0))
+  // Combined shipping is recorded entirely on the first row of the cart and
+  // 0 on the rest, so the cart total is just the SUM of shipping_cost across
+  // rows. (Earlier carts that wrote the same value to every row are no longer
+  // produced — the bulk-checkout client always splits this way now.)
+  const shippingCost = purchases.reduce((s, p) => s + (Number(p.shipping_cost) || 0), 0)
   const shippingLabel = purchases[0].shipping_label || 'Shipping'
   const subtotal = purchases.reduce((s, p) => s + Number(p.item_price || 0), 0)
   const total = subtotal + shippingCost

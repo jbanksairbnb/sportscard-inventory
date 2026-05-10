@@ -8,7 +8,7 @@ import SCLogo from '@/components/SCLogo';
 
 type PairMode = 'fronts-only' | 'fronts-then-backs' | 'interleaved';
 type ConditionType = 'raw' | 'graded';
-type ShippingOption = { label: string; cost: number };
+type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
 const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
 const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
