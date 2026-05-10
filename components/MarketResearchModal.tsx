@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createClient } from '@/lib/supabase/client';
 
 // Sources we offer in the dropdown. 'other' lets the user free-form a label.
@@ -413,6 +414,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // by the caller (set rows pass Image 1/2; listings pass listing.photos).
   const photoUrls = (card.image_urls || []).filter((u): u is string => !!u && typeof u === 'string');
   const [photoIdx, setPhotoIdx] = useState<number | null>(null);
+  // Portal mount flag — the lightbox is rendered through createPortal to
+  // document.body so it escapes any parent stacking context (the modal
+  // itself uses overflow-y on its container, so a `position: fixed` child
+  // could otherwise be trapped behind it on some browsers).
+  const [portalReady, setPortalReady] = useState(false);
+  useEffect(() => { setPortalReady(true); }, []);
   useEffect(() => {
     if (photoIdx === null) return;
     function onKey(e: KeyboardEvent) {
@@ -496,9 +503,9 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 
-        {photoIdx !== null && photoUrls.length > 0 && (
+        {photoIdx !== null && photoUrls.length > 0 && portalReady && createPortal(
           <div onClick={() => setPhotoIdx(null)} style={{
-            position: 'fixed', inset: 0, zIndex: 300,
+            position: 'fixed', inset: 0, zIndex: 1000,
             background: 'rgba(42,20,52,0.92)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             padding: 16,
@@ -526,7 +533,8 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                 ✕ Close
               </button>
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px' }}>{INSTRUCTIONS}</p>
