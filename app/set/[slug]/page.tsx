@@ -546,14 +546,16 @@ export default function SetEditorPage() {
       if (!user) { router.push("/login"); return; }
       setUserId(user.id);
       setUserEmail(user.email || '');
-      // Only sellers see the per-row "$ List" action and the seller cluster
-      // at the bottom of the page; buyer-only users still own and edit sets.
+      // Sellers (and admins) see the per-row "$ List" action and the
+      // 📷 Add Scans entry. We fall back to the bootstrap admin email so
+      // the button shows even if the DB row hasn't been written yet.
       const { data: prof } = await supabase
         .from('user_profiles')
         .select('can_sell, is_admin')
         .eq('user_id', user.id)
         .maybeSingle();
-      setCanSell(!!(prof?.can_sell || prof?.is_admin));
+      const adminFlag = !!prof?.is_admin || user.email === 'jbanks@sports-collective.com';
+      setCanSell(!!prof?.can_sell || adminFlag);
            if (paramSlug !== "new") {
         const { data, error } = await supabase
           .from("sets")
