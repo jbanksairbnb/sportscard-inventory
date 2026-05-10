@@ -443,6 +443,19 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               Weights total: {totals.totalWeight.toFixed(1)}% {totals.weightOk ? '✓' : '(must = 100%)'}
             </div>
           </div>
+          {card.set_slug && (
+            // Link back to the inventory view of this card so the user can see
+            // the actual photos / condition while weighting comps. Useful for
+            // judging which sold listings should carry more weight.
+            <a
+              href={`/set/${encodeURIComponent(card.set_slug)}/view${card.set_card_number ? `?card=${encodeURIComponent(card.set_card_number)}` : ''}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Open this card on the set page in a new tab"
+              className="btn btn-ghost btn-sm">
+              📷 View card photos →
+            </a>
+          )}
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 
