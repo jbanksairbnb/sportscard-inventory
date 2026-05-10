@@ -339,7 +339,7 @@ export default function ScanFromSetPage() {
           <ol style={{ margin: 0, paddingLeft: 22, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
             <li>Pick a set (e.g. 1971 Topps Baseball).</li>
             <li>Click each card row in the order you&apos;ll scan them — your selection list locks the order.</li>
-            <li>Scan that exact stack on the Ricoh fi-8170 (fronts then backs, or duplex/interleaved).</li>
+            <li>Scan that exact stack on your scanner in numerical order or the order you put in your upload.</li>
             <li>Drop the JPGs. The app pairs them positionally to your selected cards.</li>
             <li>Per row, choose: 📚 Replace in set · 🏷️ Also create a draft listing. Save All.</li>
           </ol>
