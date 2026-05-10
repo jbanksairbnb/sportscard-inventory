@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 
 type CardRow = Record<string, unknown>;
@@ -64,6 +65,7 @@ export default function ScanFromSetPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
       const { data } = await supabase.from('sets')
         .select('user_id, slug, title, year, brand, row_count')

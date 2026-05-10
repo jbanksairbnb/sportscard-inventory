@@ -488,6 +488,7 @@ export default function SetEditorPage() {
 
   const [userId, setUserId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string>('');
+  const [canSell, setCanSell] = useState<boolean>(false);
   const [slug, setSlug] = useState<string>(paramSlug);
   const [datasetTitle, setDatasetTitle] = useState<string>("");
   const [year, setYear] = useState<string>("");
@@ -545,6 +546,14 @@ export default function SetEditorPage() {
       if (!user) { router.push("/login"); return; }
       setUserId(user.id);
       setUserEmail(user.email || '');
+      // Only sellers see the per-row "$ List" action and the seller cluster
+      // at the bottom of the page; buyer-only users still own and edit sets.
+      const { data: prof } = await supabase
+        .from('user_profiles')
+        .select('can_sell, is_admin')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setCanSell(!!(prof?.can_sell || prof?.is_admin));
            if (paramSlug !== "new") {
         const { data, error } = await supabase
           .from("sets")
@@ -978,9 +987,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <Link href={`/set/${encodeURIComponent(slug)}/view`} className="btn btn-sm btn-outline">
                 View Inventory
               </Link>
-              <button type="button" onClick={() => setScansPickerOpen(true)} className="btn btn-sm btn-outline">
-                📷 Add Scans
-              </button>
+              {canSell && (
+                <button type="button" onClick={() => setScansPickerOpen(true)} className="btn btn-sm btn-outline">
+                  📷 Add Scans
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1250,7 +1261,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           onDelete={() => handleImageDelete(origIndex, 2)} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle', textAlign: 'center' }}>
-                        {String(row["Owned"] || '') === 'Yes' ? (
+                        {canSell && String(row["Owned"] || '') === 'Yes' ? (
                           <button type="button" onClick={() => handleListForSale(row)}
                             className="btn btn-ghost btn-sm" style={{ whiteSpace: 'nowrap' }}>
                             $ List

@@ -13,6 +13,7 @@ export default function ApplyPage() {
   const [collectionDescription, setCollectionDescription] = useState('');
   const [ebayProfile, setEbayProfile] = useState('');
   const [fbGroups, setFbGroups] = useState('');
+  const [wantsToSell, setWantsToSell] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -55,17 +56,18 @@ export default function ApplyPage() {
     const supabase = createClient();
 await supabase.from('user_profiles').upsert({
   user_id: userId,
-  email,     
+  email,
       application_status: 'pending',
       collection_description: collectionDescription,
       ebay_profile: ebayProfile,
       fb_groups: fbGroups,
+      wants_to_sell: wantsToSell,
       applied_at: new Date().toISOString(),
     });
     await fetch('/api/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ applicantEmail: email, collectionDescription, ebayProfile, fbGroups }),
+      body: JSON.stringify({ applicantEmail: email, collectionDescription, ebayProfile, fbGroups, wantsToSell }),
     });
     router.push('/pending');
   }
@@ -167,6 +169,30 @@ await supabase.from('user_profiles').upsert({
                 placeholder="List any Facebook baseball card, sports card, or collecting groups you're a member of…"
                 style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.6 }}
               />
+            </div>
+
+            <div style={{
+              border: '1.5px solid var(--rule)', borderRadius: 8,
+              padding: '14px 16px', background: 'var(--paper)',
+            }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={wantsToSell}
+                  onChange={e => setWantsToSell(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <div>
+                  <div style={{ fontSize: 14, color: 'var(--plum)', fontWeight: 700, marginBottom: 3 }}>
+                    I plan to sell cards on Sports Collective
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-mute)', lineHeight: 1.5 }}>
+                    Buying tools are open to every approved member. Selling tools (creating listings,
+                    Facebook auctions, claim sales) require an extra approval step. Check this and the
+                    admin will review your selling history when reviewing your application.
+                  </div>
+                </div>
+              </label>
             </div>
 
             <button

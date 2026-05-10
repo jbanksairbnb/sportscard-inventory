@@ -4,6 +4,7 @@ import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 import MarketResearchModal, { CardDescriptor } from '@/components/MarketResearchModal';
 import {
@@ -160,6 +161,7 @@ function NewClaimSalePageInner() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
       const [listRes, grpRes, tmplRes, biddersRes, lotsRes, eventsRes, claimsRes, historicalRes] = await Promise.all([
         supabase.from('listings')

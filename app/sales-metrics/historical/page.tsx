@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { isSeller } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 import { insertHistoricalTransaction, findOrCreateGroup, type HistoricalChannel, type HistoricalEngagement } from '@/lib/historicalTransactions';
 import { parseCsv } from '@/lib/csv';
@@ -89,6 +90,7 @@ export default function HistoricalTransactionsPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
+      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
       setUserId(user.id);
       const [{ data }, { data: groupRows }] = await Promise.all([
         supabase
