@@ -43,6 +43,9 @@ export type CardDescriptor = {
   grade: string | null;
   grading_company: string | null;
   raw_grade: string | null;
+  // Photos of *this specific card* — surfaced in the modal so the user can
+  // eyeball centering / corners / surface while weighting comps.
+  image_urls?: string[];
   // Optional FK / breadcrumbs back to the source record.
   listing_id?: string | null;
   set_slug?: string | null;
@@ -406,6 +409,21 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, notes, open, loading]);
 
+  // Photos of the card being researched — sourced from the descriptor passed
+  // by the caller (set rows pass Image 1/2; listings pass listing.photos).
+  const photoUrls = (card.image_urls || []).filter((u): u is string => !!u && typeof u === 'string');
+  const [photoIdx, setPhotoIdx] = useState<number | null>(null);
+  useEffect(() => {
+    if (photoIdx === null) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPhotoIdx(null);
+      else if (e.key === 'ArrowLeft') setPhotoIdx(i => (i === null ? null : (i - 1 + photoUrls.length) % photoUrls.length));
+      else if (e.key === 'ArrowRight') setPhotoIdx(i => (i === null ? null : (i + 1) % photoUrls.length));
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [photoIdx, photoUrls.length]);
+
   if (!open) return null;
 
   const cardTitle = [
@@ -443,21 +461,62 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               Weights total: {totals.totalWeight.toFixed(1)}% {totals.weightOk ? '✓' : '(must = 100%)'}
             </div>
           </div>
+          {photoUrls.length > 0 && (
+            // Inline lightbox of the card's own scans (passed by the caller).
+            <button type="button" onClick={() => setPhotoIdx(0)}
+              title="View photos of this card"
+              className="btn btn-ghost btn-sm">
+              📷 View photos {photoUrls.length > 1 ? `(${photoUrls.length})` : ''}
+            </button>
+          )}
           {card.set_slug && (
-            // Link back to the inventory view of this card so the user can see
-            // the actual photos / condition while weighting comps. Useful for
-            // judging which sold listings should carry more weight.
+            // Fallback / supplementary link — open the inventory view of this
+            // card on the set page in a new tab, useful when the listing has
+            // no photos uploaded yet but the set page does.
             <a
               href={`/set/${encodeURIComponent(card.set_slug)}/view${card.set_card_number ? `?card=${encodeURIComponent(card.set_card_number)}` : ''}`}
               target="_blank"
               rel="noreferrer"
               title="Open this card on the set page in a new tab"
               className="btn btn-ghost btn-sm">
-              📷 View card photos →
+              🔗 View on set page
             </a>
           )}
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
+
+        {photoIdx !== null && photoUrls.length > 0 && (
+          <div onClick={() => setPhotoIdx(null)} style={{
+            position: 'fixed', inset: 0, zIndex: 300,
+            background: 'rgba(42,20,52,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
+              <img src={photoUrls[photoIdx]} alt="Card photo"
+                style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 10, display: 'block' }} />
+              {photoUrls.length > 1 && (
+                <>
+                  <button type="button" onClick={() => setPhotoIdx(i => i === null ? null : (i - 1 + photoUrls.length) % photoUrls.length)}
+                    title="Previous (←)" style={lightboxArrow('left')}>‹</button>
+                  <button type="button" onClick={() => setPhotoIdx(i => i === null ? null : (i + 1) % photoUrls.length)}
+                    title="Next (→)" style={lightboxArrow('right')}>›</button>
+                  <div className="mono" style={{
+                    position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+                    padding: '4px 10px', borderRadius: 6, background: 'rgba(248,236,208,0.96)',
+                    color: 'var(--plum)', fontSize: 11, fontWeight: 700,
+                  }}>
+                    {photoIdx + 1} / {photoUrls.length}
+                  </div>
+                </>
+              )}
+              <button type="button" onClick={() => setPhotoIdx(null)} className="btn btn-sm"
+                style={{ position: 'absolute', top: 4, right: 4 }}>
+                ✕ Close
+              </button>
+            </div>
+          </div>
+        )}
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px' }}>{INSTRUCTIONS}</p>
         {latestSession && !sessionId && (
