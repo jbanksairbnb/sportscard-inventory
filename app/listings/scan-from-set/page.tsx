@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { isSeller } from '@/lib/sellerGuard';
+import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import SCLogo from '@/components/SCLogo';
 
 type CardRow = Record<string, unknown>;
@@ -42,6 +43,11 @@ export default function ScanFromSetPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string>('');
+  // Scans are open to every approved member; selling-related UI inside the
+  // page (the per-row 'Also create draft listing' toggle and the bulk
+  // 'Create listings on all' button) is gated by canSell.
+  const [canSell, setCanSell] = useState(false);
+  const [quota, setQuota] = useState<ScanQuota | null>(null);
 
   const [sets, setSets] = useState<SetSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string>('');
@@ -65,13 +71,18 @@ export default function ScanFromSetPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
+      const sellerFlag = await isSeller(supabase, user.id);
+      setCanSell(sellerFlag);
       setUserId(user.id);
-      const { data } = await supabase.from('sets')
-        .select('user_id, slug, title, year, brand, row_count')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false });
-      setSets((data || []) as SetSummary[]);
+      const [setsRes, q] = await Promise.all([
+        supabase.from('sets')
+          .select('user_id, slug, title, year, brand, row_count')
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false }),
+        getScanQuota(supabase, user.id, sellerFlag),
+      ]);
+      setSets((setsRes.data || []) as SetSummary[]);
+      setQuota(q);
       setLoading(false);
     }
     load();
@@ -170,6 +181,15 @@ export default function ScanFromSetPage() {
   async function saveAll() {
     if (!currentSet || !userId) return;
     setError('');
+    // Buyer-only quota: refuse the save if the upload would push them past
+    // BUYER_PHOTO_CAP. Sellers have an Infinity max so this is a no-op.
+    if (quota && !quota.hasRoom(files.length)) {
+      setError(
+        `You'd be over the ${BUYER_PHOTO_CAP}-photo limit (currently ${quota.used} stored, this would add ${files.length}). ` +
+        `Apply to sell from your home page to unlock unlimited scans.`
+      );
+      return;
+    }
     if (files.length < expectedFileCount) {
       setError(`Expected ${expectedFileCount} scan files (front+back × ${selectedOrder.length}), got ${files.length}.`);
       return;
@@ -550,7 +570,17 @@ export default function ScanFromSetPage() {
                     {files.length === expectedFileCount ? '✓ File count matches' : `⚠ Expected ${expectedFileCount}, got ${files.length}`}
                   </div>
                   <div style={{ flex: 1 }} />
-                  {(() => {
+                  {quota && quota.isCapped && (
+                    <span className="mono" title="Buyers are capped at 100 photos. Sellers are uncapped."
+                      style={{
+                        fontSize: 11, fontWeight: 700,
+                        color: quota.remaining === 0 ? 'var(--rust)' : quota.remaining < 20 ? 'var(--orange)' : 'var(--ink-mute)',
+                        padding: '4px 10px', border: '1.5px solid var(--rule)', borderRadius: 100,
+                      }}>
+                      {quota.used} / {BUYER_PHOTO_CAP} photos
+                    </span>
+                  )}
+                  {canSell && (() => {
                     const allListing = selectedOrder.length > 0 && selectedOrder.every(i => destinations[i]?.listing);
                     return (
                       <button type="button"
@@ -607,10 +637,12 @@ export default function ScanFromSetPage() {
                             <input type="checkbox" checked={dest.setRow} onChange={e => setDest(origIndex, 'setRow', e.target.checked)} />
                             📚 Replace in set
                           </label>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                            <input type="checkbox" checked={dest.listing} onChange={e => setDest(origIndex, 'listing', e.target.checked)} />
-                            🏷️ Also create draft listing
-                          </label>
+                          {canSell && (
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={dest.listing} onChange={e => setDest(origIndex, 'listing', e.target.checked)} />
+                              🏷️ Also create draft listing
+                            </label>
+                          )}
                         </div>
                       </div>
                     );
