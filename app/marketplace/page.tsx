@@ -329,13 +329,20 @@ function MarketplacePageInner() {
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
                     Seller: {l.seller_display_name || l.seller_handle || '—'}
                   </div>
-                  <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 10 }}>
-                    <span className="display" style={{ fontSize: 18, color: 'var(--plum)', fontWeight: 700 }}>
-                      {fmtMoney(l.asking_price)}
-                    </span>
-                    <button type="button" onClick={() => setBuyTarget(l)}
-                      className="btn btn-primary btn-sm">
-                      Buy →
+                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span className="display" style={{ fontSize: 18, color: 'var(--plum)', fontWeight: 700 }}>
+                        {fmtMoney(l.asking_price)}
+                      </span>
+                      <button type="button" onClick={() => setBuyTarget(l)}
+                        className="btn btn-primary btn-sm">
+                        Buy →
+                      </button>
+                    </div>
+                    <button type="button" onClick={() => toggleCart(l)}
+                      className={`btn btn-sm ${cart.has(l.id) ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ width: '100%', justifyContent: 'center' }}>
+                      {cart.has(l.id) ? '✓ In cart' : '+ Add to cart'}
                     </button>
                   </div>
                                 </div>

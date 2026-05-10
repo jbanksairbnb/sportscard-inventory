@@ -1126,7 +1126,7 @@ function ListingEditor({
       <div
         onClick={(e) => e.stopPropagation()}
         className="panel-bordered"
-        style={{ width: '100%', maxWidth: 640, padding: 28, background: 'var(--cream)' }}
+        style={{ width: '100%', maxWidth: 760, padding: 28, background: 'var(--cream)' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
           <div className="display" style={{ fontSize: 24, color: 'var(--plum)', flex: 1 }}>
@@ -1632,14 +1632,14 @@ function DefaultShippingModal({
       padding: '40px 20px', overflowY: 'auto',
     }}>
       <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
-        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+        style={{ width: '100%', maxWidth: 720, padding: 28, background: 'var(--cream)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Default Shipping Options</div>
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 
         <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
-          These will be pre-filled on every <strong>new</strong> listing you create. You can still customize per-listing in the editor. Existing listings are not affected unless you use <strong>Apply to all my listings</strong> below.
+          These will be pre-filled on every <strong>new</strong> listing you create. <strong>Base $</strong> is the cost to ship a single card; <strong>+ Each addl $</strong> is added per additional card when a buyer combines several into one cart; <strong>Max $</strong> caps the total shipping. Existing listings are not affected unless you use <strong>Apply to all my listings</strong> below.
         </p>
 
         <ShippingOptionsEditor options={opts} onChange={setOpts} />
