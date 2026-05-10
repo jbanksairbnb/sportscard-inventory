@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
 type ConditionType = 'raw' | 'graded';
-type ShippingOption = { label: string; cost: number };
+type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
 type MarketplaceListing = {
   id: string;
@@ -90,10 +90,41 @@ function MarketplacePageInner() {
   // `${year}|${brand}|${card_number}` for cards they have not marked Owned.
   const [wantListOnly, setWantListOnly] = useState(searchParams.get('wantlist') === '1');
   const [wantListKeys, setWantListKeys] = useState<Set<string>>(new Set());
+  // Multi-card cart. Keys are listing ids; we enforce single-seller carts
+  // (adding a card from a different seller prompts to replace the cart).
+  // Cart UI only appears in the list view.
+  const [cart, setCart] = useState<Set<string>>(new Set());
+  const [bulkCheckoutOpen, setBulkCheckoutOpen] = useState(false);
 
   function onPurchaseComplete(listingId: string) {
     setListings(prev => prev.filter(l => l.id !== listingId));
     setBuyTarget(null);
+  }
+  function onBulkComplete(listingIds: string[]) {
+    setListings(prev => prev.filter(l => !listingIds.includes(l.id)));
+    setCart(new Set());
+    setBulkCheckoutOpen(false);
+  }
+  function toggleCart(l: MarketplaceListing) {
+    setCart(prev => {
+      const next = new Set(prev);
+      if (next.has(l.id)) {
+        next.delete(l.id);
+        return next;
+      }
+      // Single-seller cart: if the cart already has another seller's card,
+      // confirm the replacement.
+      const cartItems = listings.filter(x => prev.has(x.id));
+      const existingSeller = cartItems[0]?.user_id;
+      if (existingSeller && existingSeller !== l.user_id) {
+        if (!confirm('Your cart has cards from another seller. Replace cart with this card?')) {
+          return prev;
+        }
+        return new Set([l.id]);
+      }
+      next.add(l.id);
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -298,13 +329,20 @@ function MarketplacePageInner() {
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
                     Seller: {l.seller_display_name || l.seller_handle || '—'}
                   </div>
-                  <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 10 }}>
-                    <span className="display" style={{ fontSize: 18, color: 'var(--plum)', fontWeight: 700 }}>
-                      {fmtMoney(l.asking_price)}
-                    </span>
-                    <button type="button" onClick={() => setBuyTarget(l)}
-                      className="btn btn-primary btn-sm">
-                      Buy →
+                  <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span className="display" style={{ fontSize: 18, color: 'var(--plum)', fontWeight: 700 }}>
+                        {fmtMoney(l.asking_price)}
+                      </span>
+                      <button type="button" onClick={() => setBuyTarget(l)}
+                        className="btn btn-primary btn-sm">
+                        Buy →
+                      </button>
+                    </div>
+                    <button type="button" onClick={() => toggleCart(l)}
+                      className={`btn btn-sm ${cart.has(l.id) ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ width: '100%', justifyContent: 'center' }}>
+                      {cart.has(l.id) ? '✓ In cart' : '+ Add to cart'}
                     </button>
                   </div>
                                 </div>
@@ -348,15 +386,22 @@ function MarketplacePageInner() {
                   padding: '14px 20px',
                   display: 'flex', flexDirection: 'column', gap: 10,
                   alignItems: 'flex-end', justifyContent: 'space-between',
-                  minWidth: 140, borderLeft: '1.5px solid var(--rule)',
+                  minWidth: 160, borderLeft: '1.5px solid var(--rule)',
                 }}>
                   <span className="display" style={{ fontSize: 16, color: 'var(--plum)', fontWeight: 700 }}>
                     {fmtMoney(l.asking_price)}
                   </span>
-                  <button type="button" onClick={() => setBuyTarget(l)}
-                    className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }}>
-                    Buy →
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-end' }}>
+                    <button type="button" onClick={() => toggleCart(l)}
+                      className={`btn btn-sm ${cart.has(l.id) ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ whiteSpace: 'nowrap', minWidth: 110 }}>
+                      {cart.has(l.id) ? '✓ In cart' : '+ Add to cart'}
+                    </button>
+                    <button type="button" onClick={() => setBuyTarget(l)}
+                      className="btn btn-ghost btn-sm" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
+                      Buy just this →
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -364,12 +409,60 @@ function MarketplacePageInner() {
         )}
       </div>
 
+      {/* Sticky cart bar — only shows when at least one item is in the cart. */}
+      {cart.size > 0 && (() => {
+        const cartItems = filtered.filter(l => cart.has(l.id));
+        const cartSubtotal = cartItems.reduce((s, l) => s + (l.asking_price || 0), 0);
+        const sellerName = cartItems[0]?.seller_display_name || cartItems[0]?.seller_handle || 'seller';
+        return (
+          <div style={{
+            position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 80, display: 'flex', alignItems: 'center', gap: 16,
+            padding: '12px 20px', borderRadius: 100,
+            background: 'var(--plum)', color: 'var(--cream)',
+            boxShadow: '0 8px 24px rgba(42,20,52,0.3)',
+            border: '2px solid var(--orange)',
+          }}>
+            <span className="mono" style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>
+              {cart.size} {cart.size === 1 ? 'card' : 'cards'} from {sellerName}
+            </span>
+            <span className="display" style={{ fontSize: 16, color: 'var(--mustard)', fontWeight: 700 }}>
+              {fmtMoney(cartSubtotal)}
+            </span>
+            <button type="button" onClick={() => setCart(new Set())}
+              className="btn btn-ghost btn-sm"
+              style={{ color: 'var(--cream)', fontSize: 11 }}>
+              Clear
+            </button>
+            <button type="button" onClick={() => setBulkCheckoutOpen(true)}
+              className="btn btn-primary btn-sm">
+              Checkout →
+            </button>
+          </div>
+        );
+      })()}
+
             {lightboxPhotos && (
         <PhotoLightbox urls={lightboxPhotos} startIdx={0} onClose={() => setLightboxPhotos(null)} />
       )}
 
       {buyTarget && (
         <BuyModal listing={buyTarget} onClose={() => setBuyTarget(null)} onComplete={onPurchaseComplete} />
+      )}
+
+      {bulkCheckoutOpen && cart.size > 0 && (
+        <BulkBuyModal
+          listings={listings.filter(l => cart.has(l.id))}
+          onClose={() => setBulkCheckoutOpen(false)}
+          onRemove={(id) => {
+            setCart(prev => {
+              const next = new Set(prev); next.delete(id);
+              if (next.size === 0) setBulkCheckoutOpen(false);
+              return next;
+            });
+          }}
+          onComplete={onBulkComplete}
+        />
       )}
     </div>
   );
@@ -541,6 +634,330 @@ function BuyModal({
           </div>
           <p className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, textAlign: 'center', margin: 0 }}>
             By confirming, the listing will be marked sold and the seller will be emailed your shipping info.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BulkBuyModal — checkout flow for the multi-card cart on /marketplace.
+// All cart items are guaranteed to share a single seller (enforced when items
+// are added). We collect a single shipping option + ship-to address, then
+// loop through purchase_listing for each card; failed cards (typically lost
+// to a race) are surfaced inline and removed from the cart so the buyer can
+// review and retry.
+// ──────────────────────────────────────────────────────────────────────────
+function BulkBuyModal({
+  listings, onClose, onRemove, onComplete,
+}: {
+  listings: MarketplaceListing[];
+  onClose: () => void;
+  onRemove: (id: string) => void;
+  onComplete: (listingIds: string[]) => void;
+}) {
+  // For each shipping label that EVERY card in the cart supports, compute
+  // the combined-shipping total using the per-listing override fields:
+  //   total = max(base across cards) + sum(additional_cost of every other
+  //   card), then clamped at the most restrictive cap defined across cards.
+  // This naturally handles heavy-card overrides — the heavy listing's higher
+  // base wins as the primary, and any tighter cap it carries dominates.
+  const sharedOptions = useMemo(() => {
+    if (listings.length === 0) return [] as Array<{ label: string; total: number; base: number; perAdditional: number; cap: number | null; primaryId: string }>;
+    const first = listings[0].shipping_options || [];
+    return first
+      .map(opt => {
+        let primaryBase = -Infinity;
+        let primaryId = '';
+        let perCardAddl: { id: string; addl: number }[] = [];
+        let tightestCap: number | null = null;
+        for (const l of listings) {
+          const match = (l.shipping_options || []).find(o => o.label === opt.label);
+          if (!match) return null; // label not supported on this card → drop entirely
+          if (match.cost > primaryBase) {
+            primaryBase = match.cost;
+            primaryId = l.id;
+          }
+          perCardAddl.push({ id: l.id, addl: Number(match.additional_cost ?? 0) });
+          if (match.cap != null && (tightestCap == null || match.cap < tightestCap)) {
+            tightestCap = Number(match.cap);
+          }
+        }
+        const additionals = perCardAddl
+          .filter(x => x.id !== primaryId)
+          .reduce((s, x) => s + (x.addl || 0), 0);
+        // Average per-additional figure for display only (e.g. "+ 3 × $1").
+        const nonPrimary = perCardAddl.filter(x => x.id !== primaryId);
+        const perAdditional = nonPrimary.length > 0 ? additionals / nonPrimary.length : 0;
+        let total = primaryBase + additionals;
+        if (tightestCap != null && total > tightestCap) total = tightestCap;
+        return {
+          label: opt.label,
+          total,
+          base: primaryBase,
+          perAdditional,
+          cap: tightestCap,
+          primaryId,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+  }, [listings]);
+
+  const [shipIdx, setShipIdx] = useState<number>(sharedOptions.length > 0 ? 0 : -1);
+  const [name, setName] = useState('');
+  const [addr1, setAddr1] = useState('');
+  const [addr2, setAddr2] = useState('');
+  const [city, setCity] = useState('');
+  const [stateReg, setStateReg] = useState('');
+  const [zip, setZip] = useState('');
+  const [country, setCountry] = useState('US');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [failedIds, setFailedIds] = useState<string[]>([]);
+
+  const ship = shipIdx >= 0 ? sharedOptions[shipIdx] : null;
+  const subtotal = listings.reduce((s, l) => s + (l.asking_price || 0), 0);
+  const shippingCost = ship?.total || 0;
+  const total = subtotal + shippingCost;
+
+  async function confirm() {
+    setError('');
+    setFailedIds([]);
+    if (!ship) { setError('Pick a shipping option.'); return; }
+    if (!name.trim() || !addr1.trim() || !city.trim() || !stateReg.trim() || !zip.trim() || !country.trim()) {
+      setError('All shipping address fields except line 2 are required.');
+      return;
+    }
+    setSubmitting(true);
+    const supabase = createClient();
+    const purchaseIds: string[] = [];
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+
+    for (const l of listings) {
+      // Each cart item gets its own purchases row. Combined shipping is
+      // assigned in full to the FIRST row and 0 to the rest so the bulk
+      // invoice email can simply SUM shipping_cost across rows and arrive
+      // at the same total without double-billing.
+      const isFirst = l.id === listings[0].id;
+      const rowShipping = isFirst ? shippingCost : 0;
+      const { data: purchaseId, error: rpcErr } = await supabase.rpc('purchase_listing', {
+        p_listing_id: l.id,
+        p_shipping_label: ship.label,
+        p_shipping_cost: rowShipping,
+        p_ship_to_name: name.trim(),
+        p_ship_to_address1: addr1.trim(),
+        p_ship_to_address2: addr2.trim() || null,
+        p_ship_to_city: city.trim(),
+        p_ship_to_state: stateReg.trim(),
+        p_ship_to_zip: zip.trim(),
+        p_ship_to_country: country.trim(),
+      });
+      if (rpcErr || !purchaseId) {
+        failed.push(l.id);
+        continue;
+      }
+      purchaseIds.push(purchaseId as string);
+      succeeded.push(l.id);
+    }
+
+    if (purchaseIds.length === 0) {
+      setSubmitting(false);
+      setError('None of the cards could be purchased — they may have been sold to another buyer. Try refreshing the marketplace.');
+      return;
+    }
+
+    // One combined invoice email per cart.
+    const emailRes = await fetch('/api/purchase/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchaseIds }),
+    });
+    if (!emailRes.ok) {
+      console.error('Bulk email failed:', await emailRes.text());
+    }
+
+    // Pull successful purchases out of seller inventory (mirrors single-card flow).
+    await Promise.all(purchaseIds.map(pid =>
+      fetch('/api/inventory/mark-row', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchase_id: pid, owned: false }),
+      }).catch(() => {})
+    ));
+
+    setSubmitting(false);
+
+    if (failed.length > 0) {
+      setFailedIds(failed);
+      alert(
+        `${succeeded.length} purchased successfully. ${failed.length} could not be purchased ` +
+        `(may have been sold). Check your email for the invoice on the successful ones.`
+      );
+    } else {
+      alert('Order confirmed! Check your email for the combined invoice. The seller will reach out about payment.');
+    }
+    onComplete(succeeded);
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    border: '2px solid var(--plum)', borderRadius: 8, padding: '8px 12px',
+    fontFamily: 'var(--font-body)', fontSize: 13.5, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box', outline: 'none',
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 200,
+      background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '40px 20px', overflowY: 'auto',
+    }}>
+      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 640, padding: 28, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>
+            Checkout · {listings.length} card{listings.length === 1 ? '' : 's'}
+          </div>
+          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
+          <div>
+            <div className="eyebrow" style={labelStyle}>Items</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto' }}>
+              {listings.map(l => (
+                <div key={l.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 10px', borderRadius: 8,
+                  border: failedIds.includes(l.id) ? '1.5px solid var(--rust)' : '1.5px solid var(--rule)',
+                  background: failedIds.includes(l.id) ? 'rgba(197,74,44,0.08)' : 'var(--paper)',
+                }}>
+                  <div style={{
+                    width: 44, height: 44, flexShrink: 0,
+                    background: 'var(--cream)', border: '1.5px solid var(--plum)', borderRadius: 6,
+                    display: 'grid', placeItems: 'center', overflow: 'hidden',
+                  }}>
+                    {l.photos && l.photos.length > 0 ? (
+                      <img src={l.photos[0]} alt={l.title}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                    ) : (
+                      <span className="eyebrow" style={{ fontSize: 8, color: 'var(--ink-mute)' }}>—</span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="display" style={{ fontSize: 13, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {l.title}
+                    </div>
+                    {failedIds.includes(l.id) && (
+                      <div className="mono" style={{ fontSize: 10, color: 'var(--rust)', fontWeight: 700 }}>
+                        Could not be purchased — may have been sold
+                      </div>
+                    )}
+                  </div>
+                  <span className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', fontWeight: 700 }}>
+                    {fmtMoney(l.asking_price)}
+                  </span>
+                  {!submitting && !failedIds.includes(l.id) && (
+                    <button type="button" onClick={() => onRemove(l.id)}
+                      title="Remove from cart"
+                      style={{ background: 'transparent', border: 0, color: 'var(--rust)', cursor: 'pointer', fontSize: 18, padding: 4 }}>
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Shipping</div>
+            {sharedOptions.length === 0 ? (
+              <div className="mono" style={{ fontSize: 12, color: 'var(--rust)', fontWeight: 700, fontStyle: 'italic' }}>
+                The cards in this cart don&apos;t share a common shipping option. Buy them individually for now.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {sharedOptions.map((o, i) => {
+                  const otherCount = listings.length - 1;
+                  const uncapped = o.base + o.perAdditional * otherCount;
+                  const wasCapped = o.cap != null && uncapped > o.cap;
+                  const breakdown = otherCount > 0
+                    ? `$${o.base.toFixed(2)} + ${otherCount} × $${o.perAdditional.toFixed(2)}${wasCapped ? ` capped at $${(o.cap as number).toFixed(2)}` : ''}`
+                    : `$${o.base.toFixed(2)}`;
+                  return (
+                    <label key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderRadius: 8,
+                      border: shipIdx === i ? '2px solid var(--plum)' : '1.5px solid var(--rule)',
+                      background: shipIdx === i ? 'var(--paper)' : 'transparent',
+                      cursor: 'pointer',
+                    }}>
+                      <input type="radio" checked={shipIdx === i} onChange={() => setShipIdx(i)} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, color: 'var(--plum)' }}>{o.label}</div>
+                        {otherCount > 0 && (
+                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
+                            {breakdown}
+                          </div>
+                        )}
+                      </div>
+                      <span className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', fontWeight: 700 }}>${o.total.toFixed(2)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Ship to *</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" style={fieldStyle} />
+              <input value={addr1} onChange={e => setAddr1(e.target.value)} placeholder="Address line 1" style={fieldStyle} />
+              <input value={addr2} onChange={e => setAddr2(e.target.value)} placeholder="Address line 2 (optional)" style={fieldStyle} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px', gap: 8 }}>
+                <input value={city} onChange={e => setCity(e.target.value)} placeholder="City" style={fieldStyle} />
+                <input value={stateReg} onChange={e => setStateReg(e.target.value.toUpperCase().slice(0, 3))} placeholder="State" style={fieldStyle} />
+                <input value={zip} onChange={e => setZip(e.target.value)} placeholder="ZIP" style={fieldStyle} />
+              </div>
+              <input value={country} onChange={e => setCountry(e.target.value.toUpperCase())} placeholder="Country (e.g. US)" style={fieldStyle} />
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: '12px 16px', background: 'var(--paper)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--ink-soft)', marginBottom: 4 }}>
+              <span>Subtotal · {listings.length} {listings.length === 1 ? 'item' : 'items'}</span><span>${subtotal.toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
+              <span>Shipping{ship ? ` · ${ship.label}` : ''}</span><span>${shippingCost.toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: 'var(--plum)', borderTop: '2px solid var(--plum)', paddingTop: 8 }}>
+              <span>Total</span><span style={{ color: 'var(--teal)' }}>${total.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {error && (
+            <div style={{
+              background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+              borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--rust)', fontWeight: 600,
+            }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="button" onClick={confirm}
+              disabled={submitting || sharedOptions.length === 0}
+              className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+              {submitting ? 'Confirming…' : `Confirm Purchase · $${total.toFixed(2)}`}
+            </button>
+            <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+          </div>
+          <p className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, textAlign: 'center', margin: 0 }}>
+            By confirming, all listings will be marked sold and the seller will be emailed your shipping info.
           </p>
         </div>
       </div>

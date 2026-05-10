@@ -13,7 +13,12 @@ import PhotoEditor from '@/components/PhotoEditor';
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
 
-type ShippingOption = { label: string; cost: number };
+// `cost` is the price for the first card. `additional_cost` is added per
+// additional card when multiple listings ship together (default 0). `cap`
+// caps the total combined-shipping charge for that label (null/undefined =
+// uncapped). Per-listing entries override the seller's defaults so heavier
+// items can carry their own base/additional/cap.
+type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
 type Listing = {
   id: string;
@@ -119,36 +124,59 @@ function ShippingOptionsEditor({
     onChange(options.filter((_, i) => i !== idx));
   }
   function add() {
-    onChange([...options, { label: '', cost: 0 }]);
+    onChange([...options, { label: '', cost: 0, additional_cost: 0, cap: null }]);
   }
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 6,
+    padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
+    color: 'var(--plum)', background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+  const headStyle: React.CSSProperties = {
+    fontSize: 9, color: 'var(--orange)', fontWeight: 700, letterSpacing: '0.08em',
+    textTransform: 'uppercase', marginBottom: 2,
+  };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {options.length === 0 && (
         <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
           No shipping options. Click + Add to require one.
         </div>
       )}
       {options.map((opt, idx) => (
-        <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input value={opt.label} onChange={e => update(idx, { label: e.target.value })}
-            placeholder="Label (e.g. PWE)"
-            style={{
-              flex: 1, border: '1.5px solid var(--plum)', borderRadius: 6,
-              padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
-              color: 'var(--plum)', background: 'var(--cream)',
-            }} />
-          <span style={{ fontSize: 13, color: 'var(--ink-mute)' }}>$</span>
-          <input type="number" step="0.01" value={opt.cost ?? ''} onChange={e => update(idx, { cost: e.target.value ? Number(e.target.value) : 0 })}
-            placeholder="0.00"
-            style={{
-              width: 80, border: '1.5px solid var(--plum)', borderRadius: 6,
-              padding: '6px 10px', fontFamily: 'var(--font-body)', fontSize: 13,
-              color: 'var(--plum)', background: 'var(--cream)',
-            }} />
+        <div key={idx} style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1.6fr) 80px 80px 80px auto',
+          gap: 6, alignItems: 'end',
+          padding: '8px 10px', border: '1.5px dashed var(--rule)', borderRadius: 8,
+        }}>
+          <div>
+            {idx === 0 && <div style={headStyle}>Label</div>}
+            <input value={opt.label} onChange={e => update(idx, { label: e.target.value })}
+              placeholder="e.g. Bubble Mailer" style={fieldStyle} />
+          </div>
+          <div>
+            {idx === 0 && <div style={headStyle} title="Charge for the first card">Base $</div>}
+            <input type="number" step="0.01" value={opt.cost ?? ''}
+              onChange={e => update(idx, { cost: e.target.value ? Number(e.target.value) : 0 })}
+              placeholder="0.00" style={fieldStyle} />
+          </div>
+          <div>
+            {idx === 0 && <div style={headStyle} title="Added for each card beyond the first when shipped together">+ Each addl $</div>}
+            <input type="number" step="0.01" value={opt.additional_cost ?? ''}
+              onChange={e => update(idx, { additional_cost: e.target.value ? Number(e.target.value) : 0 })}
+              placeholder="0.00" style={fieldStyle} />
+          </div>
+          <div>
+            {idx === 0 && <div style={headStyle} title="Maximum total shipping charge for this label. Leave blank for no cap.">Max $ (cap)</div>}
+            <input type="number" step="0.01" value={opt.cap ?? ''}
+              onChange={e => update(idx, { cap: e.target.value ? Number(e.target.value) : null })}
+              placeholder="—" style={fieldStyle} />
+          </div>
           <button type="button" onClick={() => remove(idx)}
             className="btn btn-sm" style={{
               background: 'transparent', color: 'var(--ink-mute)',
               border: '1.5px solid var(--rule)', padding: '4px 8px',
+              alignSelf: idx === 0 ? 'end' : 'center',
             }}>
             ×
           </button>
@@ -1098,7 +1126,7 @@ function ListingEditor({
       <div
         onClick={(e) => e.stopPropagation()}
         className="panel-bordered"
-        style={{ width: '100%', maxWidth: 640, padding: 28, background: 'var(--cream)' }}
+        style={{ width: '100%', maxWidth: 760, padding: 28, background: 'var(--cream)' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
           <div className="display" style={{ fontSize: 24, color: 'var(--plum)', flex: 1 }}>
@@ -1537,19 +1565,62 @@ function DefaultShippingModal({
 }) {
   const [opts, setOpts] = useState<ShippingOption[]>(initial);
   const [saving, setSaving] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
+  const [applyResult, setApplyResult] = useState<string | null>(null);
+
+  function cleanedOpts() {
+    return opts.filter(o => o.label.trim() && (o.cost === 0 || o.cost > 0));
+  }
 
   async function save() {
     setError('');
+    setApplyResult(null);
     setSaving(true);
     const supabase = createClient();
-    const cleaned = opts.filter(o => o.label.trim() && (o.cost === 0 || o.cost > 0));
+    const cleaned = cleanedOpts();
     const { error: err } = await supabase
       .from('user_profiles')
       .update({ default_shipping_options: cleaned })
       .eq('user_id', userId);
     setSaving(false);
     if (err) { setError(err.message); return; }
+    onSaved(cleaned);
+  }
+
+  // Backfill: write the current options onto every listing the user owns.
+  // Saves defaults first so the profile + listings stay consistent. Useful
+  // when the seller wants every existing listing to share a single shipping
+  // option (e.g. so the marketplace cart can intersect them across cards).
+  async function applyToAll() {
+    setError('');
+    setApplyResult(null);
+    const cleaned = cleanedOpts();
+    if (cleaned.length === 0) {
+      setError('Add at least one shipping option before applying to listings.');
+      return;
+    }
+    if (!confirm(`Overwrite shipping options on ALL of your listings with these ${cleaned.length} option${cleaned.length === 1 ? '' : 's'}? This affects active and sold listings and cannot be undone.`)) {
+      return;
+    }
+    setApplying(true);
+    const supabase = createClient();
+
+    const { error: profileErr } = await supabase
+      .from('user_profiles')
+      .update({ default_shipping_options: cleaned })
+      .eq('user_id', userId);
+    if (profileErr) { setApplying(false); setError(profileErr.message); return; }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('listings')
+      .update({ shipping_options: cleaned })
+      .eq('user_id', userId)
+      .select('id');
+
+    setApplying(false);
+    if (updErr) { setError(updErr.message); return; }
+    setApplyResult(`Updated ${updated?.length ?? 0} listing${(updated?.length ?? 0) === 1 ? '' : 's'}.`);
     onSaved(cleaned);
   }
 
@@ -1561,14 +1632,14 @@ function DefaultShippingModal({
       padding: '40px 20px', overflowY: 'auto',
     }}>
       <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
-        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
+        style={{ width: '100%', maxWidth: 720, padding: 28, background: 'var(--cream)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Default Shipping Options</div>
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 
         <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
-          These will be pre-filled on every <strong>new</strong> listing you create. You can still customize per-listing in the editor. Existing listings are not affected.
+          These will be pre-filled on every <strong>new</strong> listing you create. <strong>Base $</strong> is the cost to ship a single card; <strong>+ Each addl $</strong> is added per additional card when a buyer combines several into one cart; <strong>Max $</strong> caps the total shipping. Existing listings are not affected unless you use <strong>Apply to all my listings</strong> below.
         </p>
 
         <ShippingOptionsEditor options={opts} onChange={setOpts} />
@@ -1581,13 +1652,31 @@ function DefaultShippingModal({
             {error}
           </div>
         )}
+        {applyResult && (
+          <div style={{
+            background: 'rgba(45,122,110,0.1)', border: '1.5px solid var(--teal)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--teal)', fontWeight: 600, marginTop: 14,
+          }}>
+            {applyResult}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-          <button type="button" onClick={save} disabled={saving}
+          <button type="button" onClick={save} disabled={saving || applying}
             className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
             {saving ? 'Saving…' : 'Save Defaults'}
           </button>
           <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1.5px dashed var(--rule)' }}>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--ink-mute)', lineHeight: 1.5 }}>
+            <strong style={{ color: 'var(--orange)' }}>Backfill:</strong> overwrite shipping options on every listing you own with the options above. Useful when you want all your cards to share a common shipping rate so buyers can combine them in one cart.
+          </p>
+          <button type="button" onClick={applyToAll} disabled={saving || applying}
+            className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}>
+            {applying ? 'Applying…' : 'Apply to all my listings'}
+          </button>
         </div>
       </div>
     </div>
