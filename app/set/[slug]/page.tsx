@@ -98,7 +98,22 @@ function migrateRows(rows: Array<Record<string, any>>) {
   });
 }
 function downloadCSV(filename: string, rows: Array<Record<string, any>>) {
-  const csv = Papa.unparse({ fields: EXPECTED_HEADERS, data: rows.map(r => EXPECTED_HEADERS.map(h => r[h] ?? "")) });
+  // The "Description" column was renamed to "Player" on the row data side
+  // (see migrateRows above). Newly-saved rows store the value under
+  // r["Player"], with a one-time backfill from any legacy r["Description"]
+  // on read. Reading the CSV value directly from r["Description"] therefore
+  // returns empty for every modern row, even though the player name is
+  // visible in the UI. We pull from Player first and fall back to
+  // Description so both legacy and modern rows export correctly. The CSV
+  // header stays "Description" so existing upload templates keep working.
+  function valueFor(r: Record<string, any>, header: string): any {
+    if (header === 'Description') return r['Player'] ?? r['Description'] ?? '';
+    return r[header] ?? '';
+  }
+  const csv = Papa.unparse({
+    fields: EXPECTED_HEADERS,
+    data: rows.map(r => EXPECTED_HEADERS.map(h => valueFor(r, h))),
+  });
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
