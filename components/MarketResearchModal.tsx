@@ -452,6 +452,38 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               {cardTitle} <span style={{ color: 'var(--orange)' }}>· {conditionLabel}</span>
             </div>
           </div>
+          {photoUrls.length > 0 && (
+            // Inline thumbnail of the card's first scan, sitting right next
+            // to the Market Value tile. Click anywhere on it to open the
+            // full-screen lightbox (same component for listings + set
+            // editor, so the experience is consistent).
+            <button
+              type="button"
+              onClick={() => setPhotoIdx(0)}
+              title="View photos of this card"
+              style={{
+                position: 'relative', flexShrink: 0,
+                width: 84, height: 84,
+                padding: 0, borderRadius: 8,
+                border: '2px solid var(--plum)',
+                background: `var(--cream) center/contain no-repeat url("${photoUrls[0]}")`,
+                cursor: 'zoom-in',
+                boxShadow: '0 2px 0 var(--plum)',
+              }}
+            >
+              {photoUrls.length > 1 && (
+                <span className="mono" style={{
+                  position: 'absolute', top: -8, right: -8,
+                  background: 'var(--orange)', color: 'var(--cream)',
+                  fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                  padding: '2px 6px', borderRadius: 100,
+                  border: '2px solid var(--cream)',
+                }}>
+                  +{photoUrls.length - 1}
+                </span>
+              )}
+            </button>
+          )}
           <div className="panel-bordered" style={{ padding: '10px 16px', background: 'var(--paper)', minWidth: 180 }}>
             <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 2 }}>Market Value</div>
             <div className="display" style={{ fontSize: 28, color: totals.weightOk ? 'var(--orange)' : 'var(--ink-mute)', fontWeight: 700 }}>
@@ -461,27 +493,6 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               Weights total: {totals.totalWeight.toFixed(1)}% {totals.weightOk ? '✓' : '(must = 100%)'}
             </div>
           </div>
-          {photoUrls.length > 0 && (
-            // Inline lightbox of the card's own scans (passed by the caller).
-            <button type="button" onClick={() => setPhotoIdx(0)}
-              title="View photos of this card"
-              className="btn btn-ghost btn-sm">
-              📷 View photos {photoUrls.length > 1 ? `(${photoUrls.length})` : ''}
-            </button>
-          )}
-          {card.set_slug && (
-            // Fallback / supplementary link — open the inventory view of this
-            // card on the set page in a new tab, useful when the listing has
-            // no photos uploaded yet but the set page does.
-            <a
-              href={`/set/${encodeURIComponent(card.set_slug)}/view${card.set_card_number ? `?card=${encodeURIComponent(card.set_card_number)}` : ''}`}
-              target="_blank"
-              rel="noreferrer"
-              title="Open this card on the set page in a new tab"
-              className="btn btn-ghost btn-sm">
-              🔗 View on set page
-            </a>
-          )}
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
 

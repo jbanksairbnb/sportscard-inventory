@@ -82,8 +82,7 @@ function CardTile({ row, year, brand, onImageClick }: {
   row: Record<string, any>; year: string; brand: string;
   onImageClick: (cardIdx: number, side: 'Front' | 'Back') => void;
 }) {
-  const cardNumRaw = String(row['Card #'] ?? '').trim();
-  const cardNum = cardNumRaw ? `#${cardNumRaw}` : '';
+  const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const description = row['Player'] || row['Description'] || '';
   const gradingCo = row['Grading Company'] || '';
   const grade = row['Grade'] || '';
@@ -95,8 +94,7 @@ function CardTile({ row, year, brand, onImageClick }: {
   const cardIdx = row.__cardIdx as number;
 
   return (
-    <div id={cardNumRaw ? `card-${cardNumRaw}` : undefined}
-      className="panel" style={{ padding: '14px 16px', position: 'relative', scrollMarginTop: 80 }}>
+    <div className="panel" style={{ padding: '14px 16px', position: 'relative' }}>
       {owned && (
         <div style={{
           position: 'absolute', top: 10, right: 10,
@@ -136,15 +134,13 @@ function CardTableRow({ row, year, brand, onImageClick }: {
   row: Record<string, any>; year: string; brand: string;
   onImageClick: (cardIdx: number, side: 'Front' | 'Back') => void;
 }) {
-  const cardNumRaw = String(row['Card #'] ?? '').trim();
-  const cardNum = cardNumRaw ? `#${cardNumRaw}` : '';
+  const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const img1 = row['Image 1'] || '';
   const img2 = row['Image 2'] || '';
   const cardIdx = row.__cardIdx as number;
 
   return (
-    <tr id={cardNumRaw ? `card-${cardNumRaw}` : undefined}
-      style={{ borderTop: '1.5px solid var(--cream-warm)', scrollMarginTop: 80 }}
+    <tr style={{ borderTop: '1.5px solid var(--cream-warm)' }}
       onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--cream-warm)'}
       onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}>
       <td className="eyebrow" style={{ padding: '10px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>
@@ -228,27 +224,6 @@ export default function InventoryViewPage() {
       : rows;
     return arr.map((r, i) => ({ ...r, __cardIdx: i }));
   }, [rows, showOwnedOnly]);
-
-  // When opened from the Research-Prices modal with `?card=N`, scroll the
-  // matching card into view and flash a brief highlight so it's easy to spot
-  // on a long set.
-  useEffect(() => {
-    if (loading) return;
-    const target = typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('card')
-      : null;
-    if (!target) return;
-    const t = setTimeout(() => {
-      const el = document.getElementById(`card-${target}`);
-      if (!el) return;
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      const original = (el as HTMLElement).style.boxShadow;
-      (el as HTMLElement).style.transition = 'box-shadow 600ms ease-out';
-      (el as HTMLElement).style.boxShadow = '0 0 0 3px var(--orange)';
-      setTimeout(() => { (el as HTMLElement).style.boxShadow = original; }, 1800);
-    }, 80);
-    return () => clearTimeout(t);
-  }, [loading, displayed.length]);
 
   // Build a flat list of every image across the displayed cards so the
   // lightbox can scroll through the whole set with the arrow keys.
