@@ -80,6 +80,54 @@ async function sendStatusEmail(to: string, status: 'approved' | 'rejected') {
   }
 }
 
+function sellerApprovedHtml() {
+  return `
+    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: ${PLUM}; background: ${CREAM}; padding: 32px 28px; border: 2px solid ${PLUM}; border-radius: 12px;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <div style="font-size: 11px; letter-spacing: 0.2em; color: ${ORANGE}; font-weight: 700; margin-bottom: 6px;">★ SPORTS COLLECTIVE ★</div>
+        <h1 style="margin: 0; color: ${PLUM}; font-size: 30px;">Selling Approved!</h1>
+      </div>
+      <p style="font-size: 16px; line-height: 1.7;">Great news — your seller application has been <strong style="color: ${TEAL};">approved</strong>. Welcome to the Collective&apos;s seller community.</p>
+      <p style="font-size: 15px; line-height: 1.7;">One last step: please review and accept our seller Terms &amp; Conditions to activate your seller account. The button below takes you straight there.</p>
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="https://sports-collective.com/seller-terms"
+           style="display: inline-block; background: ${ORANGE}; color: ${CREAM}; padding: 14px 32px; border-radius: 100px; text-decoration: none; font-weight: 700; font-size: 15px; letter-spacing: 0.05em; border: 2px solid ${PLUM};">
+          Review Terms &amp; Activate →
+        </a>
+      </div>
+      <p style="font-size: 13px; line-height: 1.7; color: ${INK_MUTE};">If the button doesn&apos;t work, copy this link into your browser:<br/>
+        <a href="https://sports-collective.com/seller-terms" style="color: ${ORANGE}; word-break: break-all;">https://sports-collective.com/seller-terms</a>
+      </p>
+      <p style="font-size: 14px; line-height: 1.7; color: ${INK_MUTE};">Until you accept, your seller tools (My Listings, FB Sales) stay locked. Buying access is unaffected.</p>
+      <hr style="border: none; border-top: 1px solid ${RULE}; margin: 24px 0 14px;" />
+      <p style="font-size: 11px; color: ${INK_MUTE}; text-align: center; margin: 0;">
+        Questions? Write to <a href="mailto:jbanks@sports-collective.com" style="color: ${ORANGE};">jbanks@sports-collective.com</a>
+      </p>
+    </div>
+  `
+}
+
+async function sendSellerApprovedEmail(to: string) {
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) return
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Sports Collective <noreply@sports-collective.com>',
+        to,
+        subject: 'Selling Approved — One Last Step',
+        html: sellerApprovedHtml(),
+      }),
+    })
+    const data = await res.json()
+    console.log(`Resend seller-approved to ${to}:`, JSON.stringify(data))
+  } catch (e) {
+    console.error('Resend error:', e)
+  }
+}
+
 function authedSupabase(cookieStore: Awaited<ReturnType<typeof cookies>>) {
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -127,7 +175,7 @@ export async function GET() {
 
   const { data, error } = await admin
     .from('user_profiles')
-    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin, can_sell, wants_to_sell')
+    .select('user_id, application_status, collection_description, ebay_profile, fb_groups, applied_at, display_name, handle, email, is_admin, can_sell, wants_to_sell, full_name, seller_terms_accepted_at')
     .not('application_status', 'is', null)
     .order('applied_at', { ascending: false })
 
@@ -191,11 +239,23 @@ export async function PATCH(req: Request) {
     if (typeof canSell !== 'boolean') {
       return NextResponse.json({ error: 'Invalid canSell' }, { status: 400 })
     }
+    // Pull the prior state so we can fire the seller-approved email only on
+    // the false → true transition, never on idempotent re-grants.
+    const { data: prev } = await admin
+      .from('user_profiles')
+      .select('email, can_sell')
+      .eq('user_id', userId)
+      .maybeSingle()
+
     const { error } = await admin
       .from('user_profiles')
       .update({ can_sell: canSell })
       .eq('user_id', userId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    if (canSell && !prev?.can_sell && prev?.email) {
+      await sendSellerApprovedEmail(prev.email)
+    }
   }
 
   return NextResponse.json({ ok: true })

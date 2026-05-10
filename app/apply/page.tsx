@@ -32,6 +32,7 @@ export default function ApplyPage() {
   const [userId, setUserId] = useState('');
   const [email, setEmail] = useState('');
   const [stage, setStage] = useState<Stage>('loading');
+  const [fullName, setFullName] = useState('');
   const [collectionDescription, setCollectionDescription] = useState('');
   const [ebayProfile, setEbayProfile] = useState('');
   const [fbGroups, setFbGroups] = useState('');
@@ -83,7 +84,7 @@ export default function ApplyPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!collectionDescription.trim()) return;
+    if (!fullName.trim() || !collectionDescription.trim()) return;
     setSubmitting(true);
     const supabase = createClient();
     await supabase.from('user_profiles').upsert({
@@ -92,6 +93,7 @@ export default function ApplyPage() {
       // Membership stays approved — buying access is unaffected by submitting
       // a seller application. We only flip wants_to_sell so /admin sees them.
       application_status: 'approved',
+      full_name: fullName.trim(),
       collection_description: collectionDescription,
       ebay_profile: ebayProfile,
       fb_groups: fbGroups,
@@ -101,7 +103,7 @@ export default function ApplyPage() {
     await fetch('/api/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ applicantEmail: email, collectionDescription, ebayProfile, fbGroups, wantsToSell: true }),
+      body: JSON.stringify({ applicantEmail: email, fullName: fullName.trim(), collectionDescription, ebayProfile, fbGroups, wantsToSell: true }),
     });
     setStage('pending');
     setSubmitting(false);
@@ -215,6 +217,23 @@ export default function ApplyPage() {
 
                 <div>
                   <label style={{ display: 'block', marginBottom: 6 }}>
+                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Full Name *</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                    required
+                    placeholder="First and last name"
+                    style={fieldStyle}
+                  />
+                  <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 5 }}>
+                    Used only for verification. Won&apos;t appear in your public profile.
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', marginBottom: 6 }}>
                     <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Tell Us About Your Selling History *</span>
                   </label>
                   <textarea
@@ -245,20 +264,20 @@ export default function ApplyPage() {
 
                 <div>
                   <label style={{ display: 'block', marginBottom: 6 }}>
-                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Facebook Collecting Groups</span>
+                    <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>References</span>
                   </label>
                   <textarea
                     value={fbGroups}
                     onChange={e => setFbGroups(e.target.value)}
                     rows={3}
-                    placeholder="List the groups where you actively sell or trade — group names or links."
+                    placeholder="Facebook groups where you actively sell or trade, plus any collectors who can vouch for you (names, handles, or contact info)."
                     style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.6 }}
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={submitting || !collectionDescription.trim()}
+                  disabled={submitting || !fullName.trim() || !collectionDescription.trim()}
                   className="btn btn-primary"
                   style={{ justifyContent: 'center', fontSize: 15, padding: '13px 24px' }}
                 >

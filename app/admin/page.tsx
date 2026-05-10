@@ -17,6 +17,8 @@ type Applicant = {
   is_admin?: boolean;
   can_sell?: boolean;
   wants_to_sell?: boolean;
+  full_name?: string | null;
+  seller_terms_accepted_at?: string | null;
 };
 
 export default function AdminPage() {
@@ -256,12 +258,21 @@ export default function AdminPage() {
                           ★ ADMIN
                         </span>
                       )}
-                      {a.can_sell && (
+                      {a.can_sell && a.seller_terms_accepted_at && (
                         <span style={{
                           fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
                           background: 'var(--teal)', color: 'var(--cream)',
                         }}>
                           ✓ SELLER
+                        </span>
+                      )}
+                      {a.can_sell && !a.seller_terms_accepted_at && (
+                        <span style={{
+                          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
+                          background: 'var(--mustard)', color: 'var(--plum)',
+                        }}
+                          title="Selling approved; user hasn't accepted T&C yet">
+                          TERMS PENDING
                         </span>
                       )}
                       {a.wants_to_sell && !a.can_sell && (
@@ -276,7 +287,7 @@ export default function AdminPage() {
                     </div>
                     {a.applied_at && (
                       <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 12 }}>
-                       Applied {new Date(a.applied_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}{a.email && <span style={{ marginLeft: 10 }}>· {a.email}</span>}
+                       Applied {new Date(a.applied_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}{a.email && <span style={{ marginLeft: 10 }}>· {a.email}</span>}{a.full_name && <span style={{ marginLeft: 10 }}>· {a.full_name}</span>}
                       </div>
                     )}
 

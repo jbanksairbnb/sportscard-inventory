@@ -241,6 +241,9 @@ export default function LoginPage() {
                     </div>
                   </label>
                 </div>
+                <p style={{ margin: '8px 0 0', fontSize: 11.5, color: 'var(--orange)', fontWeight: 600, fontStyle: 'italic', lineHeight: 1.45 }}>
+                  Seller privileges are only approved for experienced sellers with stellar feedback.
+                </p>
               </div>
             )}
 
