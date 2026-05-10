@@ -1537,19 +1537,62 @@ function DefaultShippingModal({
 }) {
   const [opts, setOpts] = useState<ShippingOption[]>(initial);
   const [saving, setSaving] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
+  const [applyResult, setApplyResult] = useState<string | null>(null);
+
+  function cleanedOpts() {
+    return opts.filter(o => o.label.trim() && (o.cost === 0 || o.cost > 0));
+  }
 
   async function save() {
     setError('');
+    setApplyResult(null);
     setSaving(true);
     const supabase = createClient();
-    const cleaned = opts.filter(o => o.label.trim() && (o.cost === 0 || o.cost > 0));
+    const cleaned = cleanedOpts();
     const { error: err } = await supabase
       .from('user_profiles')
       .update({ default_shipping_options: cleaned })
       .eq('user_id', userId);
     setSaving(false);
     if (err) { setError(err.message); return; }
+    onSaved(cleaned);
+  }
+
+  // Backfill: write the current options onto every listing the user owns.
+  // Saves defaults first so the profile + listings stay consistent. Useful
+  // when the seller wants every existing listing to share a single shipping
+  // option (e.g. so the marketplace cart can intersect them across cards).
+  async function applyToAll() {
+    setError('');
+    setApplyResult(null);
+    const cleaned = cleanedOpts();
+    if (cleaned.length === 0) {
+      setError('Add at least one shipping option before applying to listings.');
+      return;
+    }
+    if (!confirm(`Overwrite shipping options on ALL of your listings with these ${cleaned.length} option${cleaned.length === 1 ? '' : 's'}? This affects active and sold listings and cannot be undone.`)) {
+      return;
+    }
+    setApplying(true);
+    const supabase = createClient();
+
+    const { error: profileErr } = await supabase
+      .from('user_profiles')
+      .update({ default_shipping_options: cleaned })
+      .eq('user_id', userId);
+    if (profileErr) { setApplying(false); setError(profileErr.message); return; }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('listings')
+      .update({ shipping_options: cleaned })
+      .eq('user_id', userId)
+      .select('id');
+
+    setApplying(false);
+    if (updErr) { setError(updErr.message); return; }
+    setApplyResult(`Updated ${updated?.length ?? 0} listing${(updated?.length ?? 0) === 1 ? '' : 's'}.`);
     onSaved(cleaned);
   }
 
@@ -1568,7 +1611,7 @@ function DefaultShippingModal({
         </div>
 
         <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
-          These will be pre-filled on every <strong>new</strong> listing you create. You can still customize per-listing in the editor. Existing listings are not affected.
+          These will be pre-filled on every <strong>new</strong> listing you create. You can still customize per-listing in the editor. Existing listings are not affected unless you use <strong>Apply to all my listings</strong> below.
         </p>
 
         <ShippingOptionsEditor options={opts} onChange={setOpts} />
@@ -1581,13 +1624,31 @@ function DefaultShippingModal({
             {error}
           </div>
         )}
+        {applyResult && (
+          <div style={{
+            background: 'rgba(45,122,110,0.1)', border: '1.5px solid var(--teal)',
+            borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--teal)', fontWeight: 600, marginTop: 14,
+          }}>
+            {applyResult}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-          <button type="button" onClick={save} disabled={saving}
+          <button type="button" onClick={save} disabled={saving || applying}
             className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
             {saving ? 'Saving…' : 'Save Defaults'}
           </button>
           <button type="button" onClick={onClose} className="btn btn-outline">Cancel</button>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1.5px dashed var(--rule)' }}>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--ink-mute)', lineHeight: 1.5 }}>
+            <strong style={{ color: 'var(--orange)' }}>Backfill:</strong> overwrite shipping options on every listing you own with the options above. Useful when you want all your cards to share a common shipping rate so buyers can combine them in one cart.
+          </p>
+          <button type="button" onClick={applyToAll} disabled={saving || applying}
+            className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}>
+            {applying ? 'Applying…' : 'Apply to all my listings'}
+          </button>
         </div>
       </div>
     </div>
