@@ -1356,7 +1356,7 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
 
 const NAV_LINKS = ['My Shelf'];
 
-function TopNav({ isAdmin, canSell, onLogout }: { isAdmin: boolean; canSell: boolean; onLogout: () => void }) {
+function TopNav({ isAdmin, canSell, wantsToSell, onLogout }: { isAdmin: boolean; canSell: boolean; wantsToSell: boolean; onLogout: () => void }) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [fbSalesOpen, setFbSalesOpen] = useState(false);
@@ -1432,6 +1432,25 @@ function TopNav({ isAdmin, canSell, onLogout }: { isAdmin: boolean; canSell: boo
           }}>
             My Purchases
           </Link>
+          {!canSell && !wantsToSell && (
+            <Link href="/apply" style={{
+              color: 'var(--orange)',
+              cursor: 'pointer',
+              textDecoration: 'none',
+            }}>
+              Apply to Sell
+            </Link>
+          )}
+          {!canSell && wantsToSell && (
+            <span style={{
+              color: 'var(--ink-mute)',
+              fontStyle: 'italic',
+              cursor: 'help',
+            }}
+              title="Your seller application is in review. Buying access is unaffected.">
+              ⏳ Selling Pending
+            </span>
+          )}
           {isAdmin && (
             <Link href="/admin" style={{
               color: 'var(--orange)',
@@ -1542,6 +1561,7 @@ export default function HomePage() {
   const [userId, setUserId] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [canSell, setCanSell] = useState(false);
+  const [wantsToSell, setWantsToSell] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sets, setSets] = useState<SetRow[]>([]);
   const [avatar, setAvatar] = useState<string | null>(null);
@@ -1558,7 +1578,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
             const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, value_private, profile_shared, cover_position_x, cover_position_y')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, value_private, profile_shared, cover_position_x, cover_position_y')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1576,6 +1596,7 @@ export default function HomePage() {
         const adminFlag = !!profileData.is_admin || user.email === BOOTSTRAP_ADMIN_EMAIL;
         setIsAdmin(adminFlag);
         setCanSell(!!profileData.can_sell || adminFlag);
+        setWantsToSell(!!profileData.wants_to_sell);
       } else {
         setIsAdmin(user.email === BOOTSTRAP_ADMIN_EMAIL);
       }
@@ -1609,7 +1630,7 @@ export default function HomePage() {
 
   return (
     <div style={{ minHeight: '100vh' }}>
-            <TopNav isAdmin={isAdmin} canSell={canSell} onLogout={handleLogout} />
+            <TopNav isAdmin={isAdmin} canSell={canSell} wantsToSell={wantsToSell} onLogout={handleLogout} />
       <LogoShowcase />
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}

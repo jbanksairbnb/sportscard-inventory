@@ -3,16 +3,24 @@
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { REQUIRE_APPLICATION } from '@/lib/featureFlags'
 import SCLogo from '@/components/SCLogo'
 
 type Mode = 'login' | 'register' | 'forgot'
+type Intent = 'buyer' | 'seller'
+
+// Stash the user's signup intent so the post-confirmation auth callback
+// can route them correctly. Without this, anyone whose Supabase project
+// requires email confirmation would sign up, click the email link, and
+// land in the wrong place because the auth user exists but no profile
+// was created at signup time.
+const SIGNUP_INTENT_KEY = 'sc:signup-intent'
 
 export default function LoginPage() {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [intent, setIntent] = useState<Intent>('buyer')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
@@ -39,28 +47,35 @@ export default function LoginPage() {
     const supabase = createClient()
 
     if (mode === 'register') {
+      // Persist intent BEFORE calling signUp so /apply can recover it after
+      // email confirmation if Supabase doesn't return a session immediately.
+      try { localStorage.setItem(SIGNUP_INTENT_KEY, intent) } catch {}
+
       const { data, error } = await supabase.auth.signUp({ email, password })
       if (error) {
         setError(error.message)
       } else if (data.session && data.user) {
-        // When the application gate is off (pilot mode), auto-approve the
-        // brand-new account so the user lands straight on /home instead of
-        // bouncing through /apply → /pending. Flipping REQUIRE_APPLICATION
-        // back to true restores the screening flow.
-        if (!REQUIRE_APPLICATION) {
-          await supabase.from('user_profiles').upsert({
-            user_id: data.user.id,
-            email: data.user.email,
-            application_status: 'approved',
-            applied_at: new Date().toISOString(),
-          }, { onConflict: 'user_id' })
-          router.push('/home')
-        } else {
-          router.push('/apply')
-        }
+        // Buyers get instant access — profile is auto-created as approved
+        // with no selling rights. Sellers get the same baseline plus
+        // wants_to_sell=true and are routed to the seller application.
+        // The admin still controls can_sell.
+        await supabase.from('user_profiles').upsert({
+          user_id: data.user.id,
+          email: data.user.email,
+          application_status: 'approved',
+          can_sell: false,
+          wants_to_sell: intent === 'seller',
+          applied_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' })
+        try { localStorage.removeItem(SIGNUP_INTENT_KEY) } catch {}
+        router.push(intent === 'seller' ? '/apply' : '/home')
         router.refresh()
       } else {
-        setMessage('Account created! Check your email to confirm, then sign in.')
+        setMessage(
+          intent === 'seller'
+            ? 'Account created! Check your email to confirm, then sign in to finish your seller application.'
+            : 'Account created! Check your email to confirm, then sign in to start browsing.'
+        )
         switchMode('login')
       }
     } else if (mode === 'login') {
@@ -87,7 +102,7 @@ export default function LoginPage() {
 
   const headings: Record<Mode, { title: string; sub: string }> = {
     login:    { title: 'Sign in',        sub: 'Welcome back to the Collective' },
-    register: { title: 'Create account', sub: 'Enter your details below to start the screening process' },
+    register: { title: 'Create account', sub: 'Buyers get immediate access. Selling requires a quick application.' },
     forgot:   { title: 'Reset password', sub: "Enter your email and we'll send a reset link" },
   }
   const { title, sub } = headings[mode]
@@ -182,6 +197,50 @@ export default function LoginPage() {
                     Minimum 6 characters
                   </p>
                 )}
+              </div>
+            )}
+
+            {mode === 'register' && (
+              <div>
+                <label className="input-label">I&apos;m here to…</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <label style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+                    border: intent === 'buyer' ? '2px solid var(--plum)' : '1.5px solid var(--rule)',
+                    borderRadius: 8, padding: '10px 14px',
+                    background: intent === 'buyer' ? 'var(--paper)' : 'transparent',
+                  }}>
+                    <input type="radio" name="intent" value="buyer"
+                      checked={intent === 'buyer'} onChange={() => setIntent('buyer')}
+                      style={{ marginTop: 3 }} />
+                    <div>
+                      <div style={{ fontSize: 13.5, color: 'var(--plum)', fontWeight: 700 }}>
+                        Browse and buy cards
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', lineHeight: 1.45 }}>
+                        Immediate access. No application needed.
+                      </div>
+                    </div>
+                  </label>
+                  <label style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+                    border: intent === 'seller' ? '2px solid var(--plum)' : '1.5px solid var(--rule)',
+                    borderRadius: 8, padding: '10px 14px',
+                    background: intent === 'seller' ? 'var(--paper)' : 'transparent',
+                  }}>
+                    <input type="radio" name="intent" value="seller"
+                      checked={intent === 'seller'} onChange={() => setIntent('seller')}
+                      style={{ marginTop: 3 }} />
+                    <div>
+                      <div style={{ fontSize: 13.5, color: 'var(--plum)', fontWeight: 700 }}>
+                        Sell my cards too
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', lineHeight: 1.45 }}>
+                        Buying access starts now. Selling unlocks after we review a short application.
+                      </div>
+                    </div>
+                  </label>
+                </div>
               </div>
             )}
 

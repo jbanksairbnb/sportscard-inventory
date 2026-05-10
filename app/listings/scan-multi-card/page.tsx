@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { isSeller } from '@/lib/sellerGuard';
+import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import SCLogo from '@/components/SCLogo';
 import MultiCardSplitter, { SplitResult } from '@/components/MultiCardSplitter';
 
@@ -33,6 +34,7 @@ export default function ScanMultiCardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string>('');
+  const [quota, setQuota] = useState<ScanQuota | null>(null);
   const [sets, setSets] = useState<SetSummary[]>([]);
   const [currentSet, setCurrentSet] = useState<FullSet | null>(null);
   const [phase, setPhase] = useState<Phase>('pick-set');
@@ -63,8 +65,9 @@ export default function ScanMultiCardPage() {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
-      if (!(await isSeller(supabase, user.id))) { router.replace('/marketplace'); return; }
+      const sellerFlag = await isSeller(supabase, user.id);
       setUserId(user.id);
+      setQuota(await getScanQuota(supabase, user.id, sellerFlag));
       const { data: setsData } = await supabase
         .from('sets')
         .select('user_id, slug, title, year, brand, row_count')
@@ -129,6 +132,16 @@ export default function ScanMultiCardPage() {
     const assignedPositions = POSITIONS.filter(p => assignment[p] !== null);
     if (assignedPositions.length === 0) {
       setError('Assign at least one position to a card.');
+      return;
+    }
+    // Multi-card upload writes one front + one back per assigned position;
+    // a fully assigned 2x3 grid is 12 photos. Refuse if a buyer is over.
+    const photosToWrite = assignedPositions.length * 2;
+    if (quota && !quota.hasRoom(photosToWrite)) {
+      setError(
+        `You'd be over the ${BUYER_PHOTO_CAP}-photo limit (currently ${quota.used} stored, this would add ${photosToWrite}). ` +
+        `Apply to sell from your home page to unlock unlimited scans.`
+      );
       return;
     }
     setError('');
@@ -523,7 +536,17 @@ export default function ScanMultiCardPage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              {quota && quota.isCapped && (
+                <span className="mono" title="Buyers are capped at 100 photos. Sellers are uncapped."
+                  style={{
+                    fontSize: 11, fontWeight: 700, marginRight: 'auto',
+                    color: quota.remaining === 0 ? 'var(--rust)' : quota.remaining < 20 ? 'var(--orange)' : 'var(--ink-mute)',
+                    padding: '4px 10px', border: '1.5px solid var(--rule)', borderRadius: 100,
+                  }}>
+                  {quota.used} / {BUYER_PHOTO_CAP} photos
+                </span>
+              )}
               <button onClick={startOver} className="btn btn-ghost">Start over</button>
               <button onClick={handleSave} className="btn btn-primary">Save & attach images →</button>
             </div>

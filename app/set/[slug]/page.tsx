@@ -546,14 +546,16 @@ export default function SetEditorPage() {
       if (!user) { router.push("/login"); return; }
       setUserId(user.id);
       setUserEmail(user.email || '');
-      // Only sellers see the per-row "$ List" action and the seller cluster
-      // at the bottom of the page; buyer-only users still own and edit sets.
+      // Sellers (and admins) see the per-row "$ List" action and the
+      // 📷 Add Scans entry. We fall back to the bootstrap admin email so
+      // the button shows even if the DB row hasn't been written yet.
       const { data: prof } = await supabase
         .from('user_profiles')
         .select('can_sell, is_admin')
         .eq('user_id', user.id)
         .maybeSingle();
-      setCanSell(!!(prof?.can_sell || prof?.is_admin));
+      const adminFlag = !!prof?.is_admin || user.email === 'jbanks@sports-collective.com';
+      setCanSell(!!prof?.can_sell || adminFlag);
            if (paramSlug !== "new") {
         const { data, error } = await supabase
           .from("sets")
@@ -987,11 +989,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <Link href={`/set/${encodeURIComponent(slug)}/view`} className="btn btn-sm btn-outline">
                 View Inventory
               </Link>
-              {canSell && (
-                <button type="button" onClick={() => setScansPickerOpen(true)} className="btn btn-sm btn-outline">
-                  📷 Add Scans
-                </button>
-              )}
+              <button type="button" onClick={() => setScansPickerOpen(true)} className="btn btn-sm btn-outline">
+                📷 Add Scans
+              </button>
             </div>
           </div>
         )}
@@ -1418,10 +1418,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>Pick where you want to attach card scans.</p>
             <div style={{ display: 'grid', gap: 12 }}>
               {[
-                { icon: '📷', label: 'Add Scans to Single Cards', hint: 'Match scans to individual listings — front and back per card.', href: '/listings/scan-inbox' },
-                { icon: '📚', label: 'Add Scans to Set Inventory', hint: 'Bulk attach scans to rows in one of your sets.', href: '/listings/scan-from-set' },
-                { icon: '🪟', label: 'Multi-Card Scan (2×3 grid)', hint: 'Upload one image of 6 fronts + one of 6 backs. Splits losslessly into 6 cards and assigns each to a row.', href: '/listings/scan-multi-card' },
-              ].map(c => (
+                // 'sellerOnly' options match scans to listings — only useful for
+                // members with selling privileges. The other two write photos
+                // to set rows directly and are open to every approved member.
+                { icon: '📷', label: 'Add Scans to Single Cards', hint: 'Match scans to individual listings — front and back per card.', href: '/listings/scan-inbox', sellerOnly: true },
+                { icon: '📚', label: 'Add Scans to Set Inventory', hint: 'Bulk attach scans to rows in one of your sets.', href: '/listings/scan-from-set', sellerOnly: false },
+                { icon: '🪟', label: 'Multi-Card Scan (2×3 grid)', hint: 'Upload one image of 6 fronts + one of 6 backs. Splits losslessly into 6 cards and assigns each to a row.', href: '/listings/scan-multi-card', sellerOnly: false },
+              ].filter(c => canSell || !c.sellerOnly).map(c => (
                 <button key={c.label} type="button"
                   onClick={() => { setScansPickerOpen(false); router.push(c.href); }}
                   className="panel-bordered"

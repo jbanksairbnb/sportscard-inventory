@@ -3,9 +3,13 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { REQUIRE_APPLICATION } from '@/lib/featureFlags';
 import SCLogo from '@/components/SCLogo';
 
+// Legacy waiting page. The current signup flow grants buying access
+// immediately on signup, so brand-new users no longer pass through here.
+// We keep the route alive only as a graceful destination for any
+// historical row that might still be in 'pending' or 'rejected' state;
+// approved users (the common case) bounce to /home.
 export default function PendingPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -18,19 +22,6 @@ export default function PendingPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       setEmail(user.email || '');
-      // Pilot mode: skip the gate. Anyone landing here gets auto-approved
-      // and bounced to /home. Flip REQUIRE_APPLICATION back to true in
-      // lib/featureFlags.ts to restore the waiting screen.
-      if (!REQUIRE_APPLICATION) {
-        await supabase.from('user_profiles').upsert({
-          user_id: user.id,
-          email: user.email,
-          application_status: 'approved',
-          applied_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' });
-        router.push('/home');
-        return;
-      }
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('application_status')
