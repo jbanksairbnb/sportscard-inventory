@@ -391,6 +391,22 @@ export default function ScanFromSetPage() {
                     className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
                     ✓ Select all visible
                   </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+                    <button type="button"
+                      onClick={() => setSelectedOrder(prev => {
+                        const visibleIdxs = visibleRows.map(v => v.origIndex);
+                        const toAdd = visibleIdxs.filter(i => !prev.includes(i));
+                        const room = Math.max(0, 25 - prev.length);
+                        return [...prev, ...toAdd.slice(0, room)];
+                      })}
+                      disabled={visibleRows.length === 0 || selectedOrder.length >= 25}
+                      className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                      ✓ Select first 25
+                    </button>
+                    <span className="mono" style={{ fontSize: 9, color: 'var(--ink-mute)', fontStyle: 'italic', marginLeft: 8 }}>
+                      try this amount for optimal performance
+                    </span>
+                  </div>
                   {selectedOrder.length > 0 && (
                     <button type="button" onClick={() => setSelectedOrder([])}
                       className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--rust)', border: '1.5px solid var(--rust)' }}>
@@ -532,6 +548,27 @@ export default function ScanFromSetPage() {
                     {files.length === expectedFileCount ? '✓ File count matches' : `⚠ Expected ${expectedFileCount}, got ${files.length}`}
                   </div>
                   <div style={{ flex: 1 }} />
+                  {(() => {
+                    const allListing = selectedOrder.length > 0 && selectedOrder.every(i => destinations[i]?.listing);
+                    return (
+                      <button type="button"
+                        onClick={() => {
+                          setDestinations(prev => {
+                            const next = { ...prev };
+                            for (const i of selectedOrder) {
+                              const cur = next[i] || { setRow: true, listing: false };
+                              next[i] = { ...cur, listing: !allListing };
+                            }
+                            return next;
+                          });
+                        }}
+                        disabled={selectedOrder.length === 0}
+                        className="btn btn-ghost btn-sm"
+                        title="Toggle 'Also create draft listing' on every selected card">
+                        {allListing ? '✕ Clear listings on all' : '🏷️ Create listings on all'}
+                      </button>
+                    );
+                  })()}
                   <button onClick={() => setFiles([])} className="btn btn-ghost btn-sm">Clear files</button>
                   <button onClick={saveAll} disabled={saving || files.length < expectedFileCount}
                     className="btn btn-primary">
