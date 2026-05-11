@@ -7,11 +7,17 @@ import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
+// CSV schema for uploads. 'Notes' was added when the inventory table got
+// per-row notes; 'Graded' was removed (we now derive graded-ness from
+// whether Grading Company is filled in). REQUIRED_HEADERS is the subset
+// we'll error on if missing — 'Notes' stays optional so backups exported
+// before the schema change still import cleanly.
 const EXPECTED_HEADERS = [
-  'Card #', 'Player', 'Owned', 'Raw Grade', 'Graded',
+  'Card #', 'Player', 'Notes', 'Owned', 'Raw Grade',
   'Grading Company', 'Grade', 'Cost', 'Value', 'Target Price',
   'Sale Price', 'Date Purchased', 'Purchased From', 'Upload Image(s)',
 ];
+const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => h !== 'Notes');
 
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
 const BRANDS = ['Topps', 'Bowman', 'Play Ball'];
@@ -157,16 +163,16 @@ export default function NewSetPage() {
     Papa.parse(file, {
       header: true, skipEmptyLines: true,
       complete: (result) => {
-        const missing = EXPECTED_HEADERS.filter((h) => !(result.meta.fields || []).includes(h));
+        const missing = REQUIRED_HEADERS.filter((h) => !(result.meta.fields || []).includes(h));
         if (missing.length > 0) { setErrors([`CSV is missing required columns: ${missing.join(', ')}.`]); setRows([]); return; }
         const cleaned = (result.data as any[]).map((r) => {
           const norm: Record<string, any> = {};
           EXPECTED_HEADERS.forEach((h) => { norm[h] = r[h] ?? ''; });
-          ['Owned', 'Graded'].forEach((f) => {
-            const val = String(norm[f]).trim().toLowerCase();
-            norm[f] = val === 'yes' || val === 'y' || val === 'true' || val === '1' ? 'Yes'
+          {
+            const val = String(norm['Owned']).trim().toLowerCase();
+            norm['Owned'] = val === 'yes' || val === 'y' || val === 'true' || val === '1' ? 'Yes'
               : val === 'no' || val === 'n' || val === 'false' || val === '0' ? 'No' : '';
-          });
+          }
           const rg = String(norm['Raw Grade']).trim();
           norm['Raw Grade'] = RAW_GRADES.includes(rg as any) ? rg : '';
           norm['Grade'] = normalizeNumericGrade(norm['Grade']);
@@ -208,7 +214,6 @@ export default function NewSetPage() {
             if (isOwned) {
               norm['Grade'] = normalizeNumericGrade(r['Grade']);
               norm['Grading Company'] = 'PSA';
-              norm['Graded'] = 'Yes';
               const cost = String(r['My Cost'] ?? '').trim();
               if (cost && Number(cost) > 0) norm['Cost'] = toCurrency(stripCurrency(cost));
               const dp = String(r['Purchase Date'] ?? '').trim();

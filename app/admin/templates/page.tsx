@@ -17,11 +17,17 @@ type ExistingTemplate = {
   created_at: string | null;
 };
 
+// Roster template schema. 'Notes' was added when the inventory table
+// got per-row notes; 'Graded' was retired (graded-ness is now derived
+// from the Grading Company field). REQUIRED_HEADERS is the subset
+// validated on upload — 'Notes' stays optional so old set-roster CSVs
+// produced before the schema change still import.
 const EXPECTED_HEADERS = [
-  'Card #', 'Player', 'Owned', 'Raw Grade', 'Graded',
+  'Card #', 'Player', 'Notes', 'Owned', 'Raw Grade',
   'Grading Company', 'Grade', 'Cost', 'Value', 'Target Price',
   'Sale Price', 'Date Purchased', 'Purchased From', 'Upload Image(s)',
 ];
+const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => h !== 'Notes');
 
 const SPORTS = ['baseball', 'football', 'basketball', 'hockey'] as const;
 
@@ -124,7 +130,7 @@ export default function AdminTemplatesPage() {
         skipEmptyLines: true,
         complete: (res) => {
           const fields = res.meta.fields || [];
-          const missing = EXPECTED_HEADERS.filter(h => !fields.includes(h));
+          const missing = REQUIRED_HEADERS.filter(h => !fields.includes(h));
           const meta = inferFromFilename(file.name);
           if (missing.length > 0) {
             next.push({ filename: file.name, ...meta, rows: [], error: `Missing columns: ${missing.join(', ')}` });
