@@ -56,16 +56,16 @@ export default function LoginPage() {
         setError(error.message)
       } else if (data.session && data.user) {
         // Buyers get instant access — profile is auto-created as approved
-        // with no selling rights. Sellers get the same baseline plus
-        // wants_to_sell=true and are routed to the seller application.
-        // The admin still controls can_sell.
+        // with no selling rights. Sellers get the same baseline; the seller
+        // *intent* only drives routing (to /apply). wants_to_sell stays
+        // false until they actually submit the application form, so /apply
+        // shows them the form (not the pending screen) on first arrival.
         await supabase.from('user_profiles').upsert({
           user_id: data.user.id,
           email: data.user.email,
           application_status: 'approved',
           can_sell: false,
-          wants_to_sell: intent === 'seller',
-          applied_at: new Date().toISOString(),
+          wants_to_sell: false,
         }, { onConflict: 'user_id' })
         try { localStorage.removeItem(SIGNUP_INTENT_KEY) } catch {}
         router.push(intent === 'seller' ? '/apply' : '/home')

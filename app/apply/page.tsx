@@ -55,7 +55,9 @@ export default function ApplyPage() {
         .maybeSingle();
 
       // Brand-new auth user with no profile yet — likely arriving from a
-      // post-confirmation email click. Use the intent we stashed at signup.
+      // post-confirmation email click. Use the intent we stashed at signup
+      // to decide where to send them, but DON'T set wants_to_sell here;
+      // that only flips true when they submit the application form below.
       if (!profile) {
         let intent: 'buyer' | 'seller' = 'buyer';
         try {
@@ -67,8 +69,7 @@ export default function ApplyPage() {
           email: user.email,
           application_status: 'approved',
           can_sell: false,
-          wants_to_sell: intent === 'seller',
-          applied_at: new Date().toISOString(),
+          wants_to_sell: false,
         }, { onConflict: 'user_id' });
         try { localStorage.removeItem(SIGNUP_INTENT_KEY); } catch {}
         if (intent === 'buyer') { router.push('/home'); return; }
