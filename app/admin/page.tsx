@@ -19,6 +19,7 @@ type Applicant = {
   wants_to_sell?: boolean;
   full_name?: string | null;
   seller_terms_accepted_at?: string | null;
+  seller_references?: string[] | null;
 };
 
 export default function AdminPage() {
@@ -293,9 +294,9 @@ export default function AdminPage() {
 
                     {a.collection_description && (
                       <div style={{ marginBottom: 10 }}>
-                        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 4 }}>About Their Collection</div>
+                        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 4 }}>Notes</div>
                         <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--ink-soft)', fontStyle: 'italic', borderLeft: '3px solid var(--mustard)', paddingLeft: 12 }}>
-                          "{a.collection_description}"
+                          &ldquo;{a.collection_description}&rdquo;
                         </p>
                       </div>
                     )}
@@ -312,8 +313,20 @@ export default function AdminPage() {
                       )}
                       {a.fb_groups && (
                         <>
-                          <span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', alignSelf: 'start', paddingTop: 2 }}>Facebook</span>
-                          <span style={{ color: 'var(--ink-soft)', lineHeight: 1.5 }}>{a.fb_groups}</span>
+                          <span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', alignSelf: 'start', paddingTop: 2 }}>FB Groups</span>
+                          <span style={{ color: 'var(--ink-soft)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{a.fb_groups}</span>
+                        </>
+                      )}
+                      {a.seller_references && a.seller_references.length > 0 && (
+                        <>
+                          <span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', alignSelf: 'start', paddingTop: 2 }}>
+                            Refs ({a.seller_references.length})
+                          </span>
+                          <ol style={{ margin: 0, paddingLeft: 18, color: 'var(--ink-soft)', lineHeight: 1.5 }}>
+                            {a.seller_references.map((r, i) => (
+                              <li key={i} style={{ margin: '2px 0' }}>{r}</li>
+                            ))}
+                          </ol>
                         </>
                       )}
                     </div>
