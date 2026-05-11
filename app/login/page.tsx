@@ -24,6 +24,9 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  // When non-null, signup succeeded and Supabase sent a confirmation link
+  // — we render the "check your email" screen instead of the form.
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState<string | null>(null)
   const router = useRouter()
 
   function switchMode(next: Mode) {
@@ -31,6 +34,7 @@ export default function LoginPage() {
     setError('')
     setMessage('')
     setConfirmPassword('')
+    setAwaitingConfirmation(null)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -47,19 +51,27 @@ export default function LoginPage() {
     const supabase = createClient()
 
     if (mode === 'register') {
-      // Persist intent BEFORE calling signUp so /apply can recover it after
-      // email confirmation if Supabase doesn't return a session immediately.
+      // localStorage is the legacy fallback; the canonical place we stash
+      // intent now is Supabase user_metadata.signup_intent (survives the
+      // confirmation-email round trip without any client storage).
       try { localStorage.setItem(SIGNUP_INTENT_KEY, intent) } catch {}
 
-      const { data, error } = await supabase.auth.signUp({ email, password })
+      const next = intent === 'seller' ? '/apply' : '/home'
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { signup_intent: intent },
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        },
+      })
       if (error) {
         setError(error.message)
       } else if (data.session && data.user) {
-        // Buyers get instant access — profile is auto-created as approved
-        // with no selling rights. Sellers get the same baseline; the seller
-        // *intent* only drives routing (to /apply). wants_to_sell stays
-        // false until they actually submit the application form, so /apply
-        // shows them the form (not the pending screen) on first arrival.
+        // Fallback path: Supabase project doesn't require email confirmation
+        // and a session was returned immediately. Create the profile now and
+        // route the user. With Confirm Email enabled (the expected setting),
+        // this branch is unreachable — the else branch fires instead.
         await supabase.from('user_profiles').upsert({
           user_id: data.user.id,
           email: data.user.email,
@@ -68,15 +80,13 @@ export default function LoginPage() {
           wants_to_sell: false,
         }, { onConflict: 'user_id' })
         try { localStorage.removeItem(SIGNUP_INTENT_KEY) } catch {}
-        router.push(intent === 'seller' ? '/apply' : '/home')
+        router.push(next)
         router.refresh()
       } else {
-        setMessage(
-          intent === 'seller'
-            ? 'Account created! Check your email to confirm, then sign in to finish your seller application.'
-            : 'Account created! Check your email to confirm, then sign in to start browsing.'
-        )
-        switchMode('login')
+        // Confirmation email sent. Show the dedicated success screen so the
+        // user knows exactly what to do next. They can't access the site
+        // until they click the link and we exchange the code for a session.
+        setAwaitingConfirmation(email)
       }
     } else if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({ email, password })
@@ -102,7 +112,7 @@ export default function LoginPage() {
 
   const headings: Record<Mode, { title: string; sub: string }> = {
     login:    { title: 'Sign in',        sub: 'Welcome back to the Collective' },
-    register: { title: 'Create account', sub: 'Buyers get immediate access. Selling requires a quick application.' },
+    register: { title: 'Create account', sub: "Confirm your email to start buying. Selling requires a quick application." },
     forgot:   { title: 'Reset password', sub: "Enter your email and we'll send a reset link" },
   }
   const { title, sub } = headings[mode]
@@ -158,6 +168,31 @@ export default function LoginPage() {
         </div>
 
         <div className="panel-bordered" style={{ padding: '32px 28px' }}>
+          {awaitingConfirmation ? (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 56, marginBottom: 10 }}>✉️</div>
+              <div className="eyebrow" style={{ color: 'var(--orange)', marginBottom: 8 }}>★ Confirm Your Email ★</div>
+              <h1 className="display" style={{ fontSize: 26, color: 'var(--plum)', margin: '0 0 14px' }}>
+                Check your inbox
+              </h1>
+              <p style={{ margin: '0 0 14px', fontSize: 14, lineHeight: 1.6, color: 'var(--ink-soft)' }}>
+                We just sent a confirmation link to <strong style={{ color: 'var(--plum)' }}>{awaitingConfirmation}</strong>.
+                Click the link to verify your email and unlock the Collective.
+              </p>
+              <p style={{ margin: '0 0 22px', fontSize: 13, lineHeight: 1.6, color: 'var(--ink-mute)' }}>
+                Didn&apos;t get it? Check your spam folder, or try signing in below to have it resent.
+              </p>
+              <button
+                type="button"
+                onClick={() => { switchMode('login'); setMessage('Once your email is confirmed, sign in here.'); }}
+                className="btn btn-primary"
+                style={{ width: '100%' }}
+              >
+                Back to sign in
+              </button>
+            </div>
+          ) : (
+          <>
           <div style={{ marginBottom: 24 }}>
             <h1 className="display" style={{ fontSize: 28, color: 'var(--plum)', margin: '0 0 6px' }}>
               {title}
@@ -360,6 +395,8 @@ export default function LoginPage() {
               </>
             )}
           </div>
+          </>
+          )}
         </div>
 
         <div className="eyebrow" style={{ textAlign: 'center', marginTop: 20, color: 'var(--ink-mute)', fontSize: 9.5 }}>
