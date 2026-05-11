@@ -11,8 +11,13 @@ import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearch
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 
 /* =====================  Constants  ===================== */
+// Notes is a free-form per-row text field shown beneath the player name in
+// the frozen left block — captures anything the user wants to remember about
+// the card (variation, condition note, provenance, etc.).
+// The legacy "Graded" yes/no column was removed; whether a card is graded is
+// now derived from whether the Grading Company is filled in.
 const EXPECTED_HEADERS = [
-  "Card #", "Description", "Owned", "Raw Grade", "Graded",
+  "Card #", "Description", "Notes", "Owned", "Raw Grade",
     "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Type", "Target Condition - Low", "Target Condition - High", "Target Grading Companies",
   "Sale Price", "Date Purchased", "Purchased From", "Upload Image(s)",
 ];
@@ -511,7 +516,9 @@ export default function SetEditorPage() {
     const grade = String(row['Grade'] || '').trim() || null;
     const gradingCompany = String(row['Grading Company'] || '').trim() || null;
     const rawGrade = String(row['Raw Grade'] || '').trim() || null;
-    const isGraded = String(row['Graded'] || '').toLowerCase() === 'yes';
+    // A card counts as graded when the Grading Company is filled in — no
+    // separate yes/no flag any more.
+    const isGraded = !!gradingCompany;
     return {
       year: year ? Number(year) || null : null,
       brand: brand || null,
@@ -650,9 +657,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     if (brand) params.set('brand', String(brand));
     if (row['Card #']) params.set('card', String(row['Card #']));
     if (row['Player']) params.set('player', String(row['Player']));
-    if (String(row['Graded'] || '') === 'Yes') {
+    if (String(row['Grading Company'] || '').trim()) {
       params.set('condition_type', 'graded');
-      if (row['Grading Company']) params.set('grading_company', String(row['Grading Company']));
+      params.set('grading_company', String(row['Grading Company']));
       if (row['Grade']) params.set('grade', String(row['Grade']));
     } else if (row['Raw Grade']) {
       params.set('condition_type', 'raw');
@@ -880,9 +887,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     position: 'sticky', top: 0, zIndex: 10,
   };
 
-  // Freeze the first three columns (checkbox, Card #, Player) so they stay
-  // visible while scrolling right. Widths must match the actual cell widths.
-  const FROZEN_W = { check: 36, cardNum: 96, player: 248 };
+  // Freeze the first three columns (checkbox, Card #, Player+Notes) so they
+  // stay visible while scrolling right. The Player column hosts the player
+  // input PLUS a small Notes textarea, so it's wider than the other frozen
+  // cells. Widths must match the actual cell widths.
+  const FROZEN_W = { check: 36, cardNum: 96, player: 288 };
   const FROZEN_LEFT = {
     check: 0,
     cardNum: FROZEN_W.check,
@@ -1013,7 +1022,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
               <option value="Owned">Owned</option>
               <option value="Raw Grade">Raw Grade</option>
-              <option value="Graded">Graded</option>
               <option value="Grading Company">Grading Company</option>
               <option value="Grade">Grade</option>
               <option value="Cost">Cost</option>
@@ -1024,7 +1032,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <option value="Purchased From">Purchased From</option>
             </select>
             <span style={{ color: 'var(--mustard)', fontSize: 12, fontWeight: 600 }}>to</span>
-            {bulkField === 'Owned' || bulkField === 'Graded' ? (
+            {bulkField === 'Owned' ? (
               <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
                 style={{ padding: '6px 8px', fontSize: 12, borderRadius: 6, border: '1.5px solid var(--mustard)', background: 'var(--cream)', color: 'var(--plum)', fontWeight: 600 }}>
                 <option value=""></option>
@@ -1097,7 +1105,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                     </th>
                     <SortableHeader label="Owned" />
                     <SortableHeader label="Raw Grade" />
-                    <SortableHeader label="Graded" />
                     <SortableHeader label="Grading Company" />
                     <SortableHeader label="Grade" />
                     <SortableHeader label="Cost" />
@@ -1134,7 +1141,18 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       <td style={tdFrozen(FROZEN_LEFT.player, FROZEN_W.player, rowBg, PLAYER_RIGHT_BORDER)}>
                         <input value={v(row["Player"])}
                           onChange={(e) => onChangeCell(origIndex, "Player", e.target.value)}
-                          style={{ ...CELL_INPUT, width: 220 }} />
+                          style={{ ...CELL_INPUT, width: 260 }} />
+                        <textarea value={v(row["Notes"])}
+                          onChange={(e) => onChangeCell(origIndex, "Notes", e.target.value)}
+                          placeholder="Notes (variation, condition, provenance…)"
+                          rows={2}
+                          style={{
+                            ...CELL_INPUT,
+                            width: 260, marginTop: 4,
+                            fontSize: 11.5, fontStyle: 'italic',
+                            color: 'var(--ink-soft)', lineHeight: 1.35,
+                            resize: 'vertical', minHeight: 32,
+                          }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Owned"])} onChange={(e) => onChangeCell(origIndex, "Owned", e.target.value)} style={CELL_SELECT}>
@@ -1145,12 +1163,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Raw Grade"])} onChange={(e) => onChangeCell(origIndex, "Raw Grade", e.target.value)} style={CELL_SELECT}>
                           {RAW_GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <select value={v(row["Graded"])} onChange={(e) => onChangeCell(origIndex, "Graded", e.target.value)} style={CELL_SELECT}>
-                          {YES_NO.map((o) => <option key={o} value={o}>{o}</option>)}
-                          <option value=""></option>
                         </select>
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
