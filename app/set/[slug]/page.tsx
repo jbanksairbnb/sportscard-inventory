@@ -1144,14 +1144,28 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           style={{ ...CELL_INPUT, width: 260 }} />
                         <textarea value={v(row["Notes"])}
                           onChange={(e) => onChangeCell(origIndex, "Notes", e.target.value)}
+                          onInput={(e) => {
+                            const el = e.currentTarget;
+                            el.style.height = 'auto';
+                            el.style.height = el.scrollHeight + 'px';
+                          }}
+                          ref={(el) => {
+                            // Match the auto-resize on initial mount so rows
+                            // that already have notes data load at the right
+                            // height instead of clipping to one line.
+                            if (el) {
+                              el.style.height = 'auto';
+                              el.style.height = el.scrollHeight + 'px';
+                            }
+                          }}
                           placeholder="Notes (variation, condition, provenance…)"
-                          rows={2}
+                          rows={1}
                           style={{
                             ...CELL_INPUT,
                             width: 260, marginTop: 4,
                             fontSize: 11.5, fontStyle: 'italic',
                             color: 'var(--ink-soft)', lineHeight: 1.35,
-                            resize: 'vertical', minHeight: 32,
+                            resize: 'none', overflow: 'hidden',
                           }} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
