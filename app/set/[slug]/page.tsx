@@ -910,13 +910,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     };
   }
 
-  function SortableHeader({ label }: { label: SortKey }) {
+  function SortableHeader({ label, display }: { label: SortKey; display?: string }) {
     const isActive = sortKey === label;
     return (
       <th style={TH_STYLE}>
         <button type="button" onClick={() => handleSortClick(label)}
           style={{ color: 'inherit', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3, fontWeight: isActive ? 900 : 700 }}>
-          {label} {isActive ? (sortDir === 'asc' ? "↑" : "↓") : ""}
+          {display || label} {isActive ? (sortDir === 'asc' ? "↑" : "↓") : ""}
         </button>
       </th>
     );
@@ -1105,7 +1105,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                     </th>
                     <SortableHeader label="Owned" />
                     <SortableHeader label="Raw Grade" />
-                    <SortableHeader label="Grading Company" />
+                    <SortableHeader label="Grading Company" display="Grading Co." />
                     <SortableHeader label="Grade" />
                     <SortableHeader label="Cost" />
                     <SortableHeader label="Value" />
@@ -1166,7 +1166,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         </select>
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
-                        <select value={v(row["Grading Company"])} onChange={(e) => onChangeCell(origIndex, "Grading Company", e.target.value)} style={CELL_SELECT}>
+                        <select value={v(row["Grading Company"])} onChange={(e) => onChangeCell(origIndex, "Grading Company", e.target.value)}
+                          style={{ ...CELL_SELECT, width: 78, minWidth: 78 }}>
                           {COMPANIES.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </td>
