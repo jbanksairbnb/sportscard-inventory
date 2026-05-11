@@ -45,6 +45,11 @@ type BidderStats = BidderRow & {
   totalSpend: number;     // sum auction + claim paid
   claimCount: number;     // claim items claimed/sold/paid
   claimPaidCount: number; // claim items paid
+  // Unpaid balance: auction lots with status='sold' + claim items with
+  // status 'claimed'/'sold'. Drives the cross-auction combined invoice
+  // surfaced on the bidder detail page.
+  unpaidCount: number;
+  unpaidTotal: number;
 };
 
 function fmtMoney(n: number): string {
@@ -59,7 +64,7 @@ export default function BiddersListPage() {
   const [bidEvents, setBidEvents] = useState<BidEventRow[]>([]);
   const [claimItems, setClaimItems] = useState<ClaimItemRow[]>([]);
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims' | 'bids'>('bids');
+  const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims' | 'bids' | 'unpaid'>('bids');
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -136,12 +141,16 @@ export default function BiddersListPage() {
       const totalBids = myEvents.length;
       const lotsBidOn = new Set(myEvents.map(e => e.lot_id)).size;
       let leadingCount = 0, wonCount = 0, paidCount = 0, totalSpend = 0;
+      let unpaidCount = 0, unpaidTotal = 0;
       for (const l of myLots) {
         leadingCount += 1;
         if (l.status === 'sold' || l.status === 'paid') wonCount += 1;
         if (l.status === 'paid') {
           paidCount += 1;
           if (l.current_bid) totalSpend += l.current_bid;
+        } else if (l.status === 'sold') {
+          unpaidCount += 1;
+          if (l.current_bid) unpaidTotal += l.current_bid;
         }
       }
       let claimCount = 0, claimPaidCount = 0;
@@ -150,9 +159,12 @@ export default function BiddersListPage() {
         if (c.claim_status === 'paid') {
           claimPaidCount += 1;
           if (c.price) totalSpend += c.price;
+        } else if (c.claim_status === 'claimed' || c.claim_status === 'sold') {
+          unpaidCount += 1;
+          if (c.price) unpaidTotal += c.price;
         }
       }
-      return { ...b, totalBids, lotsBidOn, leadingCount, wonCount, paidCount, totalSpend, claimCount, claimPaidCount };
+      return { ...b, totalBids, lotsBidOn, leadingCount, wonCount, paidCount, totalSpend, claimCount, claimPaidCount, unpaidCount, unpaidTotal };
     });
   }, [bidders, lots, claimItems, bidEvents]);
 
@@ -166,6 +178,7 @@ export default function BiddersListPage() {
       if (sort === 'won') return b.wonCount - a.wonCount;
       if (sort === 'bids') return b.totalBids - a.totalBids;
       if (sort === 'claims') return b.claimCount - a.claimCount;
+      if (sort === 'unpaid') return b.unpaidTotal - a.unpaidTotal;
       return a.name.localeCompare(b.name);
     });
     return arr;
@@ -231,10 +244,10 @@ export default function BiddersListPage() {
             placeholder="Search bidders…"
             className="input-sc" style={{ flex: 1, minWidth: 240, maxWidth: 360, fontSize: 13 }} />
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['bids', 'spend', 'won', 'claims', 'name'] as const).map(opt => (
+            {(['bids', 'spend', 'unpaid', 'won', 'claims', 'name'] as const).map(opt => (
               <button key={opt} onClick={() => setSort(opt)}
                 className={sort === opt ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
-                Sort: {opt === 'bids' ? '# bids' : opt === 'spend' ? '$ spent' : opt === 'won' ? '# won' : opt === 'claims' ? '# claims' : 'A→Z'}
+                Sort: {opt === 'bids' ? '# bids' : opt === 'spend' ? '$ spent' : opt === 'unpaid' ? '$ unpaid' : opt === 'won' ? '# won' : opt === 'claims' ? '# claims' : 'A→Z'}
               </button>
             ))}
           </div>
@@ -281,6 +294,7 @@ export default function BiddersListPage() {
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Won</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Claims</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Paid</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Unpaid wins across all auctions + claim sales. Click the bidder to generate a combined invoice.">$ Unpaid</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>$ Spent</th>
                   <th style={{ padding: '10px 14px', textAlign: 'center', width: 36 }}></th>
                 </tr>
@@ -299,6 +313,10 @@ export default function BiddersListPage() {
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.wonCount}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.claimCount}</td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)' }}>{s.paidCount + s.claimPaidCount}</td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: s.unpaidTotal > 0 ? 'var(--rust)' : 'var(--ink-mute)' }}
+                      title={s.unpaidCount > 0 ? `${s.unpaidCount} unpaid item${s.unpaidCount === 1 ? '' : 's'}` : ''}>
+                      {s.unpaidTotal > 0 ? fmtMoney(s.unpaidTotal) : '—'}
+                    </td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
                       {s.totalSpend > 0 ? fmtMoney(s.totalSpend) : '—'}
                     </td>
