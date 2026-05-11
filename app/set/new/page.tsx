@@ -158,6 +158,21 @@ export default function NewSetPage() {
     [year, brand, desc]
   );
 
+  function downloadCsvTemplate() {
+    // Headers-only CSV so users have a starter file with the current column
+    // shape — including 'Notes' and without the retired 'Graded' column.
+    const csv = EXPECTED_HEADERS.map(h => `"${h.replace(/"/g, '""')}"`).join(',') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sports-collective-set-template.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function handleFileChosen(file: File) {
     setErrors([]);
     Papa.parse(file, {
@@ -293,7 +308,7 @@ export default function NewSetPage() {
           <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
             <li><strong>From Library</strong> — pick a pre-loaded checklist from our library, filtered by sport. Fastest way to start a new set.</li>
-            <li><strong>Upload CSV</strong> — upload your own checklist using our standard template. Required columns: <span className="mono" style={{ fontSize: 12 }}>{EXPECTED_HEADERS.join(', ')}</span>. Tick the box at the bottom of the upload section to share your checklist with the community.</li>
+            <li><strong>Upload CSV</strong> — upload your own checklist using our standard template. Required columns: <span className="mono" style={{ fontSize: 12 }}>{REQUIRED_HEADERS.join(', ')}</span> (Notes optional). Use <strong>Download blank template</strong> in the upload section if you want a starter file. Tick the box at the bottom of the upload section to share your checklist with the community.</li>
             <li><strong>PSA Export</strong> — download your collection from your PSA account and upload the CSV directly. Owned cards auto-fill with grades, costs, and dates. The checklist (Card # and Player only — no personal data) is automatically added to our public library if it isn&apos;t there yet.</li>
             <li>Don&apos;t see a set you want?  Email <a href="mailto:info@sports-collective.com" style={{ color: 'var(--plum)', fontWeight: 700 }}>info@sports-collective.com</a> and we&apos;ll add it to the library.</li>
           </ul>
@@ -351,11 +366,17 @@ export default function NewSetPage() {
                 <div style={{ flex: 1, minWidth: 240 }}>
                   <div className="display" style={{ fontSize: 15, color: 'var(--plum)', marginBottom: 4 }}>Standard CSV</div>
                   <div className="eyebrow" style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 10 }}>
-                    Required columns: {EXPECTED_HEADERS.join(', ')}
+                    Required columns: {REQUIRED_HEADERS.join(', ')}. <span style={{ color: 'var(--ink-soft)' }}>Notes is optional.</span>
                   </div>
-                  <input type="file" accept=".csv,text/csv"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileChosen(f); }}
-                    style={{ display: 'block', padding: '8px 12px', border: '2px solid var(--plum)', borderRadius: 10, background: 'var(--cream)', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', cursor: 'pointer' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <input type="file" accept=".csv,text/csv"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileChosen(f); }}
+                      style={{ display: 'block', padding: '8px 12px', border: '2px solid var(--plum)', borderRadius: 10, background: 'var(--cream)', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', cursor: 'pointer' }} />
+                    <button type="button" onClick={downloadCsvTemplate} className="btn btn-ghost btn-sm"
+                      title="Download a blank CSV with the current column headers">
+                      📄 Download blank template
+                    </button>
+                  </div>
                 </div>
                 <div style={{ flex: 1, minWidth: 240, borderLeft: '2px solid var(--cream-warm)', paddingLeft: 32 }}>
                   <div className="display" style={{ fontSize: 15, color: 'var(--plum)', marginBottom: 4 }}>PSA Export</div>
