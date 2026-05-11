@@ -157,6 +157,14 @@ export default function BidderProfilePage() {
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
 
+  // Combined-invoice state: a single Messenger-ready invoice covering every
+  // unpaid win this bidder has across all auctions + claim sales. Shipping
+  // and payment text are local-only; the user tweaks them per-invoice.
+  const [invoiceShipping, setInvoiceShipping] = useState<string>('0');
+  const [invoicePayment, setInvoicePayment] = useState<string>('PayPal G&S to: your-paypal@email.com\nVenmo: @your-venmo');
+  const [invoiceCopied, setInvoiceCopied] = useState(false);
+  const [markingPaid, setMarkingPaid] = useState(false);
+
   useEffect(() => {
     const supabase = createClient();
     async function load() {
@@ -436,6 +444,135 @@ export default function BidderProfilePage() {
     return { bidCount, wonCount, paidCount, totalSpend, claimCount };
   }, [items, claimItems]);
 
+  // Cross-source unpaid wins: auction lots with status 'sold' (won but not
+  // paid) + claim items with status 'claimed' or 'sold' (committed but not
+  // paid). Paid items are excluded — they're already settled.
+  const unpaidGroups = useMemo(() => {
+    type UnpaidLine = {
+      key: string;            // unique row id for status-update fan-out
+      kind: 'auction' | 'claim';
+      label: string;          // card description for the invoice line
+      amount: number;
+    };
+    type Group = {
+      groupKey: string;
+      kind: 'auction' | 'claim';
+      sourceId: string;
+      sourceTitle: string;
+      lines: UnpaidLine[];
+    };
+    const groups = new Map<string, Group>();
+
+    for (const i of items) {
+      if (i.status !== 'sold') continue;
+      const key = `auction:${i.auctionId}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          groupKey: key, kind: 'auction', sourceId: i.auctionId,
+          sourceTitle: i.auctionTitle || 'Auction', lines: [],
+        });
+      }
+      groups.get(key)!.lines.push({
+        key: i.lotId, kind: 'auction',
+        label: cardSummary(i.listing),
+        amount: i.bid || 0,
+      });
+    }
+    for (const c of claimItems) {
+      if (c.claimStatus !== 'claimed' && c.claimStatus !== 'sold') continue;
+      const key = `claim:${c.saleId}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          groupKey: key, kind: 'claim', sourceId: c.saleId,
+          sourceTitle: c.saleTitle || 'Claim Sale', lines: [],
+        });
+      }
+      groups.get(key)!.lines.push({
+        key: c.itemId, kind: 'claim',
+        label: cardSummary(c.listing),
+        amount: c.price || 0,
+      });
+    }
+    return Array.from(groups.values()).sort((a, b) => a.sourceTitle.localeCompare(b.sourceTitle));
+  }, [items, claimItems]);
+
+  const unpaidSummary = useMemo(() => {
+    let count = 0;
+    let subtotal = 0;
+    for (const g of unpaidGroups) for (const l of g.lines) {
+      count += 1;
+      subtotal += l.amount;
+    }
+    return { count, subtotal };
+  }, [unpaidGroups]);
+
+  const invoiceText = useMemo(() => {
+    if (!bidder || unpaidGroups.length === 0) return '';
+    const ship = Number.parseFloat(invoiceShipping);
+    const shipping = Number.isFinite(ship) ? ship : 0;
+    const total = unpaidSummary.subtotal + shipping;
+
+    const blocks: string[] = [];
+    blocks.push(`Hi ${bidder.name}!`);
+    blocks.push('');
+    blocks.push(
+      unpaidGroups.length === 1
+        ? `Combined invoice for your wins on "${unpaidGroups[0].sourceTitle}":`
+        : `Here's your combined invoice across ${unpaidGroups.length} sales:`
+    );
+    blocks.push('');
+    for (const g of unpaidGroups) {
+      blocks.push(`▸ ${g.sourceTitle}`);
+      for (const l of g.lines) {
+        blocks.push(`  · ${l.label} — ${fmtMoney(l.amount)}`);
+      }
+      blocks.push('');
+    }
+    blocks.push(`Subtotal: ${fmtMoney(unpaidSummary.subtotal)}`);
+    blocks.push(`Shipping: ${fmtMoney(shipping)}`);
+    blocks.push(`Total:    ${fmtMoney(total)}`);
+    blocks.push('');
+    if (invoicePayment.trim()) {
+      blocks.push(invoicePayment.trim());
+      blocks.push('');
+    }
+    blocks.push('Thanks!');
+    return blocks.join('\n');
+  }, [bidder, unpaidGroups, unpaidSummary, invoiceShipping, invoicePayment]);
+
+  async function copyInvoice() {
+    if (!invoiceText) return;
+    try {
+      await navigator.clipboard.writeText(invoiceText);
+      setInvoiceCopied(true);
+      setTimeout(() => setInvoiceCopied(false), 1800);
+    } catch {}
+  }
+
+  async function markAllUnpaidAsPaid() {
+    if (unpaidGroups.length === 0 || markingPaid) return;
+    const count = unpaidSummary.count;
+    if (!confirm(`Mark ${count} item${count === 1 ? '' : 's'} as PAID? This updates every unpaid win shown above across all sales.`)) return;
+    setMarkingPaid(true);
+    const supabase = createClient();
+    const auctionLotIds: string[] = [];
+    const claimItemIds: string[] = [];
+    for (const g of unpaidGroups) for (const l of g.lines) {
+      if (l.kind === 'auction') auctionLotIds.push(l.key);
+      else claimItemIds.push(l.key);
+    }
+    if (auctionLotIds.length > 0) {
+      await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', auctionLotIds);
+    }
+    if (claimItemIds.length > 0) {
+      await supabase.from('fb_claim_sale_items').update({ claim_status: 'paid' }).in('id', claimItemIds);
+    }
+    // Reflect in local state without a full reload.
+    setItems(prev => prev.map(i => auctionLotIds.includes(i.lotId) ? { ...i, status: 'paid', isPaid: true } : i));
+    setClaimItems(prev => prev.map(c => claimItemIds.includes(c.itemId) ? { ...c, claimStatus: 'paid', isPaid: true } : c));
+    setMarkingPaid(false);
+  }
+
   async function saveProfile() {
     if (!bidder) return;
     setSaving(true);
@@ -534,6 +671,77 @@ export default function BidderProfilePage() {
                 <Stat label="$ Spent" value={fmtMoney(stats.totalSpend)} accent />
               </div>
             </section>
+
+            {unpaidGroups.length > 0 && (
+              <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16, borderColor: 'var(--orange)' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
+                  <div className="display" style={{ fontSize: 16, color: 'var(--plum)' }}>
+                    💰 Unpaid Wins — Combined Invoice ({unpaidSummary.count})
+                  </div>
+                  <div className="mono" style={{ fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
+                    Subtotal {fmtMoney(unpaidSummary.subtotal)}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+                  {unpaidGroups.map(g => (
+                    <div key={g.groupKey} style={{ background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6, padding: '8px 10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                        <Link
+                          href={g.kind === 'auction' ? `/fb-auctions/${g.sourceId}` : `/fb-claim-sales/${g.sourceId}`}
+                          style={{ color: 'var(--teal)', textDecoration: 'underline', fontSize: 12.5, fontWeight: 600 }}
+                        >
+                          {g.kind === 'auction' ? '🔨' : '🎯'} {g.sourceTitle}
+                        </Link>
+                        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{g.lines.length} item{g.lines.length === 1 ? '' : 's'}</span>
+                      </div>
+                      {g.lines.map(l => (
+                        <div key={l.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12.5, color: 'var(--plum)' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>· {l.label}</span>
+                          <span className="mono" style={{ color: 'var(--orange)', fontWeight: 700 }}>{fmtMoney(l.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <label className="input-label">Shipping</label>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={invoiceShipping}
+                      onChange={e => setInvoiceShipping(e.target.value)}
+                      className="input-sc" style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="input-label">Payment instructions</label>
+                    <textarea
+                      value={invoicePayment}
+                      onChange={e => setInvoicePayment(e.target.value)}
+                      rows={2}
+                      style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', background: 'var(--paper)', resize: 'vertical' }}
+                    />
+                  </div>
+                </div>
+
+                <label className="input-label">Invoice preview</label>
+                <textarea
+                  value={invoiceText} readOnly rows={Math.min(14, invoiceText.split('\n').length + 1)}
+                  style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '10px 12px', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 12.5, color: 'var(--plum)', background: 'var(--cream)', resize: 'vertical', whiteSpace: 'pre' }}
+                />
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                  <button onClick={copyInvoice} className="btn btn-primary btn-sm">
+                    {invoiceCopied ? '✓ Copied!' : '📋 Copy invoice'}
+                  </button>
+                  <button onClick={markAllUnpaidAsPaid} disabled={markingPaid} className="btn btn-ghost btn-sm">
+                    {markingPaid ? 'Saving…' : `✓ Mark ${unpaidSummary.count} item${unpaidSummary.count === 1 ? '' : 's'} as paid`}
+                  </button>
+                </div>
+              </section>
+            )}
 
             {winning.length > 0 && (
               <section className="panel-bordered" style={{ padding: '18px 22px', marginBottom: 16 }}>
