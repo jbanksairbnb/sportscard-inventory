@@ -1158,7 +1158,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                               el.style.height = el.scrollHeight + 'px';
                             }
                           }}
-                          placeholder="Notes (variation, condition, provenance…)"
+                          placeholder="notes"
                           rows={1}
                           style={{
                             ...CELL_INPUT,
