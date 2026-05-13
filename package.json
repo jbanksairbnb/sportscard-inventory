@@ -15,8 +15,11 @@
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.53.1",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.4",
+    "@vercel/analytics": "^2.0.1",
+    "@vercel/speed-insights": "^2.0.0",
     "exceljs": "^4.4.0",
     "jspdf": "^4.2.1",
     "next": "16.2.4",
