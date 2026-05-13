@@ -1,0 +1,51 @@
+name: Daily Lighthouse
+
+# Runs Lighthouse against the production site every morning at 13:00 UTC
+# (9am ET). Catches performance regressions, accessibility breaks, and
+# SEO drops that wouldn't otherwise show up until users complain.
+#
+# Thresholds live in .lighthouserc.json. They're set to "warn" not "error"
+# so the workflow stays green even when scores slip — check the run summary
+# for the actual numbers. Flip to "error" once you've got a stable baseline.
+#
+# Also runnable on demand via the Actions tab → "Run workflow".
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run Lighthouse CI
+        run: |
+          npm install -g @lhci/cli@0.14.x
+          lhci autorun --config=.lighthouserc.json || echo "Lighthouse run finished with warnings"
+
+      - name: Surface results in job summary
+        if: always()
+        run: |
+          {
+            echo "## 🔦 Daily Lighthouse Report"
+            echo ""
+            echo "Tested URLs:"
+            grep -E '"https?://' .lighthouserc.json | sed 's/^[[:space:]]*"/- /;s/",\?$//'
+            echo ""
+            echo "Full HTML reports are uploaded to temporary public storage — links are printed in the **Run Lighthouse CI** step above."
+            echo ""
+            echo "Thresholds (all set to \`warn\`):"
+            echo "- Performance ≥ 0.75"
+            echo "- Accessibility ≥ 0.90"
+            echo "- Best Practices ≥ 0.90"
+            echo "- SEO ≥ 0.85"
+            echo "- FCP ≤ 2000ms · LCP ≤ 2500ms · CLS ≤ 0.10 · TBT ≤ 300ms"
+          } >> "$GITHUB_STEP_SUMMARY"

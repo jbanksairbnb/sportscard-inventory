@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,6 +25,11 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         {children}
+        {/* Vercel Speed Insights: real-user Core Web Vitals (LCP, INP, CLS,
+            TTFB) per route. Auto-enabled on Vercel deployments. */}
+        <SpeedInsights />
+        {/* Vercel Web Analytics: page views + popular routes. */}
+        <Analytics />
       </body>
     </html>
   );
