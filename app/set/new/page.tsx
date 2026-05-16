@@ -7,17 +7,18 @@ import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
-// CSV schema for uploads. 'Notes' was added when the inventory table got
-// per-row notes; 'Graded' was removed (we now derive graded-ness from
-// whether Grading Company is filled in). REQUIRED_HEADERS is the subset
-// we'll error on if missing — 'Notes' stays optional so backups exported
-// before the schema change still import cleanly.
+// CSV schema for uploads. 'Notes' and 'Tag #' are seller-bookkeeping
+// fields — both optional (kept out of REQUIRED_HEADERS so old backups
+// exported before either column existed still import cleanly).
+// 'Graded' was removed earlier; graded-ness is now derived from
+// whether Grading Company is filled in.
 const EXPECTED_HEADERS = [
-  'Card #', 'Player', 'Notes', 'Owned', 'Raw Grade',
+  'Card #', 'Player', 'Notes', 'Tag #', 'Owned', 'Raw Grade',
   'Grading Company', 'Grade', 'Cost', 'Value', 'Target Price',
   'Sale Price', 'Date Purchased', 'Purchased From', 'Upload Image(s)',
 ];
-const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => h !== 'Notes');
+const OPTIONAL_HEADERS = new Set(['Notes', 'Tag #']);
+const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => !OPTIONAL_HEADERS.has(h));
 
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
 const BRANDS = ['Topps', 'Bowman', 'Play Ball'];
@@ -308,7 +309,7 @@ export default function NewSetPage() {
           <div className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>★ How it works ★</div>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.65, color: 'var(--ink-soft)' }}>
             <li><strong>From Library</strong> — pick a pre-loaded checklist from our library, filtered by sport. Fastest way to start a new set.</li>
-            <li><strong>Upload CSV</strong> — upload your own checklist using our standard template. Required columns: <span className="mono" style={{ fontSize: 12 }}>{REQUIRED_HEADERS.join(', ')}</span> (Notes optional). Use <strong>Download blank template</strong> in the upload section if you want a starter file. Tick the box at the bottom of the upload section to share your checklist with the community.</li>
+            <li><strong>Upload CSV</strong> — upload your own checklist using our standard template. Required columns: <span className="mono" style={{ fontSize: 12 }}>{REQUIRED_HEADERS.join(', ')}</span>. Optional: <span className="mono" style={{ fontSize: 12 }}>Notes</span>, <span className="mono" style={{ fontSize: 12 }}>Tag #</span> (your private inventory tag). Use <strong>Download blank template</strong> in the upload section if you want a starter file. Tick the box at the bottom of the upload section to share your checklist with the community.</li>
             <li><strong>PSA Export</strong> — download your collection from your PSA account and upload the CSV directly. Owned cards auto-fill with grades, costs, and dates. The checklist (Card # and Player only — no personal data) is automatically added to our public library if it isn&apos;t there yet.</li>
             <li>Don&apos;t see a set you want?  Email <a href="mailto:info@sports-collective.com" style={{ color: 'var(--plum)', fontWeight: 700 }}>info@sports-collective.com</a> and we&apos;ll add it to the library.</li>
           </ul>
@@ -366,7 +367,7 @@ export default function NewSetPage() {
                 <div style={{ flex: 1, minWidth: 240 }}>
                   <div className="display" style={{ fontSize: 15, color: 'var(--plum)', marginBottom: 4 }}>Standard CSV</div>
                   <div className="eyebrow" style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 10 }}>
-                    Required columns: {REQUIRED_HEADERS.join(', ')}. <span style={{ color: 'var(--ink-soft)' }}>Notes is optional.</span>
+                    Required: {REQUIRED_HEADERS.join(', ')}. <span style={{ color: 'var(--ink-soft)' }}>Optional: Notes, Tag #.</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <input type="file" accept=".csv,text/csv"
