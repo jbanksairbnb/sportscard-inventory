@@ -277,6 +277,7 @@ function ListingsPageContent() {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
     const [defaultShipping, setDefaultShipping] = useState<ShippingOption[]>([]);
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [purchasesByListing, setPurchasesByListing] = useState<Record<string, PurchaseDetail & { buyer_name: string; buyer_email: string }>>({});
@@ -603,6 +604,52 @@ function ListingsPageContent() {
     await sendListingsToFB(Array.from(selectedIds), target);
   }
 
+  // Apply a partial patch to every selected listing in a single Supabase
+  // round trip. The caller assembles `patch` from the BulkEditModal's
+  // per-field "Apply" toggles, so unchecked fields are simply absent from
+  // the object and stay untouched. Title is recomputed when any title-
+  // contributing field changes, otherwise left alone.
+  async function applyBulkEdit(patch: Partial<Listing>) {
+    if (selectedIds.size === 0 || Object.keys(patch).length === 0) return;
+    setBulkWorking(true);
+    const supabase = createClient();
+    const ids = Array.from(selectedIds);
+
+    // Title is derived from year + brand + card_number + player + condition.
+    // For bulk edits we recompute per-listing so each row's existing values
+    // mix with the new ones. We fetch nothing extra — we already have the
+    // current listing rows in local state.
+    const titleAffecting = new Set(['year', 'brand', 'condition_type', 'raw_grade', 'grading_company', 'grade']);
+    const titleNeedsRebuild = Object.keys(patch).some(k => titleAffecting.has(k));
+
+    if (titleNeedsRebuild) {
+      // Per-row update so we can recompute title for each. Still one HTTP
+      // request per row, but they fire in parallel via Promise.all and the
+      // payload per row is tiny.
+      const updates = listings.filter(l => selectedIds.has(l.id)).map(l => {
+        const merged: Partial<Listing> = { ...l, ...patch };
+        const row: Record<string, unknown> = { ...patch, title: buildTitle(merged) };
+        return supabase.from('listings').update(row).eq('id', l.id);
+      });
+      const results = await Promise.all(updates);
+      const firstErr = results.find(r => r.error);
+      if (firstErr?.error) { setBulkWorking(false); alert('Bulk edit failed: ' + firstErr.error.message); return; }
+    } else {
+      const { error } = await supabase.from('listings').update(patch).in('id', ids);
+      if (error) { setBulkWorking(false); alert('Bulk edit failed: ' + error.message); return; }
+    }
+
+    // Patch local state without a refetch.
+    setListings(prev => prev.map(l => {
+      if (!selectedIds.has(l.id)) return l;
+      const merged = { ...l, ...patch } as Listing;
+      if (titleNeedsRebuild) merged.title = buildTitle(merged);
+      return merged;
+    }));
+    setBulkWorking(false);
+    setBulkEditOpen(false);
+  }
+
   async function bulkDelete() {
     if (selectedIds.size === 0) return;
     const n = selectedIds.size;
@@ -770,6 +817,10 @@ function ListingsPageContent() {
               className="btn btn-sm" style={{ background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--mustard)' }}>
               ⏸ Pause
             </button>
+            <button type="button" onClick={() => setBulkEditOpen(true)} disabled={bulkWorking}
+              className="btn btn-sm" style={{ background: 'var(--cream)', color: 'var(--plum)', border: '1.5px solid var(--cream)' }}>
+              🛠 Bulk Edit
+            </button>
             <button type="button" onClick={() => bulkSendToFB('auction')} disabled={bulkWorking}
               className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
               📣 Send to Auction
@@ -926,6 +977,15 @@ function ListingsPageContent() {
         )}
       </div>
 
+      {bulkEditOpen && (
+        <BulkEditModal
+          count={selectedIds.size}
+          working={bulkWorking}
+          onCancel={() => setBulkEditOpen(false)}
+          onApply={applyBulkEdit}
+        />
+      )}
+
       {editing && (
         <ListingEditor
           draft={editing}
@@ -1074,6 +1134,290 @@ function ListingsPageContent() {
         );
       })()}
     </div>
+  );
+}
+
+// Bulk edit a selection of listings. Every field has its own "Apply" toggle
+// so the user can't accidentally wipe data they didn't intend to touch —
+// only checked fields get included in the update payload. After the form
+// passes validation we show a confirmation step that summarizes the diff
+// before the actual write.
+function BulkEditModal({
+  count, working, onCancel, onApply,
+}: {
+  count: number;
+  working: boolean;
+  onCancel: () => void;
+  onApply: (patch: Partial<Listing>) => Promise<void>;
+}) {
+  type ConditionPick = '' | 'raw' | 'graded';
+  const [applyYear, setApplyYear] = useState(false);
+  const [applyBrand, setApplyBrand] = useState(false);
+  const [applyCondition, setApplyCondition] = useState(false);
+  const [applyAsking, setApplyAsking] = useState(false);
+  const [applyCost, setApplyCost] = useState(false);
+  const [applyDescription, setApplyDescription] = useState(false);
+  const [applyShipping, setApplyShipping] = useState(false);
+
+  const [year, setYear] = useState<string>('');
+  const [brand, setBrand] = useState<string>('');
+  const [condition, setCondition] = useState<ConditionPick>('raw');
+  const [rawGrade, setRawGrade] = useState<string>('');
+  const [gradingCompany, setGradingCompany] = useState<string>('');
+  const [grade, setGrade] = useState<string>('');
+  const [asking, setAsking] = useState<string>('');
+  const [cost, setCost] = useState<string>('');
+  const [description, setDescription] = useState<string>('');
+  const [shipping, setShipping] = useState<ShippingOption[]>([]);
+
+  const [step, setStep] = useState<'form' | 'review'>('form');
+  const [error, setError] = useState<string>('');
+
+  // Build the patch from the toggled fields. Returned object is passed up
+  // to the page's applyBulkEdit() which does the actual Supabase write.
+  function buildPatch(): { patch: Partial<Listing>; summary: { label: string; value: string }[] } {
+    const patch: Partial<Listing> = {};
+    const summary: { label: string; value: string }[] = [];
+    if (applyYear) {
+      const n = year.trim() ? Number(year) : null;
+      patch.year = n;
+      summary.push({ label: 'Year', value: n === null ? '— (cleared)' : String(n) });
+    }
+    if (applyBrand) {
+      const v = brand.trim() || null;
+      patch.brand = v;
+      summary.push({ label: 'Brand', value: v || '— (cleared)' });
+    }
+    if (applyCondition) {
+      if (condition === 'raw') {
+        patch.condition_type = 'raw';
+        patch.raw_grade = rawGrade || null;
+        patch.grading_company = null;
+        patch.grade = null;
+        summary.push({ label: 'Condition', value: rawGrade ? `Raw · ${rawGrade}` : 'Raw' });
+      } else if (condition === 'graded') {
+        patch.condition_type = 'graded';
+        patch.grading_company = gradingCompany || null;
+        patch.grade = grade || null;
+        patch.raw_grade = null;
+        summary.push({ label: 'Condition', value: `Graded${gradingCompany ? ' · ' + gradingCompany : ''}${grade ? ' ' + grade : ''}` });
+      }
+    }
+    if (applyAsking) {
+      const n = asking.trim() ? Number(asking) : null;
+      patch.asking_price = n;
+      summary.push({ label: 'Asking $', value: n === null ? '— (cleared)' : '$' + n.toFixed(2) });
+    }
+    if (applyCost) {
+      const n = cost.trim() ? Number(cost) : null;
+      patch.cost = n;
+      summary.push({ label: 'Cost $', value: n === null ? '— (cleared)' : '$' + n.toFixed(2) });
+    }
+    if (applyDescription) {
+      patch.description = description.trim() || null;
+      summary.push({ label: 'Description', value: description.trim() ? `"${description.trim().slice(0, 60)}${description.trim().length > 60 ? '…' : ''}"` : '— (cleared)' });
+    }
+    if (applyShipping) {
+      const cleaned = shipping
+        .map(s => ({ ...s, label: s.label.trim(), cost: Number(s.cost) || 0 }))
+        .filter(s => s.label && s.cost >= 0);
+      patch.shipping_options = cleaned;
+      summary.push({ label: 'Shipping', value: cleaned.length === 0 ? '— (cleared)' : cleaned.map(s => `${s.label} $${s.cost.toFixed(2)}`).join(', ') });
+    }
+    return { patch, summary };
+  }
+
+  function handleReview() {
+    setError('');
+    const anyChecked = applyYear || applyBrand || applyCondition || applyAsking || applyCost || applyDescription || applyShipping;
+    if (!anyChecked) { setError('Check at least one field to apply.'); return; }
+    if (applyCondition && condition === 'raw' && !rawGrade) { setError('Pick a raw grade or uncheck Condition.'); return; }
+    if (applyCondition && condition === 'graded' && (!gradingCompany || !grade)) { setError('Pick grading company and grade, or uncheck Condition.'); return; }
+    if (applyAsking && asking.trim() && Number.isNaN(Number(asking))) { setError('Asking $ must be a number.'); return; }
+    if (applyCost && cost.trim() && Number.isNaN(Number(cost))) { setError('Cost $ must be a number.'); return; }
+    if (applyYear && year.trim() && Number.isNaN(Number(year))) { setError('Year must be a number.'); return; }
+    setStep('review');
+  }
+
+  async function handleApply() {
+    const { patch } = buildPatch();
+    await onApply(patch);
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 6, padding: '6px 10px',
+    fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+
+  const { summary } = buildPatch();
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(42,20,52,0.55)', zIndex: 100,
+      display: 'grid', placeItems: 'center', padding: 20,
+    }} onClick={onCancel}>
+      <div onClick={e => e.stopPropagation()}
+        className="panel-bordered"
+        style={{ width: '100%', maxWidth: 640, maxHeight: '92vh', overflowY: 'auto', background: 'var(--cream)', padding: '20px 24px' }}>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
+          <div>
+            <div className="display" style={{ fontSize: 22, color: 'var(--plum)' }}>
+              {step === 'form' ? '🛠 Bulk Edit' : '✓ Confirm Bulk Edit'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginTop: 2 }}>
+              {step === 'form'
+                ? `Check the fields you want to change on ${count} listing${count === 1 ? '' : 's'}. Unchecked fields stay as they are.`
+                : `Apply ${summary.length} change${summary.length === 1 ? '' : 's'} to ${count} listing${count === 1 ? '' : 's'}?`}
+            </div>
+          </div>
+          <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm">Close</button>
+        </div>
+
+        {step === 'form' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <BulkRow active={applyYear} onToggle={() => setApplyYear(v => !v)} label="Year">
+              <input type="number" value={year} onChange={e => setYear(e.target.value)}
+                placeholder="e.g. 1968" style={{ ...fieldStyle, width: 120 }} disabled={!applyYear} />
+            </BulkRow>
+
+            <BulkRow active={applyBrand} onToggle={() => setApplyBrand(v => !v)} label="Brand">
+              <input type="text" value={brand} onChange={e => setBrand(e.target.value)}
+                placeholder="e.g. Topps" style={{ ...fieldStyle, maxWidth: 240 }} disabled={!applyBrand} />
+            </BulkRow>
+
+            <BulkRow active={applyCondition} onToggle={() => setApplyCondition(v => !v)} label="Condition">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {(['raw', 'graded'] as const).map(t => (
+                  <button key={t} type="button" disabled={!applyCondition}
+                    onClick={() => setCondition(t)}
+                    className={`btn btn-sm ${condition === t ? 'btn-primary' : 'btn-ghost'}`}>
+                    {t === 'raw' ? 'Raw' : 'Graded'}
+                  </button>
+                ))}
+              </div>
+              {applyCondition && condition === 'raw' && (
+                <div style={{ marginTop: 8 }}>
+                  <label className="input-label">Raw Grade *</label>
+                  <select value={rawGrade} onChange={e => setRawGrade(e.target.value)}
+                    style={{ ...fieldStyle, maxWidth: 200 }}>
+                    <option value="">— pick —</option>
+                    {RAW_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+              )}
+              {applyCondition && condition === 'graded' && (
+                <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+                  <div>
+                    <label className="input-label">Grading Co. *</label>
+                    <select value={gradingCompany} onChange={e => setGradingCompany(e.target.value)}
+                      style={{ ...fieldStyle, width: 110 }}>
+                      <option value="">— pick —</option>
+                      {COMPANIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="input-label">Grade *</label>
+                    <select value={grade} onChange={e => setGrade(e.target.value)}
+                      style={{ ...fieldStyle, width: 110 }}>
+                      <option value="">— pick —</option>
+                      {NUMERIC_GRADES.map(g => <option key={g} value={g}>{g}{GRADE_LABELS[g] ? ` (${GRADE_LABELS[g]})` : ''}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </BulkRow>
+
+            <BulkRow active={applyAsking} onToggle={() => setApplyAsking(v => !v)} label="Asking $">
+              <input type="number" step="0.01" value={asking} onChange={e => setAsking(e.target.value)}
+                placeholder="0.00" style={{ ...fieldStyle, width: 120 }} disabled={!applyAsking} />
+            </BulkRow>
+
+            <BulkRow active={applyCost} onToggle={() => setApplyCost(v => !v)} label="Cost $ (private)">
+              <input type="number" step="0.01" value={cost} onChange={e => setCost(e.target.value)}
+                placeholder="0.00" style={{ ...fieldStyle, width: 120 }} disabled={!applyCost} />
+            </BulkRow>
+
+            <BulkRow active={applyDescription} onToggle={() => setApplyDescription(v => !v)} label="Description">
+              <textarea value={description} onChange={e => setDescription(e.target.value)}
+                rows={3} placeholder="Additional details — centering, surface, any flaws, sale terms…"
+                style={{ ...fieldStyle, resize: 'vertical' }} disabled={!applyDescription} />
+            </BulkRow>
+
+            <BulkRow active={applyShipping} onToggle={() => setApplyShipping(v => !v)} label="Shipping options (replaces all)">
+              {applyShipping ? (
+                <ShippingOptionsEditor options={shipping} onChange={setShipping} />
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--ink-mute)', fontStyle: 'italic', padding: '4px 0' }}>
+                  Check to replace shipping options on all selected listings.
+                </div>
+              )}
+            </BulkRow>
+
+            {error && (
+              <div style={{
+                marginTop: 8, background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+                borderRadius: 8, padding: '8px 12px', fontSize: 13, color: 'var(--rust)', fontWeight: 600,
+              }}>{error}</div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm">Cancel</button>
+              <button type="button" onClick={handleReview} className="btn btn-primary btn-sm">
+                Review changes →
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="panel-bordered" style={{ padding: '14px 18px', background: 'var(--paper)', marginBottom: 14 }}>
+              <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 8 }}>
+                Will apply to {count} listing{count === 1 ? '' : 's'}
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, color: 'var(--plum)', lineHeight: 1.7 }}>
+                {summary.map((s, i) => (
+                  <li key={i}><strong>{s.label}</strong> → {s.value}</li>
+                ))}
+              </ul>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setStep('form')} disabled={working} className="btn btn-ghost btn-sm">
+                ← Back
+              </button>
+              <button type="button" onClick={handleApply} disabled={working} className="btn btn-primary btn-sm">
+                {working ? 'Applying…' : `✓ Apply ${summary.length} change${summary.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BulkRow({ active, onToggle, label, children }: {
+  active: boolean; onToggle: () => void; label: string; children: React.ReactNode;
+}) {
+  return (
+    <label style={{
+      display: 'grid', gridTemplateColumns: '24px 1fr', gap: 10,
+      padding: '10px 12px', borderRadius: 8,
+      border: active ? '1.5px solid var(--plum)' : '1.5px solid var(--rule)',
+      background: active ? 'var(--paper)' : 'transparent',
+      cursor: 'pointer',
+    }}>
+      <input type="checkbox" checked={active} onChange={onToggle}
+        style={{ width: 18, height: 18, marginTop: 2, accentColor: 'var(--plum)', cursor: 'pointer' }} />
+      <div>
+        <div className="eyebrow" style={{ fontSize: 10, color: active ? 'var(--orange)' : 'var(--ink-mute)', marginBottom: 6, fontWeight: 700 }}>
+          {label}
+        </div>
+        <div onClick={e => e.stopPropagation()}>
+          {children}
+        </div>
+      </div>
+    </label>
   );
 }
 
