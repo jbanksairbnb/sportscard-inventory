@@ -576,9 +576,18 @@ function ListingsPageContent() {
     setBulkWorking(true);
     const supabase = createClient();
     const ids = Array.from(selectedIds);
-    const { error } = await supabase.from('listings').update({ status }).in('id', ids);
+    // Chunk by 200 IDs to stay under PostgREST's URL length limit
+    // (~8 KB). A flat .in('id', ids) with 600+ UUIDs returns 400 Bad
+    // Request because the encoded list overflows the query string.
+    const CHUNK = 200;
+    const errors: string[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const { error } = await supabase.from('listings').update({ status }).in('id', slice);
+      if (error) errors.push(error.message);
+    }
     setBulkWorking(false);
-    if (error) { alert('Bulk update failed: ' + error.message); return; }
+    if (errors.length > 0) { alert('Bulk update failed: ' + errors[0]); return; }
     setListings(prev => prev.map(l => selectedIds.has(l.id) ? { ...l, status } : l));
     setSelectedIds(new Set());
   }
@@ -635,8 +644,15 @@ function ListingsPageContent() {
       const firstErr = results.find(r => r.error);
       if (firstErr?.error) { setBulkWorking(false); alert('Bulk edit failed: ' + firstErr.error.message); return; }
     } else {
-      const { error } = await supabase.from('listings').update(patch).in('id', ids);
-      if (error) { setBulkWorking(false); alert('Bulk edit failed: ' + error.message); return; }
+      // Chunk by 200 IDs — same PostgREST URL-length limit fix as
+      // bulkSetStatus. Without this, selections of 500+ blow past the
+      // query string cap and PostgREST returns 400.
+      const CHUNK = 200;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const slice = ids.slice(i, i + CHUNK);
+        const { error } = await supabase.from('listings').update(patch).in('id', slice);
+        if (error) { setBulkWorking(false); alert('Bulk edit failed: ' + error.message); return; }
+      }
     }
 
     // Patch local state without a refetch.
@@ -658,17 +674,30 @@ function ListingsPageContent() {
     const supabase = createClient();
     const ids = Array.from(selectedIds);
 
+    // PostgREST caps URL length around 8 KB. With UUIDs at 36 chars each,
+    // anything over ~200 IDs in a single .in() overflows the query string
+    // and returns 400 Bad Request. Chunk every multi-id call below.
+    const CHUNK = 200;
+    function chunks<T>(arr: T[]): T[][] {
+      const out: T[][] = [];
+      for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK));
+      return out;
+    }
+
     // Listings referenced by any other table (purchases, claim sale items,
     // auction lots) need a soft delete so we don't trip an FK constraint.
-    const [purchaseRes, claimRes, auctionRes] = await Promise.all([
-      supabase.from('purchases').select('listing_id').in('listing_id', ids),
-      supabase.from('fb_claim_sale_items').select('listing_id').in('listing_id', ids),
-      supabase.from('fb_auction_lots').select('listing_id').in('listing_id', ids),
-    ]);
+    const idChunks = chunks(ids);
     const blockedIds = new Set<string>();
-    for (const r of purchaseRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
-    for (const r of claimRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
-    for (const r of auctionRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
+    for (const slice of idChunks) {
+      const [purchaseRes, claimRes, auctionRes] = await Promise.all([
+        supabase.from('purchases').select('listing_id').in('listing_id', slice),
+        supabase.from('fb_claim_sale_items').select('listing_id').in('listing_id', slice),
+        supabase.from('fb_auction_lots').select('listing_id').in('listing_id', slice),
+      ]);
+      for (const r of purchaseRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
+      for (const r of claimRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
+      for (const r of auctionRes.data || []) if (r.listing_id) blockedIds.add(r.listing_id);
+    }
     const softIds = ids.filter(id => blockedIds.has(id));
     const hardIds = ids.filter(id => !blockedIds.has(id));
 
@@ -681,12 +710,12 @@ function ListingsPageContent() {
     }
     if (paths.length > 0) await supabase.storage.from('card-images').remove(paths);
 
-    if (softIds.length > 0) {
-      const { error } = await supabase.from('listings').update({ status: 'removed' }).in('id', softIds);
+    for (const slice of chunks(softIds)) {
+      const { error } = await supabase.from('listings').update({ status: 'removed' }).in('id', slice);
       if (error) { setBulkWorking(false); alert('Bulk delete failed (hide): ' + error.message); return; }
     }
-    if (hardIds.length > 0) {
-      const { error } = await supabase.from('listings').delete().in('id', hardIds);
+    for (const slice of chunks(hardIds)) {
+      const { error } = await supabase.from('listings').delete().in('id', slice);
       if (error) { setBulkWorking(false); alert('Bulk delete failed (remove): ' + error.message); return; }
     }
 
