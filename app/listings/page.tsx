@@ -386,6 +386,18 @@ function ListingsPageContent() {
         return terms.every(t => hay.includes(t));
       });
     }
+    // Default order: year → brand → card # (numeric so '5' < '11') → player.
+    // Matches the marketplace + scan-batch sort so sellers see their listings
+    // in the same order buyers do.
+    arr = [...arr].sort((a, b) => {
+      const yearDiff = (a.year || 0) - (b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      const brandCmp = (a.brand || '').localeCompare(b.brand || '');
+      if (brandCmp !== 0) return brandCmp;
+      const cardCmp = (a.card_number || '').localeCompare(b.card_number || '', undefined, { numeric: true });
+      if (cardCmp !== 0) return cardCmp;
+      return (a.player || '').localeCompare(b.player || '');
+    });
     return arr;
   }, [listings, filter, searchQuery]);
 
