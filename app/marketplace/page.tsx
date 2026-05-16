@@ -187,7 +187,7 @@ function MarketplacePageInner() {
   }
 
   const filtered = useMemo(() => {
-    return listings.filter(l => {
+    const filteredArr = listings.filter(l => {
       if (l.user_id === currentUserId) return false;
       if (wantListOnly && !isOnWantList(l)) return false;
       if (conditionFilter !== 'all' && l.condition_type !== conditionFilter) return false;
@@ -206,6 +206,20 @@ function MarketplacePageInner() {
       }
       return true;
     });
+    // Default marketplace order: year → brand → card # (numeric so #5 < #11)
+    // → player. Set-completion browsers expect numerical card order; the
+    // previous default of created_at DESC scattered the same year/brand
+    // across pages.
+    filteredArr.sort((a, b) => {
+      const yearDiff = (a.year || 0) - (b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      const brandCmp = (a.brand || '').localeCompare(b.brand || '');
+      if (brandCmp !== 0) return brandCmp;
+      const cardCmp = (a.card_number || '').localeCompare(b.card_number || '', undefined, { numeric: true });
+      if (cardCmp !== 0) return cardCmp;
+      return (a.player || '').localeCompare(b.player || '');
+    });
+    return filteredArr;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listings, currentUserId, conditionFilter, minPrice, maxPrice, search, wantListOnly, wantListKeys]);
 
