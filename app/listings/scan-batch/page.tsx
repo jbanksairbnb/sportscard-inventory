@@ -14,6 +14,7 @@ type Listing = {
   brand: string | null;
   card_number: string | null;
   player: string | null;
+  tag_number: string | null;
   status: 'draft' | 'active' | 'sold' | 'removed';
   photos: string[] | null;
 };
@@ -70,7 +71,7 @@ export default function ScanBatchToListingsPage() {
       setUserId(user.id);
       const { data } = await supabase
         .from('listings')
-        .select('id, title, year, brand, card_number, player, status, photos')
+        .select('id, title, year, brand, card_number, player, tag_number, status, photos')
         .eq('user_id', user.id)
         .in('status', ['draft', 'active'])
         .order('created_at', { ascending: false });
@@ -88,7 +89,7 @@ export default function ScanBatchToListingsPage() {
     if (q) {
       const terms = q.split(/\s+/).filter(Boolean);
       arr = arr.filter(l => {
-        const hay = [l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : ''].filter(Boolean).join(' ').toLowerCase();
+        const hay = [l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '', l.tag_number].filter(Boolean).join(' ').toLowerCase();
         return terms.every(t => hay.includes(t));
       });
     }
@@ -410,7 +411,20 @@ export default function ScanBatchToListingsPage() {
                               {isSel ? `#${orderIdx + 1}` : ''}
                             </td>
                             <td style={{ padding: '6px 10px', fontSize: 12.5, color: 'var(--plum)' }}>
-                              <div style={{ fontWeight: 600 }}>{l.title}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{ fontWeight: 600 }}>{l.title}</span>
+                                {l.tag_number && (
+                                  <span className="mono"
+                                    title="Inventory tag"
+                                    style={{
+                                      fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+                                      background: 'var(--cream)', color: 'var(--plum)',
+                                      border: '1px solid var(--plum)',
+                                    }}>
+                                    🏷 {l.tag_number}
+                                  </span>
+                                )}
+                              </div>
                               <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>{listingLabel(l)}</div>
                             </td>
                             <td style={{ padding: '6px 10px', fontSize: 10.5, color: 'var(--ink-mute)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>
