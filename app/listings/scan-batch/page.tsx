@@ -48,6 +48,12 @@ export default function ScanBatchToListingsPage() {
   const [phase, setPhase] = useState<Phase>('pick');
   const [selectedOrder, setSelectedOrder] = useState<string[]>([]); // listing ids
 
+  // Hard cap on selection size so a user can't drop 300 raw JPGs into the
+  // browser at once. ~25 listings = ~50 images at ~3 MB each ≈ 150 MB peak,
+  // which most browsers handle without choking. Tune higher if real-world
+  // batches are routinely smaller and folks complain.
+  const BATCH_LIMIT = 25;
+
   const [files, setFiles] = useState<File[]>([]);
   const [pairMode, setPairMode] = useState<PairMode>('fronts-then-backs');
   const [dragOver, setDragOver] = useState(false);
@@ -107,7 +113,14 @@ export default function ScanBatchToListingsPage() {
   );
 
   function toggleListing(id: string) {
-    setSelectedOrder(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedOrder(prev => {
+      // Removing is always allowed.
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      // Adding hits the cap silently — the UI shows a "N / 25 max" badge
+      // so the user knows why nothing happened.
+      if (prev.length >= BATCH_LIMIT) return prev;
+      return [...prev, id];
+    });
   }
   function moveSelected(idx: number, dir: -1 | 1) {
     setSelectedOrder(prev => {
@@ -121,11 +134,16 @@ export default function ScanBatchToListingsPage() {
   function removeSelected(idx: number) {
     setSelectedOrder(prev => prev.filter((_, i) => i !== idx));
   }
-  function selectAllVisible() {
+  // Fill the selection up to BATCH_LIMIT with the next un-selected visible
+  // listings, in current sort order. The whole point is one-click batching:
+  // after the user uploads their first 25, they can hit this again to grab
+  // the next 25 without manually scrolling and ticking boxes.
+  function selectNextBatch() {
     setSelectedOrder(prev => {
       const seen = new Set(prev);
       const next = [...prev];
       for (const l of visibleListings) {
+        if (next.length >= BATCH_LIMIT) break;
         if (!seen.has(l.id)) { next.push(l.id); seen.add(l.id); }
       }
       return next;
@@ -311,8 +329,31 @@ export default function ScanBatchToListingsPage() {
             <section className="panel-bordered" style={{ padding: '20px 24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
                 <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>1. Click listings in scan order</div>
-                <button type="button" onClick={selectAllVisible} className="btn btn-ghost btn-sm">✓ Select all visible</button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="mono" style={{
+                    fontSize: 11, fontWeight: 700,
+                    color: selectedOrder.length >= BATCH_LIMIT ? 'var(--rust)' : 'var(--ink-mute)',
+                  }}>
+                    {selectedOrder.length} / {BATCH_LIMIT} max
+                  </span>
+                  <button type="button" onClick={selectNextBatch}
+                    disabled={selectedOrder.length >= BATCH_LIMIT}
+                    title={`Fill selection up to ${BATCH_LIMIT} with the next visible listings`}
+                    className="btn btn-ghost btn-sm">
+                    ✓ Select next {BATCH_LIMIT}
+                  </button>
+                </div>
               </div>
+              {selectedOrder.length >= BATCH_LIMIT && (
+                <div style={{
+                  marginBottom: 12, padding: '8px 12px',
+                  background: 'rgba(197,74,44,0.08)',
+                  border: '1.5px solid var(--rust)', borderRadius: 8,
+                  fontSize: 12.5, color: 'var(--plum)',
+                }}>
+                  <strong>Batch full.</strong> Process this batch first — once these listings have photos, come back and hit <em>Select next {BATCH_LIMIT}</em>. Keeps the browser from choking on too many raw images at once.
+                </div>
+              )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
                 <div style={{
                   display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
