@@ -37,6 +37,7 @@ type Listing = {
   grade: string | null;
   asking_price: number | null;
   cost: number | null;
+  tag_number: string | null;
   photos: string[];
   shipping_options: ShippingOption[];
   status: Status;
@@ -77,6 +78,7 @@ function emptyDraft(userId: string, defaults?: ShippingOption[]): Partial<Listin
     grade: '',
     asking_price: null,
     cost: null,
+    tag_number: null,
     photos: [],
     shipping_options: ship,
     status: 'draft',
@@ -353,6 +355,8 @@ function ListingsPageContent() {
       const c = Number(costParam);
       if (!Number.isNaN(c)) draft.cost = c;
     }
+    const tagParam = searchParams.get('tag');
+    if (tagParam) draft.tag_number = tagParam;
     const photos = searchParams.getAll('photo').filter(Boolean).slice(0, MAX_PHOTOS);
     if (photos.length > 0) draft.photos = photos;
     setEditing(draft);
@@ -381,7 +385,7 @@ function ListingsPageContent() {
       arr = arr.filter(l => {
         const hay = [
           l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '',
-          l.description, l.raw_grade, l.grading_company, l.grade,
+          l.description, l.raw_grade, l.grading_company, l.grade, l.tag_number,
         ].filter(Boolean).join(' ').toLowerCase();
         return terms.every(t => hay.includes(t));
       });
@@ -630,8 +634,8 @@ function ListingsPageContent() {
   // per-field "Apply" toggles, so unchecked fields are simply absent from
   // the object and stay untouched. Title is recomputed when any title-
   // contributing field changes, otherwise left alone.
-  async function applyBulkEdit(patch: Partial<Listing>) {
-    if (selectedIds.size === 0 || Object.keys(patch).length === 0) return;
+  async function applyBulkEdit(patch: Partial<Listing>, tagAutoNumber?: { prefix: string; start: number; width: number }) {
+    if (selectedIds.size === 0 || (Object.keys(patch).length === 0 && !tagAutoNumber)) return;
     setBulkWorking(true);
     const supabase = createClient();
     const ids = Array.from(selectedIds);
@@ -643,13 +647,28 @@ function ListingsPageContent() {
     const titleAffecting = new Set(['year', 'brand', 'condition_type', 'raw_grade', 'grading_company', 'grade']);
     const titleNeedsRebuild = Object.keys(patch).some(k => titleAffecting.has(k));
 
-    if (titleNeedsRebuild) {
-      // Per-row update so we can recompute title for each. Still one HTTP
-      // request per row, but they fire in parallel via Promise.all and the
-      // payload per row is tiny.
+    // Auto-numbering forces a per-row path. We walk the selected rows in
+    // the same visible order the seller sees (year/brand/card#/player)
+    // so the sequence feels natural when scanning the page top-to-bottom.
+    const perRowTags = new Map<string, string>();
+    if (tagAutoNumber) {
+      const ordered = filtered.filter(l => selectedIds.has(l.id));
+      ordered.forEach((l, i) => {
+        const n = tagAutoNumber.start + i;
+        const padded = String(n).padStart(tagAutoNumber.width, '0');
+        perRowTags.set(l.id, `${tagAutoNumber.prefix}${padded}`);
+      });
+    }
+    const needsPerRow = titleNeedsRebuild || tagAutoNumber;
+
+    if (needsPerRow) {
+      // Per-row update so we can recompute title and/or assign unique tags.
+      // Payload per row is tiny; fire in parallel via Promise.all.
       const updates = listings.filter(l => selectedIds.has(l.id)).map(l => {
         const merged: Partial<Listing> = { ...l, ...patch };
-        const row: Record<string, unknown> = { ...patch, title: buildTitle(merged) };
+        const row: Record<string, unknown> = { ...patch };
+        if (titleNeedsRebuild) row.title = buildTitle(merged);
+        if (perRowTags.has(l.id)) row.tag_number = perRowTags.get(l.id);
         return supabase.from('listings').update(row).eq('id', l.id);
       });
       const results = await Promise.all(updates);
@@ -672,6 +691,7 @@ function ListingsPageContent() {
       if (!selectedIds.has(l.id)) return l;
       const merged = { ...l, ...patch } as Listing;
       if (titleNeedsRebuild) merged.title = buildTitle(merged);
+      if (perRowTags.has(l.id)) merged.tag_number = perRowTags.get(l.id)!;
       return merged;
     }));
     setBulkWorking(false);
@@ -922,6 +942,18 @@ function ListingsPageContent() {
                               background: 'var(--mustard)', color: 'var(--plum)',
                             }}>
                             HIDDEN · NO PRICE
+                          </span>
+                        )}
+                        {l.tag_number && (
+                          <span title="Your inventory tag — private to you"
+                            className="mono"
+                            style={{
+                              fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', padding: '3px 8px', borderRadius: 6,
+                              background: l.status === 'sold' ? 'var(--orange)' : 'var(--cream)',
+                              color: l.status === 'sold' ? 'var(--cream)' : 'var(--plum)',
+                              border: l.status === 'sold' ? '1.5px solid var(--orange)' : '1.5px solid var(--plum)',
+                            }}>
+                            🏷 {l.tag_number}
                           </span>
                         )}
                       </div>
@@ -1189,7 +1221,7 @@ function BulkEditModal({
   count: number;
   working: boolean;
   onCancel: () => void;
-  onApply: (patch: Partial<Listing>) => Promise<void>;
+  onApply: (patch: Partial<Listing>, tagAutoNumber?: { prefix: string; start: number; width: number }) => Promise<void>;
 }) {
   type ConditionPick = '' | 'raw' | 'graded';
   const [applyYear, setApplyYear] = useState(false);
@@ -1199,6 +1231,12 @@ function BulkEditModal({
   const [applyCost, setApplyCost] = useState(false);
   const [applyDescription, setApplyDescription] = useState(false);
   const [applyShipping, setApplyShipping] = useState(false);
+  // Tag # is auto-numbered (never a single value) since each card needs
+  // a unique tag. Stored as a separate apply flag + prefix/start string
+  // inputs; width is inferred from the start input's digit count.
+  const [applyTag, setApplyTag] = useState(false);
+  const [tagPrefix, setTagPrefix] = useState<string>('');
+  const [tagStart, setTagStart] = useState<string>('001');
 
   const [year, setYear] = useState<string>('');
   const [brand, setBrand] = useState<string>('');
@@ -1213,6 +1251,17 @@ function BulkEditModal({
 
   const [step, setStep] = useState<'form' | 'review'>('form');
   const [error, setError] = useState<string>('');
+
+  // Parse the Tag # auto-number config. Width comes from the start
+  // input's literal character count so the user controls zero-padding
+  // by typing leading zeros (e.g. '001' → 3-wide, '1' → no pad).
+  function parseTagConfig(): { prefix: string; start: number; width: number } | null {
+    if (!applyTag) return null;
+    const trimmed = tagStart.trim();
+    const n = Number(trimmed);
+    if (!trimmed || Number.isNaN(n) || n < 0) return null;
+    return { prefix: tagPrefix, start: n, width: trimmed.length };
+  }
 
   // Build the patch from the toggled fields. Returned object is passed up
   // to the page's applyBulkEdit() which does the actual Supabase write.
@@ -1265,24 +1314,31 @@ function BulkEditModal({
       patch.shipping_options = cleaned;
       summary.push({ label: 'Shipping', value: cleaned.length === 0 ? '— (cleared)' : cleaned.map(s => `${s.label} $${s.cost.toFixed(2)}`).join(', ') });
     }
+    const tagCfg = parseTagConfig();
+    if (tagCfg) {
+      const first = `${tagCfg.prefix}${String(tagCfg.start).padStart(tagCfg.width, '0')}`;
+      const last = `${tagCfg.prefix}${String(tagCfg.start + count - 1).padStart(tagCfg.width, '0')}`;
+      summary.push({ label: `Tag # (auto)`, value: count === 1 ? first : `${first} → ${last} (${count} tags)` });
+    }
     return { patch, summary };
   }
 
   function handleReview() {
     setError('');
-    const anyChecked = applyYear || applyBrand || applyCondition || applyAsking || applyCost || applyDescription || applyShipping;
+    const anyChecked = applyYear || applyBrand || applyCondition || applyAsking || applyCost || applyDescription || applyShipping || applyTag;
     if (!anyChecked) { setError('Check at least one field to apply.'); return; }
     if (applyCondition && condition === 'raw' && !rawGrade) { setError('Pick a raw grade or uncheck Condition.'); return; }
     if (applyCondition && condition === 'graded' && (!gradingCompany || !grade)) { setError('Pick grading company and grade, or uncheck Condition.'); return; }
     if (applyAsking && asking.trim() && Number.isNaN(Number(asking))) { setError('Asking $ must be a number.'); return; }
     if (applyCost && cost.trim() && Number.isNaN(Number(cost))) { setError('Cost $ must be a number.'); return; }
     if (applyYear && year.trim() && Number.isNaN(Number(year))) { setError('Year must be a number.'); return; }
+    if (applyTag && !parseTagConfig()) { setError('Starting number must be a non-negative integer.'); return; }
     setStep('review');
   }
 
   async function handleApply() {
     const { patch } = buildPatch();
-    await onApply(patch);
+    await onApply(patch, parseTagConfig() || undefined);
   }
 
   const fieldStyle: React.CSSProperties = {
@@ -1392,6 +1448,40 @@ function BulkEditModal({
               ) : (
                 <div style={{ fontSize: 12, color: 'var(--ink-mute)', fontStyle: 'italic', padding: '4px 0' }}>
                   Check to replace shipping options on all selected listings.
+                </div>
+              )}
+            </BulkRow>
+
+            <BulkRow active={applyTag} onToggle={() => setApplyTag(v => !v)} label="Tag # — auto-number (each card gets a unique tag)">
+              {applyTag ? (
+                <div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <div>
+                      <label className="input-label">Prefix</label>
+                      <input type="text" value={tagPrefix} onChange={e => setTagPrefix(e.target.value)}
+                        placeholder="A-" maxLength={20}
+                        style={{ ...fieldStyle, width: 110 }} />
+                    </div>
+                    <div>
+                      <label className="input-label">Starting #</label>
+                      <input type="text" value={tagStart} onChange={e => setTagStart(e.target.value.replace(/[^0-9]/g, ''))}
+                        placeholder="001" maxLength={8}
+                        style={{ ...fieldStyle, width: 110 }} />
+                    </div>
+                  </div>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 6 }}>
+                    {(() => {
+                      const cfg = parseTagConfig();
+                      if (!cfg) return 'Enter a starting number above.';
+                      const first = `${cfg.prefix}${String(cfg.start).padStart(cfg.width, '0')}`;
+                      const last = `${cfg.prefix}${String(cfg.start + count - 1).padStart(cfg.width, '0')}`;
+                      return count === 1 ? `Preview: ${first}` : `Preview: ${first} → ${last} (${count} tags). Width keeps leading zeros — type "001" for 3-digit, "1" for none.`;
+                    })()}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--ink-mute)', fontStyle: 'italic', padding: '4px 0' }}>
+                  Check to auto-number selected listings. Each card gets a unique sequential tag (current visible order).
                 </div>
               )}
             </BulkRow>
@@ -1547,6 +1637,15 @@ function ListingEditor({
               placeholder="Mickey Mantle" style={fieldStyle} />
             <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 4 }}>
               Title preview: <span style={{ color: 'var(--plum)' }}>{buildTitle(draft) || '—'}</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="eyebrow" style={labelStyle}>Tag # <span style={{ fontWeight: 600, color: 'var(--ink-mute)' }}>(optional, private)</span></div>
+            <input value={draft.tag_number || ''} onChange={e => set('tag_number', e.target.value)}
+              placeholder="e.g. A001 — your own inventory tag" style={fieldStyle} />
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 4 }}>
+              Internal only. Helps you find the physical card when it sells. Never shown to buyers.
             </div>
           </div>
 
@@ -1706,7 +1805,7 @@ function ListingEditor({
 }
 
 const REQUIRED_HEADERS = ['Year', 'Brand', 'Card #', 'Player', 'Condition Type', 'Asking Price'];
-const ALL_HEADERS = [...REQUIRED_HEADERS, 'Raw Grade', 'Grading Company', 'Grade', 'Cost'];
+const ALL_HEADERS = [...REQUIRED_HEADERS, 'Raw Grade', 'Grading Company', 'Grade', 'Cost', 'Tag #'];
 
 type ParsedRow = {
   rowIndex: number;
@@ -1735,11 +1834,11 @@ function ImportListingsModal({
   function downloadTemplate() {
     const lines = [
       'Enter cards in this format - delete this row before submitting',
-      'Year,Brand,Card #,Player,Condition Type,Asking Price,Raw Grade,Grading Company,Grade,Cost',
-      '1954,Topps,1,TED WILLIAMS,Graded,850,,PSA,5,600',
-      '1955,Topps,3,MONTE IRVIN,Graded,100,,SGC,5,50',
-      '1956,Topps,10,JACKIE ROBINSON,Graded,750,,PSA,4.5,600',
-      '1970,Topps,128,HANK AARON,Raw,2500,VG,,,2000',
+      'Year,Brand,Card #,Player,Condition Type,Asking Price,Raw Grade,Grading Company,Grade,Cost,Tag #',
+      '1954,Topps,1,TED WILLIAMS,Graded,850,,PSA,5,600,A-001',
+      '1955,Topps,3,MONTE IRVIN,Graded,100,,SGC,5,50,A-002',
+      '1956,Topps,10,JACKIE ROBINSON,Graded,750,,PSA,4.5,600,',
+      '1970,Topps,128,HANK AARON,Raw,2500,VG,,,2000,',
     ];
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -1778,6 +1877,7 @@ function ImportListingsModal({
           const rawGrade = String(r['Raw Grade'] || '').trim();
           const gradingCo = String(r['Grading Company'] || '').trim().toUpperCase();
           const numGrade = String(r['Grade'] || '').trim();
+          const tagNum = String(r['Tag #'] || '').trim();
 
           if (!yearStr || !brand || !cardNum || !player) return { rowIndex, error: 'Missing required field (Year, Brand, Card #, or Player).' };
           const year = Number(yearStr);
@@ -1820,6 +1920,7 @@ function ImportListingsModal({
             grade: chosenGrade || null,
             asking_price: asking,
             cost,
+            tag_number: tagNum || null,
             photos: [],
             status: 'draft',
             description: null,

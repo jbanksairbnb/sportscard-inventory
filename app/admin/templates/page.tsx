@@ -17,17 +17,17 @@ type ExistingTemplate = {
   created_at: string | null;
 };
 
-// Roster template schema. 'Notes' was added when the inventory table
-// got per-row notes; 'Graded' was retired (graded-ness is now derived
-// from the Grading Company field). REQUIRED_HEADERS is the subset
-// validated on upload — 'Notes' stays optional so old set-roster CSVs
-// produced before the schema change still import.
+// Roster template schema. 'Notes' and 'Tag #' are seller-bookkeeping
+// fields — both optional so old set-roster CSVs produced before either
+// column existed still import. 'Graded' was retired (graded-ness is
+// now derived from the Grading Company field).
 const EXPECTED_HEADERS = [
-  'Card #', 'Player', 'Notes', 'Owned', 'Raw Grade',
+  'Card #', 'Player', 'Notes', 'Tag #', 'Owned', 'Raw Grade',
   'Grading Company', 'Grade', 'Cost', 'Value', 'Target Price',
   'Sale Price', 'Date Purchased', 'Purchased From', 'Upload Image(s)',
 ];
-const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => h !== 'Notes');
+const OPTIONAL_HEADERS = new Set(['Notes', 'Tag #']);
+const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => !OPTIONAL_HEADERS.has(h));
 
 const SPORTS = ['baseball', 'football', 'basketball', 'hockey'] as const;
 

@@ -17,10 +17,12 @@ import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 // The legacy "Graded" yes/no column was removed; whether a card is graded is
 // now derived from whether the Grading Company is filled in.
 const EXPECTED_HEADERS = [
-  "Card #", "Description", "Notes", "Owned", "Raw Grade",
+  "Card #", "Description", "Notes", "Tag #", "Owned", "Raw Grade",
     "Grading Company", "Grade", "Cost", "Value", "Target Price", "Target Type", "Target Condition - Low", "Target Condition - High", "Target Grading Companies",
   "Sale Price", "Date Purchased", "Purchased From", "Upload Image(s)",
 ];
+
+const TAG_VISIBLE_KEY = 'sc:set-show-tag';
 
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
 const BRANDS = ["Topps", "Bowman", "Play Ball"];
@@ -512,6 +514,22 @@ export default function SetEditorPage() {
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
   const [scansPickerOpen, setScansPickerOpen] = useState(false);
+  // Tag # column is opt-in — most users won't use inventory tags so we
+  // keep it hidden by default. Pref is per-browser via localStorage.
+  const [showTagColumn, setShowTagColumn] = useState<boolean>(false);
+  useEffect(() => {
+    try { if (typeof window !== 'undefined' && localStorage.getItem(TAG_VISIBLE_KEY) === '1') setShowTagColumn(true); } catch {}
+  }, []);
+  function toggleTagColumn() {
+    setShowTagColumn(v => {
+      const next = !v;
+      try { localStorage.setItem(TAG_VISIBLE_KEY, next ? '1' : '0'); } catch {}
+      return next;
+    });
+  }
+  const [autoNumOpen, setAutoNumOpen] = useState(false);
+  const [autoNumPrefix, setAutoNumPrefix] = useState('');
+  const [autoNumStart, setAutoNumStart] = useState('001');
   function descriptorForRow(row: Record<string, unknown>): CardDescriptor {
     const grade = String(row['Grade'] || '').trim() || null;
     const gradingCompany = String(row['Grading Company'] || '').trim() || null;
@@ -667,6 +685,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     }
     const cost = String(row['Cost'] || '').replace(/[^0-9.]/g, '');
     if (cost) params.set('cost', cost);
+    const tag = String(row['Tag #'] || '').trim();
+    if (tag) params.set('tag', tag);
     const img1 = String(row['Image 1'] || '');
     const img2 = String(row['Image 2'] || '');
     if (img1) params.append('photo', img1);
@@ -741,6 +761,27 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     const next = rows.map((r, i) => selectedRows.has(i) ? { ...r, [bulkField]: value } : r);
     setRows(next);
     scheduleAutoSave(next);
+  }
+  // Auto-number tag # across the selected rows. Width inferred from the
+  // start input so the user controls zero-padding (type "001" for 3-wide,
+  // "1" for none). Sequence follows the rows' current selection order
+  // (smallest origIndex first) so it tracks the table's visual order.
+  function applyAutoNumberTags() {
+    if (selectedRows.size === 0) return;
+    const start = Number(autoNumStart.trim());
+    if (!autoNumStart.trim() || Number.isNaN(start) || start < 0) return;
+    const width = autoNumStart.trim().length;
+    const sortedIdx = Array.from(selectedRows).sort((a, b) => a - b);
+    const next = [...rows];
+    sortedIdx.forEach((rowIdx, i) => {
+      const n = start + i;
+      const padded = String(n).padStart(width, '0');
+      next[rowIdx] = { ...next[rowIdx], 'Tag #': `${autoNumPrefix}${padded}` };
+    });
+    setRows(next);
+    scheduleAutoSave(next);
+    setAutoNumOpen(false);
+    if (!showTagColumn) toggleTagColumn();
   }
   function onBlurCurrency(index: number, field: string) {
     const copy = [...rows];
@@ -995,6 +1036,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                 className={`btn btn-sm ${showNeededOnly ? 'btn-primary' : 'btn-ghost'}`}>
                 {showNeededOnly ? 'Showing: Needed' : 'Show Needed Only'}
               </button>
+              <button type="button" onClick={toggleTagColumn}
+                title="Show or hide the inventory Tag # column"
+                className={`btn btn-sm ${showTagColumn ? 'btn-primary' : 'btn-ghost'}`}>
+                🏷 {showTagColumn ? 'Tag # column on' : 'Show Tag # column'}
+              </button>
               <Link href={`/set/${encodeURIComponent(slug)}/view`} className="btn btn-sm btn-outline">
                 View Inventory
               </Link>
@@ -1062,6 +1108,10 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>
               Apply to {selectedRows.size}
             </button>
+            <button type="button" onClick={() => setAutoNumOpen(true)}
+              className="btn btn-sm" style={{ background: 'var(--cream)', color: 'var(--plum)', border: '1.5px solid var(--cream)' }}>
+              🏷 Auto-number Tag #
+            </button>
             <button type="button" onClick={duplicateSelected}
               className="btn btn-sm" style={{ background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--mustard)' }}>
               📋 Duplicate
@@ -1103,6 +1153,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         Player {sortKey === 'Player' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                       </button>
                     </th>
+                    {showTagColumn && <SortableHeader label="Tag #" />}
                     <SortableHeader label="Owned" />
                     <SortableHeader label="Raw Grade" />
                     <SortableHeader label="Grading Company" display="Grading Co." />
@@ -1153,6 +1204,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                             color: 'var(--ink-soft)',
                           }} />
                       </td>
+                      {showTagColumn && (
+                        <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                          <input value={v(row["Tag #"])}
+                            onChange={(e) => onChangeCell(origIndex, "Tag #", e.target.value)}
+                            placeholder="—"
+                            style={{ ...CELL_INPUT, width: 96 }} />
+                        </td>
+                      )}
                       <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
                         <select value={v(row["Owned"])} onChange={(e) => onChangeCell(origIndex, "Owned", e.target.value)} style={CELL_SELECT}>
                           {YES_NO.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -1413,6 +1472,54 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           onChangeCell(idx, 'Value', toCurrency(value.toFixed(2)));
         }}
       />
+      {autoNumOpen && (() => {
+        const start = Number(autoNumStart.trim());
+        const valid = autoNumStart.trim() && !Number.isNaN(start) && start >= 0;
+        const width = autoNumStart.trim().length || 1;
+        const count = selectedRows.size;
+        const first = valid ? `${autoNumPrefix}${String(start).padStart(width, '0')}` : '';
+        const last = valid && count > 0 ? `${autoNumPrefix}${String(start + count - 1).padStart(width, '0')}` : '';
+        return (
+          <div onClick={() => setAutoNumOpen(false)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(42,20,52,0.55)',
+              display: 'grid', placeItems: 'center', padding: 20,
+            }}>
+            <div onClick={e => e.stopPropagation()} className="panel-bordered"
+              style={{ width: '100%', maxWidth: 460, background: 'var(--cream)', padding: '20px 24px' }}>
+              <div className="display" style={{ fontSize: 20, color: 'var(--plum)' }}>🏷 Auto-number Tag #</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginTop: 4, marginBottom: 14 }}>
+                Assigns sequential tag numbers to <strong>{count}</strong> selected row{count === 1 ? '' : 's'}, in table order.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div>
+                  <label className="input-label">Prefix</label>
+                  <input type="text" value={autoNumPrefix} onChange={e => setAutoNumPrefix(e.target.value)}
+                    placeholder="A-" maxLength={20} className="input-sc" style={{ width: 110 }} />
+                </div>
+                <div>
+                  <label className="input-label">Starting #</label>
+                  <input type="text" value={autoNumStart}
+                    onChange={e => setAutoNumStart(e.target.value.replace(/[^0-9]/g, ''))}
+                    placeholder="001" maxLength={8} className="input-sc" style={{ width: 110 }} />
+                </div>
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 10 }}>
+                {valid
+                  ? (count === 1 ? `Preview: ${first}` : `Preview: ${first} → ${last} (${count} tags). Type "001" for 3-digit padding, "1" for none.`)
+                  : 'Enter a starting number above.'}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 18, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setAutoNumOpen(false)} className="btn btn-ghost btn-sm">Cancel</button>
+                <button type="button" onClick={applyAutoNumberTags} disabled={!valid} className="btn btn-primary btn-sm">
+                  ✓ Assign tags
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {scansPickerOpen && (
         <div onClick={() => setScansPickerOpen(false)}
           style={{

@@ -28,6 +28,7 @@ type ListingRef = {
   brand: string | null;
   card_number: string | null;
   player: string | null;
+  tag_number: string | null;
 };
 
 type LotRow = {
@@ -224,7 +225,7 @@ export default function BidderProfilePage() {
           ? supabase.from('fb_auctions').select('id, title, status').in('id', auctionIds)
           : Promise.resolve({ data: [] as AuctionRef[] }),
         listingIds.length > 0
-          ? supabase.from('listings').select('id, title, year, brand, card_number, player').in('id', listingIds)
+          ? supabase.from('listings').select('id, title, year, brand, card_number, player, tag_number').in('id', listingIds)
           : Promise.resolve({ data: [] as ListingRef[] }),
       ]);
       const auctionsById = new Map((aucRes.data || []).map((a: AuctionRef) => [a.id, a]));
@@ -279,7 +280,7 @@ export default function BidderProfilePage() {
           ? supabase.from('fb_claim_sale_lots').select('id, sale_id, lot_number').in('id', claimLotIds)
           : Promise.resolve({ data: [] as ClaimLotRow[] }),
         claimListingIds.length > 0
-          ? supabase.from('listings').select('id, title, year, brand, card_number, player').in('id', claimListingIds)
+          ? supabase.from('listings').select('id, title, year, brand, card_number, player, tag_number').in('id', claimListingIds)
           : Promise.resolve({ data: [] as ListingRef[] }),
       ]);
       const claimLotsById = new Map(((claimLotRes.data || []) as ClaimLotRow[]).map(l => [l.id, l]));
@@ -358,7 +359,7 @@ export default function BidderProfilePage() {
       if (extraListingIds.length > 0) {
         const { data: extraListings } = await supabase
           .from('listings')
-          .select('id, title, year, brand, card_number, player')
+          .select('id, title, year, brand, card_number, player, tag_number')
           .in('id', extraListingIds);
         for (const l of (extraListings || []) as ListingRef[]) listingsById.set(l.id, l);
       }
@@ -452,6 +453,7 @@ export default function BidderProfilePage() {
       key: string;            // unique row id for status-update fan-out
       kind: 'auction' | 'claim';
       label: string;          // card description for the invoice line
+      tag: string | null;     // seller's inventory tag, if assigned
       amount: number;
     };
     type Group = {
@@ -475,6 +477,7 @@ export default function BidderProfilePage() {
       groups.get(key)!.lines.push({
         key: i.lotId, kind: 'auction',
         label: cardSummary(i.listing),
+        tag: i.listing?.tag_number || null,
         amount: i.bid || 0,
       });
     }
@@ -490,6 +493,7 @@ export default function BidderProfilePage() {
       groups.get(key)!.lines.push({
         key: c.itemId, kind: 'claim',
         label: cardSummary(c.listing),
+        tag: c.listing?.tag_number || null,
         amount: c.price || 0,
       });
     }
@@ -696,8 +700,16 @@ export default function BidderProfilePage() {
                         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{g.lines.length} item{g.lines.length === 1 ? '' : 's'}</span>
                       </div>
                       {g.lines.map(l => (
-                        <div key={l.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12.5, color: 'var(--plum)' }}>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>· {l.label}</span>
+                        <div key={l.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12.5, color: 'var(--plum)', alignItems: 'center' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                            · {l.label}
+                            {l.tag && (
+                              <span className="mono" title="Inventory tag"
+                                style={{ marginLeft: 8, fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'var(--cream)', border: '1px solid var(--plum)', fontWeight: 700 }}>
+                                🏷 {l.tag}
+                              </span>
+                            )}
+                          </span>
                           <span className="mono" style={{ color: 'var(--orange)', fontWeight: 700 }}>{fmtMoney(l.amount)}</span>
                         </div>
                       ))}

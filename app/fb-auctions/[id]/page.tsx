@@ -20,6 +20,7 @@ type Listing = {
   brand: string | null;
   card_number: string | null;
   player: string | null;
+  tag_number: string | null;
   photos: string[];
   condition_type: 'raw' | 'graded';
   raw_grade: string | null;
@@ -138,7 +139,7 @@ export default function ManageFbAuctionPage() {
           .select('*, fb_groups(name, url), fb_auction_templates(name, template_type, post_header, post_footer, lot_template)')
           .eq('id', auctionId).eq('user_id', user.id).maybeSingle(),
         supabase.from('fb_auction_lots')
-          .select('*, listing:listings(id, title, year, brand, card_number, player, photos, condition_type, raw_grade, grading_company, grade, source_set_slug, source_card_number)')
+          .select('*, listing:listings(id, title, year, brand, card_number, player, tag_number, photos, condition_type, raw_grade, grading_company, grade, source_set_slug, source_card_number)')
           .eq('auction_id', auctionId).order('lot_number'),
         supabase.from('fb_bidders').select('id, name, fb_handle, member_user_id').eq('user_id', user.id).order('name'),
       ]);
@@ -972,6 +973,25 @@ export default function ManageFbAuctionPage() {
                           {group.lots.length} lot{group.lots.length === 1 ? '' : 's'} · {fmtMoney(subtotal)} subtotal
                         </div>
                       </div>
+
+                      {group.lots.some(l => l.listing?.tag_number) && (
+                        <div style={{
+                          background: 'rgba(232,116,44,0.08)', border: '1.5px dashed var(--orange)',
+                          borderRadius: 6, padding: '8px 10px', marginBottom: 10,
+                          fontSize: 12, color: 'var(--plum)',
+                        }}>
+                          <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 4 }}>
+                            🏷 Pull these cards (seller-only — not shown in invoice)
+                          </div>
+                          <div className="mono" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                            {group.lots.map(l => l.listing?.tag_number ? (
+                              <span key={l.id} style={{ background: 'var(--cream)', border: '1px solid var(--plum)', borderRadius: 4, padding: '2px 6px' }}>
+                                {l.listing.tag_number}
+                              </span>
+                            ) : null)}
+                          </div>
+                        </div>
+                      )}
 
                       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 10 }}>
                         <div style={{ flex: 1, minWidth: 280 }}>
