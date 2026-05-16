@@ -86,6 +86,18 @@ export default function ScanBatchToListingsPage() {
         return terms.every(t => hay.includes(t));
       });
     }
+    // Sort by year → brand → card # (numeric-aware so "5" < "11") → player.
+    // Matches the natural order of a CSV-uploaded set, which is what sellers
+    // want when scanning a physical stack against the listing list.
+    arr.sort((a, b) => {
+      const yearDiff = (a.year || 0) - (b.year || 0);
+      if (yearDiff !== 0) return yearDiff;
+      const brandCmp = (a.brand || '').localeCompare(b.brand || '');
+      if (brandCmp !== 0) return brandCmp;
+      const cardCmp = (a.card_number || '').localeCompare(b.card_number || '', undefined, { numeric: true });
+      if (cardCmp !== 0) return cardCmp;
+      return (a.player || '').localeCompare(b.player || '');
+    });
     return arr;
   }, [listings, statusFilter, hideWithPhotos, search]);
 
