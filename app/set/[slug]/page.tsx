@@ -9,6 +9,7 @@ import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
+import { applyOwnedTransition } from "@/lib/inventory";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -670,6 +671,23 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   }
 
   function handleListForSale(row: Record<string, any>) {
+    // Immediately mark the row Not Owned in local state — the card is on
+    // its way to the marketplace as a draft listing, so the set view
+    // should reflect that even before the listing is created. If the
+    // seller cancels the listing form they can manually flip Owned back.
+    // Image archive behavior matches the existing "owned toggle":
+    // photos move to "Image N Archived" so the row renders imageless.
+    const cardNum = String(row['Card #'] || '').trim();
+    if (cardNum) {
+      const { nextRows, touched } = applyOwnedTransition(
+        rows, new Set([cardNum]), false,
+      );
+      if (touched) {
+        setRows(nextRows);
+        scheduleAutoSave(nextRows);
+      }
+    }
+
     const params = new URLSearchParams({ prefill: '1' });
     if (year) params.set('year', String(year));
     if (brand) params.set('brand', String(brand));
