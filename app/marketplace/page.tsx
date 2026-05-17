@@ -551,6 +551,13 @@ function BuyModal({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ purchase_id: purchaseId, owned: false }),
     }).catch(() => {});
+    // And populate any matching rows in the buyer's own sets so their
+    // want list reflects the purchase. No-op when already owned.
+    await fetch('/api/inventory/buyer-claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchase_id: purchaseId }),
+    }).catch(() => {});
     setSubmitting(false);
     alert('Purchase confirmed! Check your email for details. The seller will reach out about payment.');
     onComplete(listing.id);
@@ -798,6 +805,18 @@ function BulkBuyModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ purchase_id: pid, owned: false }),
+      }).catch(() => {})
+    ));
+
+    // Populate the buyer's own matching set rows so a card they just bought
+    // is marked Owned in their checklist — keeps the want list accurate and
+    // prevents accidental double-buys. No-op for sets that already have the
+    // card marked Owned (buyer's call to manually update upgrades).
+    await Promise.all(purchaseIds.map(pid =>
+      fetch('/api/inventory/buyer-claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchase_id: pid }),
       }).catch(() => {})
     ));
 
