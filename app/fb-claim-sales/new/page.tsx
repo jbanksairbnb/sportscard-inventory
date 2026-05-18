@@ -863,7 +863,7 @@ function ListingPicker({
                     <td style={{ padding: '6px 10px', fontSize: 11 }}>{renderRowExtras ? renderRowExtras(l) : null}</td>
                     <td style={{ padding: '6px 10px' }}>
                       {l.photos && l.photos[0]
-                        ? <img src={l.photos[0]} alt="" style={{ width: 36, height: 50, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
+                        ? <img loading="lazy" decoding="async" src={l.photos[0]} alt="" style={{ width: 36, height: 50, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
                         : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
                     </td>
                     <td style={{ padding: '6px 10px', fontSize: 12.5, color: 'var(--plum)' }}>

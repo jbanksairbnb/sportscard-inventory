@@ -547,12 +547,12 @@ export default function ScanBatchToListingsPage() {
                       </div>
                       <div style={slotStyle} title={p?.front?.name || 'front missing'}>
                         {frontUrl
-                          ? <img src={frontUrl} alt="front" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ? <img loading="lazy" decoding="async" src={frontUrl} alt="front" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           : '— F'}
                       </div>
                       <div style={slotStyle} title={p?.back?.name || 'back missing'}>
                         {backUrl
-                          ? <img src={backUrl} alt="back" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ? <img loading="lazy" decoding="async" src={backUrl} alt="back" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                           : '— B'}
                       </div>
                       <button type="button" onClick={() => swapPair(i)}

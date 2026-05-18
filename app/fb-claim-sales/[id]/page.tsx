@@ -713,7 +713,7 @@ export default function ManageClaimSalePage() {
                           </div>
                           <a href={url} target="_blank" rel="noopener noreferrer"
                             style={{ display: 'block', width: thumbWidth, height: 110, background: 'var(--paper)', borderRadius: 6, border: '1.5px solid var(--rule)', overflow: 'hidden' }}>
-                            <img src={url} alt={`${label} collage`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            <img loading="lazy" decoding="async" src={url} alt={`${label} collage`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           </a>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button type="button" onClick={() => downloadJpeg(url, filename)}
@@ -746,7 +746,7 @@ export default function ManageClaimSalePage() {
                               fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, flexShrink: 0,
                             }}>{it.position}</div>
                           )}
-                          {photo && <img src={photo} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />}
+                          {photo && <img loading="lazy" decoding="async" src={photo} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div className="display" style={{ fontSize: 12.5, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cardLabel}</div>
                             <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>{fmtMoney(it.price)}</div>

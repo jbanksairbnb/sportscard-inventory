@@ -545,7 +545,7 @@ export default function ClaimSalesPage() {
                                 </td>
                                 <td style={{ padding: '8px 14px' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    {photo && <img src={photo} alt="" style={{ width: 28, height: 39, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />}
+                                    {photo && <img loading="lazy" decoding="async" src={photo} alt="" style={{ width: 28, height: 39, objectFit: 'cover', borderRadius: 3, flexShrink: 0 }} />}
                                     <span className="display" style={{ fontSize: 12.5, color: 'var(--plum)' }}>{cardLabel}</span>
                                   </div>
                                 </td>

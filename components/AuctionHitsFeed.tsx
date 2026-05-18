@@ -338,7 +338,7 @@ function OutbidItem({ notification, onDismiss }: { notification: OutbidNotificat
         overflow: 'hidden', display: 'grid', placeItems: 'center',
       }}>
         {photo ? (
-          <img src={photo} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img loading="lazy" decoding="async" src={photo} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
           <span className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>No photo</span>
         )}
@@ -394,7 +394,7 @@ function AuctionHitItem({ hit }: { hit: Hit }) {
         overflow: 'hidden', display: 'grid', placeItems: 'center',
       }}>
         {photo ? (
-          <img src={photo} alt={hit.listing_title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img loading="lazy" decoding="async" src={photo} alt={hit.listing_title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
           <span className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>No photo</span>
         )}

@@ -232,7 +232,7 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
       background: 'rgba(42, 20, 52, 0.92)',
     }} onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={urls[idx]} alt="Listing" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={urls[idx]} alt="Listing" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }} />
         {urls.length > 1 && (
           <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
             <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
@@ -1734,7 +1734,7 @@ function ListingEditor({
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {photos.map((url, i) => (
                   <div key={url + i} style={{ position: 'relative' }}>
-                    <img src={url} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
+                    <img loading="lazy" decoding="async" src={url} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
                       style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
                     <button type="button" onClick={() => setEditingPhotoIdx(i)}
                       title="Rotate or crop"

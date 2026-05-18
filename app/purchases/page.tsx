@@ -174,7 +174,7 @@ export default function PurchasesPage() {
                     borderRight: '2px solid var(--plum)',
                   }}>
                     {photo ? (
-                      <img src={photo} alt={p.listing?.title || 'Listing'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      <img loading="lazy" decoding="async" src={photo} alt={p.listing?.title || 'Listing'} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                     ) : (
                       <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>
                     )}

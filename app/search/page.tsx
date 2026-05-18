@@ -204,7 +204,7 @@ function SearchPageInner() {
                       }}>
                         <div style={{ aspectRatio: '4 / 5', background: 'var(--paper)', display: 'grid', placeItems: 'center', overflow: 'hidden', borderBottom: '1.5px solid var(--rule)' }}>
                           {photo ? (
-                            <img src={photo} alt={l.title} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                            <img loading="lazy" decoding="async" src={photo} alt={l.title} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                           ) : (
                             <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>
                           )}

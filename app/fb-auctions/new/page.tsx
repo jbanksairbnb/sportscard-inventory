@@ -747,10 +747,10 @@ function NewFbAuctionPageInner() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {generated.lots[0].listing.photos?.[0] && (
-                      <img src={generated.lots[0].listing.photos[0]} alt="Front" style={{ width: 96, height: 134, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                      <img loading="lazy" decoding="async" src={generated.lots[0].listing.photos[0]} alt="Front" style={{ width: 96, height: 134, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
                     )}
                     {generated.lots[0].listing.photos?.[1] && (
-                      <img src={generated.lots[0].listing.photos[1]} alt="Back" style={{ width: 96, height: 134, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                      <img loading="lazy" decoding="async" src={generated.lots[0].listing.photos[1]} alt="Back" style={{ width: 96, height: 134, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
                     )}
                   </div>
                   <button onClick={() => handleDownloadImage(generated.lots[0])}
@@ -801,9 +801,9 @@ function NewFbAuctionPageInner() {
                       </div>
                       {lot.listing.photos?.[0] && (
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          <img src={lot.listing.photos[0]} alt="Front" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                          <img loading="lazy" decoding="async" src={lot.listing.photos[0]} alt="Front" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
                           {lot.listing.photos[1] && (
-                            <img src={lot.listing.photos[1]} alt="Back" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
+                            <img loading="lazy" decoding="async" src={lot.listing.photos[1]} alt="Back" style={{ width: 72, height: 100, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--plum)' }} />
                           )}
                         </div>
                       )}
@@ -888,7 +888,7 @@ function SingleCardForm({ listings, searchQuery, setSearchQuery, filteredListing
                       </td>
                       <td style={{ padding: '8px 12px' }}>
                         {l.photos && l.photos[0]
-                          ? <img src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
+                          ? <img loading="lazy" decoding="async" src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
                           : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
                       </td>
                       <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--plum)' }}>
@@ -1057,7 +1057,7 @@ function MultiCardForm({ multiTitle, setMultiTitle, multiDescription, setMultiDe
                       </td>
                       <td style={{ padding: '8px 12px' }}>
                         {l.photos && l.photos[0]
-                          ? <img src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
+                          ? <img loading="lazy" decoding="async" src={l.photos[0]} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)' }} />
                           : <span style={{ fontSize: 9, color: 'var(--ink-mute)' }}>—</span>}
                       </td>
                       <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--plum)' }}>

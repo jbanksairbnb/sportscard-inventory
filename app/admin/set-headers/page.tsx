@@ -211,7 +211,7 @@ export default function AdminSetHeadersPage() {
             {filteredHeaders.map(h => (
               <div key={h.id} className="panel-bordered" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center' }}>
                 {h.image_url ? (
-                  <img src={h.image_url} alt="" style={{ width: 110, height: 70, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--rule)', flexShrink: 0 }} />
+                  <img loading="lazy" decoding="async" src={h.image_url} alt="" style={{ width: 110, height: 70, objectFit: 'cover', borderRadius: 6, border: '1.5px solid var(--rule)', flexShrink: 0 }} />
                 ) : (
                   <div style={{ width: 110, height: 70, borderRadius: 6, border: '1.5px dashed var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--ink-mute)', flexShrink: 0 }}>
                     no image

@@ -120,7 +120,7 @@ export default function PurchaseDetailModal({
               border: '2px solid var(--plum)', borderRadius: 10, overflow: 'hidden',
               display: 'grid', placeItems: 'center',
             }}>
-              <img src={photo} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+              <img loading="lazy" decoding="async" src={photo} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
             </div>
           )}
 

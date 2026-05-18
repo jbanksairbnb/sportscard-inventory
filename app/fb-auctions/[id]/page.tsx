@@ -803,7 +803,7 @@ export default function ManageFbAuctionPage() {
                         fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700,
                       }}>#{lot.lot_number}</div>
                       {lot.listing?.photos?.[0] && (
-                        <img src={lot.listing.photos[0]} alt="" style={{ width: 44, height: 62, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)', flexShrink: 0 }} />
+                        <img loading="lazy" decoding="async" src={lot.listing.photos[0]} alt="" style={{ width: 44, height: 62, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--plum)', flexShrink: 0 }} />
                       )}
                       <div style={{ flex: 1, minWidth: 240 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
