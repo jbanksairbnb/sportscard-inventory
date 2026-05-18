@@ -315,7 +315,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
       }}>
         <div style={{ position: 'relative', width: 172, height: 172, flexShrink: 0 }}>
           <div className="avatar" data-shape="circle" style={{ width: 172, height: 172 }}>
-            {avatar ? <img src={avatar} alt={name} /> : (
+            {avatar ? <img loading="lazy" decoding="async" src={avatar} alt={name} /> : (
               <div style={{
                 width: '100%', height: '100%', display: 'grid', placeItems: 'center',
                 background: 'linear-gradient(135deg, var(--plum) 0%, var(--plum-deep) 100%)',
@@ -872,7 +872,7 @@ function FavoriteLightbox({ images, startSlot, onClose }: {
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(42,20,52,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
       onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={e => e.stopPropagation()}>
-        <img src={current.url} alt="Favorite card" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={current.url} alt="Favorite card" style={{ maxWidth: '80vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
         {filled.length > 1 && (
           <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
             <button type="button" onClick={e => { e.stopPropagation(); setPos(p => Math.max(0, p - 1)); }} disabled={pos === 0} style={arrowBtn(pos === 0)}>‹</button>
@@ -937,7 +937,7 @@ function FavoriteFrame({ card, imageUrl, slotIdx, userId, onImageChange, onLight
     return (
       <div style={{ width, height, position: 'relative', borderRadius: 8, overflow: 'hidden', border: '2px solid var(--plum)', boxShadow: '0 3px 0 var(--plum)' }}
         onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
-        <img src={imageUrl} alt="Favorite card" onClick={onLightboxOpen}
+        <img loading="lazy" decoding="async" src={imageUrl} alt="Favorite card" onClick={onLightboxOpen}
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', cursor: 'pointer' }} />
         {hovered && (
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(42,20,52,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>

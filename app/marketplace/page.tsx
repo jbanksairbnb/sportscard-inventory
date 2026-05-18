@@ -49,7 +49,7 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
       background: 'rgba(42, 20, 52, 0.92)',
     }} onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={urls[idx]} alt="Listing" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={urls[idx]} alt="Listing" style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }} />
         {urls.length > 1 && (
           <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
             <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
@@ -325,7 +325,7 @@ function MarketplacePageInner() {
                     cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
                   }}>
                   {l.photos && l.photos.length > 0 ? (
-                    <img src={l.photos[0]} alt={l.title}
+                    <img loading="lazy" decoding="async" src={l.photos[0]} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)' }}>No photo</span>
@@ -377,7 +377,7 @@ function MarketplacePageInner() {
                     cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
                   }}>
                   {l.photos && l.photos.length > 0 ? (
-                    <img src={l.photos[0]} alt={l.title}
+                    <img loading="lazy" decoding="async" src={l.photos[0]} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>
@@ -874,7 +874,7 @@ function BulkBuyModal({
                     display: 'grid', placeItems: 'center', overflow: 'hidden',
                   }}>
                     {l.photos && l.photos.length > 0 ? (
-                      <img src={l.photos[0]} alt={l.title}
+                      <img loading="lazy" decoding="async" src={l.photos[0]} alt={l.title}
                         style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                     ) : (
                       <span className="eyebrow" style={{ fontSize: 8, color: 'var(--ink-mute)' }}>—</span>

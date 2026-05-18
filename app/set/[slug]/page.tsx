@@ -153,7 +153,7 @@ function ImageViewModal({ urls, onClose, onDelete }: { urls: string[]; onClose: 
       background: 'rgba(42, 20, 52, 0.88)',
     }} onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={urls[idx]} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={urls[idx]} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
         {urls.length > 1 && (
           <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', pointerEvents: 'none', padding: '0 4px' }}>
             <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
@@ -200,7 +200,7 @@ function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
       <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
       {url ? (
         <>
-          <img src={url} alt={label} title="Click to view"
+          <img loading="lazy" decoding="async" src={url} alt={label} title="Click to view"
             onClick={() => setShowModal(true)}
             style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           {showModal && (

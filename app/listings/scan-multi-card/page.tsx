@@ -404,7 +404,7 @@ export default function ScanMultiCardPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                         <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)' }}>Front</div>
                         {frontSrc && (
-                          <img src={frontSrc} alt={`Front ${p}`} style={{
+                          <img loading="lazy" decoding="async" src={frontSrc} alt={`Front ${p}`} style={{
                             width: 110, height: 154, objectFit: 'cover', borderRadius: 6,
                             border: '2px solid var(--plum)', boxShadow: '0 2px 0 var(--plum)',
                           }} />
@@ -453,7 +453,7 @@ export default function ScanMultiCardPage() {
                               transition: 'opacity 100ms',
                             }}
                           >
-                            <img src={backSrc} alt={`Back at position ${p}`} style={{
+                            <img loading="lazy" decoding="async" src={backSrc} alt={`Back at position ${p}`} style={{
                               width: 110, height: 154, objectFit: 'cover', display: 'block',
                               pointerEvents: 'none',
                             }} />
@@ -607,7 +607,7 @@ function SplitPreview({ previews, title }: { previews: string[]; title: string }
             position: 'relative', borderRadius: 6, overflow: 'hidden',
             border: '1.5px solid var(--plum)', boxShadow: '0 1px 0 var(--plum)',
           }}>
-            <img src={src} alt={`Position ${i + 1}`} style={{ width: '100%', display: 'block' }} />
+            <img loading="lazy" decoding="async" src={src} alt={`Position ${i + 1}`} style={{ width: '100%', display: 'block' }} />
             <div style={{
               position: 'absolute', top: 4, left: 4,
               background: 'var(--plum)', color: 'var(--mustard)',

@@ -618,10 +618,10 @@ export default function ScanFromSetPage() {
                         <div className="mono" style={{ fontSize: 16, color: 'var(--orange)', fontWeight: 700, textAlign: 'center' }}>{i + 1}</div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
                           {pair?.front
-                            ? <img src={URL.createObjectURL(pair.front)} alt="" style={{ width: 56, height: 78, objectFit: 'cover', borderRadius: 4, border: '1.5px solid var(--plum)' }} />
+                            ? <img loading="lazy" decoding="async" src={URL.createObjectURL(pair.front)} alt="" style={{ width: 56, height: 78, objectFit: 'cover', borderRadius: 4, border: '1.5px solid var(--plum)' }} />
                             : <div style={{ width: 56, height: 78, borderRadius: 4, background: 'var(--cream)', border: '1.5px dashed var(--rule)' }} />}
                           {pair?.back
-                            ? <img src={URL.createObjectURL(pair.back)} alt="" style={{ width: 56, height: 78, objectFit: 'cover', borderRadius: 4, border: '1.5px solid var(--plum)' }} />
+                            ? <img loading="lazy" decoding="async" src={URL.createObjectURL(pair.back)} alt="" style={{ width: 56, height: 78, objectFit: 'cover', borderRadius: 4, border: '1.5px solid var(--plum)' }} />
                             : <div style={{ width: 56, height: 78, borderRadius: 4, background: 'var(--cream)', border: '1.5px dashed var(--rule)' }} />}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

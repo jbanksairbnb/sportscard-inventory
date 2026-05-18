@@ -375,7 +375,7 @@ export default function ScanInboxPage() {
                   <div style={{ flex: 1, textAlign: 'center' }}>
                     <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 }}>Front</div>
                     {currentPair.front ? (
-                      <img src={URL.createObjectURL(currentPair.front)} alt="Front"
+                      <img loading="lazy" decoding="async" src={URL.createObjectURL(currentPair.front)} alt="Front"
                         style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8, border: '2px solid var(--plum)', background: 'var(--cream)' }} />
                     ) : (
                       <div style={{ height: 200, background: 'var(--paper)', border: '2px dashed var(--rule)', borderRadius: 8 }} />
@@ -384,7 +384,7 @@ export default function ScanInboxPage() {
                   <div style={{ flex: 1, textAlign: 'center' }}>
                     <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 4 }}>Back</div>
                     {currentPair.back ? (
-                      <img src={URL.createObjectURL(currentPair.back)} alt="Back"
+                      <img loading="lazy" decoding="async" src={URL.createObjectURL(currentPair.back)} alt="Back"
                         style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8, border: '2px solid var(--plum)', background: 'var(--cream)' }} />
                     ) : (
                       <div style={{ height: 200, background: 'var(--paper)', border: '2px dashed var(--rule)', borderRadius: 8, display: 'grid', placeItems: 'center', color: 'var(--ink-mute)', fontSize: 11 }}>No back</div>

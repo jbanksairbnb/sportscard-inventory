@@ -30,7 +30,7 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
       onClick={onClose}
     >
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
         <button
           type="button"
           onClick={onClose}
@@ -132,11 +132,11 @@ function ListRow({ row, even }: { row: CardRow; even: boolean }) {
         <td style={{ padding: '10px 16px' }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {img1 && (
-              <img src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
+              <img loading="lazy" decoding="async" src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
                 style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
             )}
             {img2 && (
-              <img src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
+              <img loading="lazy" decoding="async" src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
                 style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
             )}
           </div>

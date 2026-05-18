@@ -13,7 +13,7 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
       onClick={onClose}
     >
       <div className="relative max-w-4xl max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
-        <img src={url} alt="Card" className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain" />
+        <img loading="lazy" decoding="async" src={url} alt="Card" className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain" />
         <button
           type="button"
           onClick={onClose}

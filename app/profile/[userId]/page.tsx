@@ -546,7 +546,7 @@ function FavoriteLightboxReadonly({ images, startUrl, onClose }: {
         padding: 24,
       }}>
       <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative', maxWidth: '90vw', maxHeight: '85vh' }}>
-        <img src={url} alt="Favorite card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={url} alt="Favorite card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
         {images.length > 1 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12 }}>
             <button type="button" onClick={() => setIdx((idx - 1 + images.length) % images.length)} className="btn btn-sm">← Prev</button>
