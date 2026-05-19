@@ -62,11 +62,11 @@ export async function POST(req: NextRequest) {
 
   const { data: listing } = await admin
     .from('listings')
-    .select('id, user_id, source_set_slug, source_card_number')
+    .select('id, user_id, source_set_slug, source_card_number, source_row_id')
     .eq('id', listingId)
     .maybeSingle()
   if (!listing) return NextResponse.json({ error: 'Listing not found' }, { status: 404 })
-  if (!listing.source_set_slug || !listing.source_card_number) {
+  if (!listing.source_set_slug || (!listing.source_card_number && !listing.source_row_id)) {
     return NextResponse.json({ ok: true, skipped: 'listing has no source row' })
   }
 
@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
     sellerUserId: sellerId,
     setSlug: listing.source_set_slug,
     cardNumber: listing.source_card_number,
+    rowId: listing.source_row_id,
     owned,
   })
   return NextResponse.json({ ok: true, updated })
