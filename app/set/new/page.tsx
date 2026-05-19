@@ -105,6 +105,8 @@ export default function NewSetPage() {
 
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState<string>('');
+  const [templatesRetryCount, setTemplatesRetryCount] = useState(0);
   const [templateFilterSport, setTemplateFilterSport] = useState('baseball');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [templateLoading, setTemplateLoading] = useState(false);
@@ -118,15 +120,37 @@ export default function NewSetPage() {
   }, [router]);
 
   useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    // Hard timeout — without this, a stuck or hung fetch on a flaky mobile
+    // network would leave "Loading..." spinning forever with no recovery.
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     async function loadTemplates() {
       setTemplatesLoading(true);
-      const res = await fetch(`/api/set-templates?sport=${encodeURIComponent(templateFilterSport)}`);
-      const data = await res.json();
-      setTemplates(data.templates || []);
-      setTemplatesLoading(false);
+      setTemplatesError('');
+      try {
+        const res = await fetch(
+          `/api/set-templates?sport=${encodeURIComponent(templateFilterSport)}`,
+          { signal: controller.signal },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        setTemplates(data.templates || []);
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        // AbortError fires when our 15s timeout (or sport-switch) kicks in.
+        setTemplatesError(msg.includes('abort') ? 'Request timed out — check your connection and retry.' : `Could not load library: ${msg}`);
+      } finally {
+        clearTimeout(timeout);
+        if (!cancelled) setTemplatesLoading(false);
+      }
     }
     loadTemplates();
-  }, [templateFilterSport]);
+    return () => { cancelled = true; controller.abort(); clearTimeout(timeout); };
+  }, [templateFilterSport, templatesRetryCount]);
 
   async function handlePickTemplate(id: string) {
     setSelectedTemplateId(id);
@@ -342,13 +366,21 @@ export default function NewSetPage() {
                   <select value={selectedTemplateId} onChange={e => handlePickTemplate(e.target.value)}
                     disabled={templatesLoading || templateLoading}
                     className="input-sc" style={{ width: '100%' }}>
-                    <option value="">{templatesLoading ? 'Loading…' : templates.length === 0 ? 'No templates available' : 'Select a set…'}</option>
+                    <option value="">{templatesLoading ? 'Loading…' : templatesError ? '— failed to load —' : templates.length === 0 ? 'No templates available' : 'Select a set…'}</option>
                     {templates.map(t => (
                       <option key={t.id} value={t.id}>
                         {t.title} ({t.card_count} cards){t.is_official ? ' ★ Official' : ''}
                       </option>
                     ))}
                   </select>
+                  {templatesError && (
+                    <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(197,74,44,0.08)', border: '1.5px solid var(--rust)', borderRadius: 8, fontSize: 12, color: 'var(--plum)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                      <span>{templatesError}</span>
+                      <button type="button"
+                        onClick={() => setTemplatesRetryCount(n => n + 1)}
+                        className="btn btn-ghost btn-sm">↻ Retry</button>
+                    </div>
+                  )}
                 </div>
               </div>
               {templateLoading && <div className="mono" style={{ fontSize: 12, color: 'var(--ink-mute)' }}>Loading checklist…</div>}

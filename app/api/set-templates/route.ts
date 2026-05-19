@@ -24,7 +24,13 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ templates: data || [] })
+  // Templates change rarely — admin-curated rosters. Edge-cache for 5 min
+  // and serve stale for an hour while revalidating. Cuts cold-start +
+  // DB-roundtrip latency for the dropdown on every /set/new visit.
+  return NextResponse.json(
+    { templates: data || [] },
+    { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600' } }
+  )
 }
 
 export async function POST(req: NextRequest) {
