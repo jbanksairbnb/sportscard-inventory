@@ -9,7 +9,7 @@ import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
-import { applyOwnedTransition } from "@/lib/inventory";
+import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -530,6 +530,9 @@ export default function SetEditorPage() {
   }
   const [autoNumOpen, setAutoNumOpen] = useState(false);
   const [autoNumPrefix, setAutoNumPrefix] = useState('');
+  // Map of source_row_id → { id, status } for any non-removed listings
+  // sourced from this set. Powers the per-row "🔗 View listing" link.
+  const [listingsByRowId, setListingsByRowId] = useState<Record<string, { id: string; status: string }>>({});
   const [autoNumStart, setAutoNumStart] = useState('001');
   function descriptorForRow(row: Record<string, unknown>): CardDescriptor {
     const grade = String(row['Grade'] || '').trim() || null;
@@ -599,7 +602,28 @@ export default function SetEditorPage() {
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
           setSport(data.sport || "baseball");
-          setRows(migrateRows(data.rows ?? []));
+          // ensureRowIds backfills a stable _id on every row that's missing
+          // one (legacy sets saved before per-row identity existed). The
+          // backfilled IDs get persisted on the next autosave.
+          setRows(ensureRowIds(migrateRows(data.rows ?? [])));
+
+          // Pull listings sourced from this set so we can render a "🔗 View
+          // listing" deep-link on rows that are currently on the marketplace.
+          // Indexed by source_row_id (the new linkage). Soft-deleted/removed
+          // listings are excluded.
+          if (paramSlug) {
+            const { data: linkedListings } = await supabase
+              .from('listings')
+              .select('id, status, source_row_id')
+              .eq('user_id', user.id)
+              .eq('source_set_slug', paramSlug)
+              .neq('status', 'removed');
+            const map: Record<string, { id: string; status: string }> = {};
+            for (const r of (linkedListings || []) as { id: string; status: string; source_row_id: string | null }[]) {
+              if (r.source_row_id) map[r.source_row_id] = { id: r.id, status: r.status };
+            }
+            setListingsByRowId(map);
+          }
           setShareToken(data.share_token ?? null);
           setIsShared(!!data.share_token);
           const dt = data.default_target as { type?: string; low?: string; high?: string; companies?: string } | null;
@@ -677,10 +701,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     // seller cancels the listing form they can manually flip Owned back.
     // Image archive behavior matches the existing "owned toggle":
     // photos move to "Image N Archived" so the row renders imageless.
-    const cardNum = String(row['Card #'] || '').trim();
-    if (cardNum) {
+    // Flip the specific row (by _id) — not every row sharing the same
+    // Card #. Without this, duplicate cards (two Brosnan #2's etc.) all
+    // get marked Not Owned at once.
+    const rowId = typeof row['_id'] === 'string' ? row['_id'] : '';
+    if (rowId) {
       const { nextRows, touched } = applyOwnedTransition(
-        rows, new Set([cardNum]), false,
+        rows, { rowIds: new Set([rowId]) }, false,
       );
       if (touched) {
         setRows(nextRows);
@@ -693,6 +720,12 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     if (brand) params.set('brand', String(brand));
     if (row['Card #']) params.set('card', String(row['Card #']));
     if (row['Player']) params.set('player', String(row['Player']));
+    // Thread the source row id through to the listing so we can flip the
+    // right specific row on sold/cancel events, not the whole card-number
+    // group. setSlug + rowId together uniquely identify the source.
+    if (rowId) params.set('source_row_id', rowId);
+    if (slug) params.set('source_set_slug', String(slug));
+    if (row['Card #']) params.set('source_card_number', String(row['Card #']));
     if (String(row['Grading Company'] || '').trim()) {
       params.set('condition_type', 'graded');
       params.set('grading_company', String(row['Grading Company']));
@@ -1350,14 +1383,33 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           onDelete={() => handleImageDelete(origIndex, 2)} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle', textAlign: 'center' }}>
-                        {canSell && String(row["Owned"] || '') === 'Yes' ? (
-                          <button type="button" onClick={() => handleListForSale(row)}
-                            className="btn btn-ghost btn-sm" style={{ whiteSpace: 'nowrap' }}>
-                            $ List
-                          </button>
-                        ) : (
-                          <span style={{ color: 'var(--ink-mute)', fontSize: 11 }}>—</span>
-                        )}
+                        {(() => {
+                          const rowId = typeof row['_id'] === 'string' ? row['_id'] : '';
+                          const linked = rowId ? listingsByRowId[rowId] : null;
+                          if (linked) {
+                            return (
+                              <Link href={`/listings?focus=${linked.id}`}
+                                title={`Linked listing (${linked.status})`}
+                                style={{
+                                  display: 'inline-block', padding: '4px 8px',
+                                  borderRadius: 6, border: '1.5px dashed var(--teal)',
+                                  color: 'var(--teal)', fontSize: 11, fontWeight: 700,
+                                  textDecoration: 'none', whiteSpace: 'nowrap',
+                                }}>
+                                🔗 {linked.status === 'sold' ? 'Sold' : 'View listing'}
+                              </Link>
+                            );
+                          }
+                          if (canSell && String(row["Owned"] || '') === 'Yes') {
+                            return (
+                              <button type="button" onClick={() => handleListForSale(row)}
+                                className="btn btn-ghost btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                                $ List
+                              </button>
+                            );
+                          }
+                          return <span style={{ color: 'var(--ink-mute)', fontSize: 11 }}>—</span>;
+                        })()}
                       </td>
                     </tr>
                   );

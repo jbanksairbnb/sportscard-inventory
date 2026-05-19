@@ -2,23 +2,50 @@ import { SupabaseClient } from '@supabase/supabase-js'
 
 type Row = Record<string, unknown>
 
-// Compute a new rows[] for a set after toggling Owned for one or more cards.
-//
-// When marking Owned=No, we move the Image 1 / Image 2 URLs into hidden
-// "Image 1 Archived" / "Image 2 Archived" slots so the row stops showing
-// images on the set page. When the card comes back (Owned flips to Yes),
-// the archived URLs are restored. The image files in storage are never
-// deleted — only the row's pointers change.
+// Stable per-row identifier. Set rows are stored as a JSON blob, so they
+// have no inherent DB row id — we generate one client-side the first time
+// we see a row that's missing one. Keying ownership/listing transitions
+// off this instead of "Card #" is what lets sellers have duplicate cards
+// (e.g. two graded Brosnan #2's) and manage them independently.
+export function ensureRowId(r: Row): Row {
+  if (typeof r['_id'] === 'string' && r['_id']) return r;
+  // crypto.randomUUID is available in browsers + Node 18+; fall back to a
+  // timestamp+random string in case neither is present.
+  let id = '';
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      id = crypto.randomUUID();
+    }
+  } catch {}
+  if (!id) id = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  return { ...r, _id: id };
+}
+export function ensureRowIds(rows: Row[]): Row[] {
+  return rows.map(ensureRowId);
+}
+
+// Selector accepted by applyOwnedTransition. Prefer rowIds for new code
+// — it's the only thing that disambiguates duplicate cards. cardNumbers
+// is kept for legacy call sites (auction "go live" still flips by card #
+// because it doesn't know which specific set row a lot came from).
+export type RowSelector =
+  | { rowIds: Set<string> }
+  | { cardNumbers: Set<string> };
+
+// Compute a new rows[] for a set after toggling Owned for one or more
+// rows. The "image archive" behavior is unchanged.
 export function applyOwnedTransition(
   rows: Row[],
-  cardNumbers: Set<string>,
+  selector: RowSelector,
   owned: boolean,
 ): { nextRows: Row[]; touched: boolean; ownedCount: number } {
   const desired = owned ? 'Yes' : 'No'
   let touched = false
   const nextRows = rows.map(r => {
-    const card = String(r['Card #'] ?? '').trim()
-    if (!cardNumbers.has(card)) return r
+    const matches = 'rowIds' in selector
+      ? selector.rowIds.has(String(r['_id'] ?? ''))
+      : selector.cardNumbers.has(String(r['Card #'] ?? '').trim());
+    if (!matches) return r
     if (String(r['Owned'] ?? '') === desired) return r
     touched = true
     const next: Row = { ...r, Owned: desired }
@@ -147,13 +174,15 @@ export async function claimPurchaseIntoBuyerSets(
 // Used by the auction "go live" flow and by marketplace purchase / cancel
 // flows to keep a seller's set inventory in sync with active sales.
 //
-// Returns true if a matching row was found and updated.
+// Returns true if a matching row was found and updated. Prefers rowId
+// when supplied (disambiguates duplicate cards); falls back to cardNumber
+// for legacy listings created before listings.source_row_id existed.
 export async function markSourceRowOwned(
   supabase: SupabaseClient,
-  args: { sellerUserId: string; setSlug: string; cardNumber: string; owned: boolean }
+  args: { sellerUserId: string; setSlug: string; cardNumber: string; owned: boolean; rowId?: string | null }
 ): Promise<boolean> {
-  const { sellerUserId, setSlug, cardNumber, owned } = args
-  if (!sellerUserId || !setSlug || !cardNumber) return false
+  const { sellerUserId, setSlug, cardNumber, owned, rowId } = args
+  if (!sellerUserId || !setSlug || (!rowId && !cardNumber)) return false
 
   const { data: set } = await supabase
     .from('sets')
@@ -164,11 +193,10 @@ export async function markSourceRowOwned(
   if (!set) return false
 
   const rows = Array.isArray(set.rows) ? set.rows as Row[] : []
-  const { nextRows, touched, ownedCount } = applyOwnedTransition(
-    rows,
-    new Set([String(cardNumber).trim()]),
-    owned,
-  )
+  const selector: RowSelector = rowId
+    ? { rowIds: new Set([rowId]) }
+    : { cardNumbers: new Set([String(cardNumber).trim()]) };
+  const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, selector, owned)
   if (!touched) return false
 
   const total = nextRows.length

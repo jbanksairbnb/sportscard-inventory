@@ -45,6 +45,7 @@ type Listing = {
   sold_price: number | null;
   source_set_slug: string | null;
   source_card_number: string | null;
+  source_row_id: string | null;
   created_at: string;
 };
 
@@ -357,6 +358,16 @@ function ListingsPageContent() {
     }
     const tagParam = searchParams.get('tag');
     if (tagParam) draft.tag_number = tagParam;
+    // Source linkage — lets us flip Owned on the right specific set row
+    // (instead of every row with the same Card #) when the listing sells
+    // or gets cancelled. setSlug + rowId together uniquely identify the
+    // source row.
+    const srcSetSlug = searchParams.get('source_set_slug');
+    const srcCardNum = searchParams.get('source_card_number');
+    const srcRowId = searchParams.get('source_row_id');
+    if (srcSetSlug) draft.source_set_slug = srcSetSlug;
+    if (srcCardNum) draft.source_card_number = srcCardNum;
+    if (srcRowId) draft.source_row_id = srcRowId;
     const photos = searchParams.getAll('photo').filter(Boolean).slice(0, MAX_PHOTOS);
     if (photos.length > 0) draft.photos = photos;
     setEditing(draft);
@@ -955,6 +966,14 @@ function ListingsPageContent() {
                             }}>
                             🏷 {l.tag_number}
                           </span>
+                        )}
+                        {l.source_set_slug && (
+                          <Link
+                            href={`/set/${encodeURIComponent(l.source_set_slug)}${l.source_row_id ? `#row-${l.source_row_id}` : ''}`}
+                            title="Open the source row in My Shelf"
+                            style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--teal)', textDecoration: 'none', padding: '3px 6px', borderRadius: 4, border: '1px dashed var(--teal)' }}>
+                            ↗ View in My Shelf
+                          </Link>
                         )}
                       </div>
                       {l.description && (
