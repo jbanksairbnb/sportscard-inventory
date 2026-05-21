@@ -777,10 +777,32 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   }
   function clearSelection() { setSelectedRows(new Set()); }
 
+  // Stable sort by Card # (numeric-aware so "5" < "11"). Rows with no
+  // Card # go to the end in their original relative order. Used after
+  // adding or duplicating rows so the new entries land next to their
+  // numbered neighbors instead of at the bottom of the table.
+  function sortRowsByCardNumber(rs: Array<Record<string, any>>): Array<Record<string, any>> {
+    return rs
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => {
+        const ca = String(a.r['Card #'] ?? '').trim();
+        const cb = String(b.r['Card #'] ?? '').trim();
+        if (!ca && !cb) return a.i - b.i;
+        if (!ca) return 1;
+        if (!cb) return -1;
+        const cmp = ca.localeCompare(cb, undefined, { numeric: true });
+        return cmp !== 0 ? cmp : a.i - b.i;
+      })
+      .map(({ r }) => r);
+  }
+
   function addRow() {
     const blank: Record<string, any> = {};
     EXPECTED_HEADERS.forEach(h => { blank[h] = ''; });
-    const next = [...rows, blank];
+    // New blank rows have no Card #, so they naturally land at the bottom
+    // — which is the right spot to start typing. Sort runs anyway so the
+    // ordering is canonical after every mutation.
+    const next = sortRowsByCardNumber([...rows, blank]);
     setRows(next);
     scheduleAutoSave(next);
   }
@@ -795,7 +817,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   function duplicateSelected() {
     if (selectedRows.size === 0) return;
     const copies = rows.filter((_, i) => selectedRows.has(i)).map(r => ({ ...r }));
-    const next = [...rows, ...copies];
+    // Sort puts each duplicate right next to its source row (same Card #)
+    // instead of dumping them all at the end of the list.
+    const next = sortRowsByCardNumber([...rows, ...copies]);
     setRows(next);
     setSelectedRows(new Set());
     scheduleAutoSave(next);
