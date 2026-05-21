@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import SCLogo from '@/components/SCLogo';
+import SetContentsTable, { ContentsRow } from './SetContentsTable';
 
 // Public, read-only view of a seller's set when they have an active
 // listing_type='set' listing pointing at it. Buyers reach this page
@@ -76,6 +77,20 @@ export default async function PublicSellerSetPage(props: { params: Promise<{ han
   const totalCount = set.row_count ?? rows.length;
   const ownedCount = set.owned_count ?? ownedRows.length;
 
+  // Serialize per-row data for the client component. Image 1 / Image 2
+  // come from the set row directly; archived slots are ignored here
+  // because the card is currently Owned (we already filtered).
+  const contentsRows: ContentsRow[] = ownedRows.map(r => {
+    const img1 = String(r['Image 1'] || '').trim();
+    const img2 = String(r['Image 2'] || '').trim();
+    const images = [img1, img2].filter(Boolean);
+    return {
+      cardLabel: cardLabel(r),
+      conditionLabel: conditionLabel(r),
+      images,
+    };
+  });
+
   return (
     <div style={{ minHeight: '100vh' }}>
       <header style={{
@@ -124,43 +139,7 @@ export default async function PublicSellerSetPage(props: { params: Promise<{ han
           Set contents ({ownedCount} cards)
         </div>
 
-        {ownedRows.length === 0 ? (
-          <div className="panel-bordered" style={{ padding: '40px 32px', textAlign: 'center', color: 'var(--ink-mute)' }}>
-            The seller hasn&apos;t marked any cards as Owned in this set yet.
-          </div>
-        ) : (
-          <div className="panel-bordered" style={{ padding: 0, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                <tr>
-                  <th style={{ padding: '10px 14px', textAlign: 'left', width: 90 }}>Image</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'left' }}>Card</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'left' }}>Condition</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ownedRows.map((r, i) => {
-                  const img = String(r['Image 1'] || '') || String(r['Image 1 Archived'] || '');
-                  return (
-                    <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
-                      <td style={{ padding: '8px 14px' }}>
-                        <div style={{ width: 64, height: 90, background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6, overflow: 'hidden', display: 'grid', placeItems: 'center' }}>
-                          {img ? (
-                            <img loading="lazy" decoding="async" src={img} alt={cardLabel(r)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : (
-                            <span className="eyebrow" style={{ fontSize: 8, color: 'var(--ink-mute)' }}>—</span>
-                          )}
-                        </div>
-                      </td>
-                      <td style={{ padding: '8px 14px', fontSize: 13, color: 'var(--plum)', fontWeight: 600 }}>{cardLabel(r)}</td>
-                      <td style={{ padding: '8px 14px', fontSize: 12.5, color: 'var(--ink-soft)' }}>{conditionLabel(r)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <SetContentsTable rows={contentsRows} />
       </div>
     </div>
   );
