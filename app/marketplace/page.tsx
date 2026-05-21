@@ -35,6 +35,63 @@ function fmtMoney(n: number | null) {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
+// Surfaced after a purchase when the bought card matches across 2+ of the
+// buyer's sets. The buyer ticks which sets should flip to Owned.
+type ClaimChoice = {
+  purchaseId: string;
+  listingTitle: string;
+  matchedSets: { slug: string; title: string; selected: boolean }[];
+};
+
+function ClaimSetsModal({
+  choices, onApply, onCancel,
+}: {
+  choices: ClaimChoice[];
+  onApply: (next: ClaimChoice[]) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState<ClaimChoice[]>(choices);
+  function toggle(pi: number, si: number) {
+    setDraft(prev => prev.map((c, i) => i !== pi ? c : ({
+      ...c, matchedSets: c.matchedSets.map((s, j) => j !== si ? s : ({ ...s, selected: !s.selected })),
+    })));
+  }
+  return (
+    <div onClick={onCancel}
+      style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(42,20,52,0.55)', display: 'grid', placeItems: 'center', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 560, maxHeight: '88vh', overflowY: 'auto', background: 'var(--cream)', padding: '20px 24px' }}>
+        <div className="display" style={{ fontSize: 20, color: 'var(--plum)' }}>Update your sets</div>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 4 }}>
+          {choices.length === 1
+            ? 'This card is needed in multiple of your sets. Pick which to mark as Owned.'
+            : `${choices.length} cards you just bought match multiple sets. Pick which to update for each.`}
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+          {draft.map((c, pi) => (
+            <div key={c.purchaseId} className="panel" style={{ padding: 12 }}>
+              <div className="display" style={{ fontSize: 14, color: 'var(--plum)', marginBottom: 8 }}>{c.listingTitle}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {c.matchedSets.map((s, si) => (
+                  <label key={s.slug} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--plum)' }}>
+                    <input type="checkbox" checked={s.selected} onChange={() => toggle(pi, si)}
+                      style={{ width: 16, height: 16, accentColor: 'var(--plum)', cursor: 'pointer' }} />
+                    {s.title}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+          <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm">Skip</button>
+          <button type="button" onClick={() => onApply(draft)} className="btn btn-primary btn-sm">✓ Update selected sets</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: number; onClose: () => void }) {
   const [idx, setIdx] = useState(startIdx);
   const arrowBtn: React.CSSProperties = {
@@ -85,6 +142,80 @@ function MarketplacePageInner() {
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [buyTarget, setBuyTarget] = useState<MarketplaceListing | null>(null);
+  // After a successful purchase, if a card matches across 2+ of the buyer's
+  // sets we surface this modal so they can pick which sets to flag Owned.
+  // Single-match purchases auto-claim silently (no modal). Cleared on apply
+  // or dismiss.
+  const [claimChoices, setClaimChoices] = useState<ClaimChoice[] | null>(null);
+
+  // Discover matching buyer-sets per purchase, auto-claim the easy cases,
+  // queue the multi-match cases for the modal. Fire-and-forget — buyers
+  // see the purchase confirmation immediately and the modal pops up after.
+  async function postPurchaseClaim(purchaseIds: string[]) {
+    if (purchaseIds.length === 0) return;
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data: purchases } = await supabase
+      .from('purchases')
+      .select('id, listing:listings(id, title, year, brand, card_number)')
+      .in('id', purchaseIds);
+    type PListing = { id: string; title: string; year: number | null; brand: string | null; card_number: string | null };
+    type PRow = { id: string; listing: PListing | null };
+    const pRows = (purchases || []) as unknown as PRow[];
+
+    const years = Array.from(new Set(pRows.map(p => p.listing?.year).filter((y): y is number => !!y)));
+    if (years.length === 0) return;
+    const { data: buyerSets } = await supabase
+      .from('sets')
+      .select('slug, title, year, brand, rows')
+      .eq('user_id', user.id)
+      .in('year', years);
+    type BuyerSet = { slug: string; title: string; year: number; brand: string; rows: unknown };
+
+    const choicesNeedingUI: ClaimChoice[] = [];
+    const autoFire: string[] = [];
+    for (const p of pRows) {
+      const l = p.listing;
+      if (!l?.year || !l?.brand || !l?.card_number) continue;
+      const cardKey = String(l.card_number).trim();
+      const lBrand = l.brand.trim().toLowerCase();
+      const matched: { slug: string; title: string }[] = [];
+      for (const s of (buyerSets || []) as BuyerSet[]) {
+        if (s.year !== l.year) continue;
+        if ((s.brand || '').trim().toLowerCase() !== lBrand) continue;
+        const rows = Array.isArray(s.rows) ? s.rows as Record<string, unknown>[] : [];
+        const has = rows.some(r => String(r['Card #'] ?? '').trim() === cardKey && String(r['Owned'] ?? '') !== 'Yes');
+        if (has) matched.push({ slug: s.slug, title: s.title });
+      }
+      if (matched.length === 0) continue;
+      if (matched.length === 1) autoFire.push(p.id);
+      else choicesNeedingUI.push({ purchaseId: p.id, listingTitle: l.title, matchedSets: matched.map(m => ({ ...m, selected: true })) });
+    }
+
+    // Fire the simple cases right away.
+    await Promise.all(autoFire.map(pid =>
+      fetch('/api/inventory/buyer-claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchase_id: pid }),
+      }).catch(() => {})
+    ));
+
+    if (choicesNeedingUI.length > 0) setClaimChoices(choicesNeedingUI);
+  }
+
+  async function applyClaimChoices(choices: ClaimChoice[]) {
+    await Promise.all(choices.map(c => {
+      const slugs = c.matchedSets.filter(s => s.selected).map(s => s.slug);
+      if (slugs.length === 0) return Promise.resolve();
+      return fetch('/api/inventory/buyer-claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purchase_id: c.purchaseId, set_slugs: slugs }),
+      }).catch(() => {});
+    }));
+    setClaimChoices(null);
+  }
   // Want-list filter: opt-in. Defaults off so the marketplace shows every
   // active listing to a fresh visitor. Built from the user's sets — keyed by
   // `${year}|${brand}|${card_number}` for cards they have not marked Owned.
@@ -461,7 +592,11 @@ function MarketplacePageInner() {
       )}
 
       {buyTarget && (
-        <BuyModal listing={buyTarget} onClose={() => setBuyTarget(null)} onComplete={onPurchaseComplete} />
+        <BuyModal listing={buyTarget} onClose={() => setBuyTarget(null)} onComplete={onPurchaseComplete} onPostPurchase={postPurchaseClaim} />
+      )}
+
+      {claimChoices && (
+        <ClaimSetsModal choices={claimChoices} onApply={applyClaimChoices} onCancel={() => setClaimChoices(null)} />
       )}
 
       {bulkCheckoutOpen && cart.size > 0 && (
@@ -476,17 +611,19 @@ function MarketplacePageInner() {
             });
           }}
           onComplete={onBulkComplete}
+          onPostPurchase={postPurchaseClaim}
         />
       )}
     </div>
   );
 }
 function BuyModal({
-  listing, onClose, onComplete,
+  listing, onClose, onComplete, onPostPurchase,
 }: {
   listing: MarketplaceListing;
   onClose: () => void;
   onComplete: (listingId: string) => void;
+  onPostPurchase: (purchaseIds: string[]) => Promise<void>;
 }) {
   const opts = listing.shipping_options || [];
   const [shipIdx, setShipIdx] = useState<number>(opts.length > 0 ? 0 : -1);
@@ -551,13 +688,10 @@ function BuyModal({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ purchase_id: purchaseId, owned: false }),
     }).catch(() => {});
-    // And populate any matching rows in the buyer's own sets so their
-    // want list reflects the purchase. No-op when already owned.
-    await fetch('/api/inventory/buyer-claim', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purchase_id: purchaseId }),
-    }).catch(() => {});
+    // Buyer-side set sync runs through onPostPurchase: single-match
+    // sets auto-claim silently; multi-match cases open the picker modal.
+    // Fire-and-forget — we don't want to block the confirmation alert.
+    onPostPurchase([purchaseId as string]).catch(() => {});
     setSubmitting(false);
     alert('Purchase confirmed! Check your email for details. The seller will reach out about payment.');
     onComplete(listing.id);
@@ -671,12 +805,13 @@ function BuyModal({
 // review and retry.
 // ──────────────────────────────────────────────────────────────────────────
 function BulkBuyModal({
-  listings, onClose, onRemove, onComplete,
+  listings, onClose, onRemove, onComplete, onPostPurchase,
 }: {
   listings: MarketplaceListing[];
   onClose: () => void;
   onRemove: (id: string) => void;
   onComplete: (listingIds: string[]) => void;
+  onPostPurchase: (purchaseIds: string[]) => Promise<void>;
 }) {
   // For each shipping label that EVERY card in the cart supports, compute
   // the combined-shipping total using the per-listing override fields:
@@ -808,17 +943,9 @@ function BulkBuyModal({
       }).catch(() => {})
     ));
 
-    // Populate the buyer's own matching set rows so a card they just bought
-    // is marked Owned in their checklist — keeps the want list accurate and
-    // prevents accidental double-buys. No-op for sets that already have the
-    // card marked Owned (buyer's call to manually update upgrades).
-    await Promise.all(purchaseIds.map(pid =>
-      fetch('/api/inventory/buyer-claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ purchase_id: pid }),
-      }).catch(() => {})
-    ));
+    // Buyer-side set sync runs through onPostPurchase: simple cases auto-
+    // claim, multi-set matches surface the picker modal at the page level.
+    onPostPurchase(purchaseIds).catch(() => {});
 
     setSubmitting(false);
 
