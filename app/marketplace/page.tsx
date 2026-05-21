@@ -26,6 +26,11 @@ type MarketplaceListing = {
   photos: string[];
   shipping_options: ShippingOption[];
   created_at: string;
+  // 'card' (default) or 'set'. Set listings sell an entire set as one
+  // item — they link to /seller/[handle]/set/[slug] for the buyer to
+  // browse contents before buying.
+  listing_type?: 'card' | 'set';
+  set_slug?: string | null;
   seller_handle?: string | null;
   seller_display_name?: string | null;
 };
@@ -137,7 +142,7 @@ function MarketplacePageInner() {
       const [{ data: rows }, { data: setRows }] = await Promise.all([
         supabase
           .from('listings')
-          .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at')
+          .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at, listing_type, set_slug')
           .eq('status', 'active')
           .gt('asking_price', 0)
           .order('created_at', { ascending: false }),
@@ -332,6 +337,12 @@ function MarketplacePageInner() {
                   )}
                 </div>
                 <div style={{ padding: '14px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {l.listing_type === 'set' && (
+                    <span style={{
+                      alignSelf: 'flex-start', fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em',
+                      padding: '3px 8px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)',
+                    }}>📚 COMPLETE SET</span>
+                  )}
                   <div className="display" style={{ fontSize: 15, color: 'var(--plum)', lineHeight: 1.25 }}>
                     {l.title}
                   </div>
@@ -339,6 +350,12 @@ function MarketplacePageInner() {
                     <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.4 }}>
                       {l.description.length > 120 ? l.description.slice(0, 120) + '…' : l.description}
                     </p>
+                  )}
+                  {l.listing_type === 'set' && l.set_slug && l.seller_handle && (
+                    <Link href={`/seller/${encodeURIComponent(l.seller_handle)}/set/${encodeURIComponent(l.set_slug)}`}
+                      style={{ fontSize: 11.5, color: 'var(--teal)', fontWeight: 700, textDecoration: 'underline' }}>
+                      ↗ View set contents (images + condition)
+                    </Link>
                   )}
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
                     Seller: {l.seller_display_name || l.seller_handle || '—'}
@@ -384,13 +401,24 @@ function MarketplacePageInner() {
                   )}
                 </div>
                 <div style={{ flex: 1, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-                  <div className="display" style={{ fontSize: 16, color: 'var(--plum)', lineHeight: 1.3 }}>
-                    {l.title}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {l.listing_type === 'set' && (
+                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', padding: '3px 8px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)' }}>📚 COMPLETE SET</span>
+                    )}
+                    <div className="display" style={{ fontSize: 16, color: 'var(--plum)', lineHeight: 1.3 }}>
+                      {l.title}
+                    </div>
                   </div>
                   {l.description && (
                     <p style={{ margin: 0, fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.45 }}>
                       {l.description.length > 200 ? l.description.slice(0, 200) + '…' : l.description}
                     </p>
+                  )}
+                  {l.listing_type === 'set' && l.set_slug && l.seller_handle && (
+                    <Link href={`/seller/${encodeURIComponent(l.seller_handle)}/set/${encodeURIComponent(l.set_slug)}`}
+                      style={{ fontSize: 12, color: 'var(--teal)', fontWeight: 700, textDecoration: 'underline' }}>
+                      ↗ View set contents (images + condition)
+                    </Link>
                   )}
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 'auto' }}>
                     Seller: {l.seller_display_name || l.seller_handle || '—'}
