@@ -97,6 +97,9 @@ export default function NewSetPage() {
   const [brand, setBrand] = useState('');
   const [desc, setDesc] = useState('');
   const [sport, setSport] = useState('baseball');
+  // Personal collection (default) vs an inventory set being built for
+  // sale. Seller can flip later from the set's Edit Info modal.
+  const [purpose, setPurpose] = useState<'personal' | 'inventory'>('personal');
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -284,6 +287,7 @@ export default function NewSetPage() {
     await supabase.from('sets').upsert({
       user_id: userId, slug: newSlug, title: newTitle,
       year: Number(year) || null, brand: brand.trim(), description: desc, sport,
+      purpose,
       rows, row_count: rows.length, owned_count: ownedCount, owned_pct: ownedPct,
       total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss,
       updated_at: Date.now(),
@@ -474,6 +478,24 @@ export default function NewSetPage() {
               <label className="input-label" htmlFor="desc-input">Description (≤ 60 chars)</label>
               <input id="desc-input" type="text" value={desc} maxLength={60}
                 onChange={(e) => setDesc(e.target.value)} placeholder="e.g., Base set checklist" className="input-sc" />
+            </div>
+          </div>
+
+          {/* Purpose picker — personal vs inventory. Can be changed later
+              from the set's Edit Info modal. */}
+          <div style={{ marginTop: 14 }}>
+            <label className="input-label">Purpose</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['personal', 'inventory'] as const).map(p => (
+                <button key={p} type="button" onClick={() => setPurpose(p)}
+                  className={`btn btn-sm ${purpose === p ? 'btn-primary' : 'btn-ghost'}`}
+                  style={{ flex: 1, justifyContent: 'center' }}>
+                  {p === 'personal' ? '🧑 Personal Collection' : '🏷 Inventory (to sell)'}
+                </button>
+              ))}
+            </div>
+            <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 6 }}>
+              Inventory sets group separately on My Shelf. Listing a complete set later auto-flips this to &quot;For Sale.&quot;
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
