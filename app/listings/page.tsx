@@ -267,6 +267,10 @@ function ListingsPageContent() {
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
   const [filter, setFilter] = useState<'draft' | 'active' | 'sold' | 'all'>('active');
+  // ?focus=<listing-id> from a 🔗 View listing link on /set/[slug].
+  // Highlights the card briefly + auto-switches the filter tab if the
+  // listing is hidden behind the wrong status. Cleared after 3s.
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [editing, setEditing] = useState<Partial<Listing> | null>(null);
   const [saving, setSaving] = useState(false);
@@ -332,6 +336,31 @@ function ListingsPageContent() {
     }
     load();
   }, [router]);
+
+  // Honor ?focus=<id> after listings load: switch the filter tab so the
+  // matching card is visible, scroll it into view, and trigger a 3s
+  // highlight pulse. Runs only once per focus param value.
+  useEffect(() => {
+    const focusId = searchParams.get('focus');
+    if (!focusId || loading || listings.length === 0) return;
+    const target = listings.find(l => l.id === focusId);
+    if (!target) return;
+    if (filter !== 'all' && target.status !== filter) {
+      setFilter(target.status === 'removed' ? 'all' : (target.status as 'draft' | 'active' | 'sold'));
+    }
+    setFocusedId(focusId);
+    // Wait a tick for the (possibly filter-switched) DOM to render before
+    // scrolling. RAF nesting handles the "switch filter → next paint" hop.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const el = document.getElementById(`listing-${focusId}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }));
+    const t = setTimeout(() => setFocusedId(null), 3000);
+    return () => clearTimeout(t);
+    // We only respond to the actual focus param + first load — not every
+    // listings/filter update — so the highlight doesn't keep retriggering.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, loading]);
 
   useEffect(() => {
     if (!userId) return;
@@ -925,7 +954,14 @@ function ListingsPageContent() {
               const statusFg = l.status === 'draft' ? 'var(--plum)' : 'var(--cream)';
               const purchase = purchasesByListing[l.id];
               return (
-                <div key={l.id} className="panel-bordered" style={{ padding: '18px 22px' }}>
+                <div key={l.id} id={`listing-${l.id}`} className="panel-bordered"
+                  style={{
+                    padding: '18px 22px',
+                    transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
+                    boxShadow: focusedId === l.id ? '0 0 0 4px var(--orange)' : undefined,
+                    borderColor: focusedId === l.id ? 'var(--orange)' : undefined,
+                    scrollMarginTop: 80,
+                  }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
                     <input
                       type="checkbox"
