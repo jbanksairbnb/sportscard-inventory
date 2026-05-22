@@ -245,68 +245,15 @@ export default function AdminTemplatesPage() {
             </div>
           </Link>
           <Link href="/admin" className="btn btn-outline btn-sm">← Admin</Link>
-          <div className="display" style={{ fontSize: 17, color: 'var(--plum)', flex: 1 }}>Bulk Upload Templates</div>
+          <div className="display" style={{ fontSize: 17, color: 'var(--plum)', flex: 1 }}>Set Library</div>
         </div>
       </header>
 
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 28px 80px' }}>
         <section className="panel-bordered" style={{ padding: '24px 28px', marginBottom: 20 }}>
-          <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 6 }}>1. Drop CSVs</div>
-          <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 14 }}>
-            Drop one or more CSV files in standard format. Filenames are parsed for year/brand/sport.
-            You can edit the metadata for each file before uploading.
-          </p>
-          <input type="file" accept=".csv,text/csv" multiple
-            onChange={(e) => handleFiles(e.target.files)}
-            style={{ display: 'block', padding: '8px 12px', border: '2px solid var(--plum)', borderRadius: 10, background: 'var(--cream)', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', cursor: 'pointer' }} />
-        </section>
-
-        {items.length > 0 && (
-          <section className="panel-bordered" style={{ padding: '24px 28px', marginBottom: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div className="display" style={{ fontSize: 20, color: 'var(--plum)' }}>2. Review & Upload ({items.length})</div>
-              <div className="mono" style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
-                {valid.length} of {items.length} ready
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {items.map((it, i) => (
-                <div key={i} style={{
-                  border: it.error ? '1.5px solid var(--rust)' : '1.5px solid var(--rule)',
-                  borderRadius: 8, padding: 12,
-                  display: 'grid', gridTemplateColumns: '1fr 80px 130px 2fr 110px 80px 32px', gap: 10, alignItems: 'center',
-                }}>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis' }} title={it.filename}>{it.filename}</div>
-                  <input type="text" value={it.year} onChange={e => updateItem(i, { year: e.target.value })} placeholder="Year" className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }} />
-                  <input type="text" value={it.brand} onChange={e => updateItem(i, { brand: e.target.value })} placeholder="Brand" className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }} />
-                  <input type="text" value={it.title} onChange={e => updateItem(i, { title: e.target.value })} placeholder="Title" className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }} />
-                  <select value={it.sport} onChange={e => updateItem(i, { sport: e.target.value })} className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }}>
-                    {SPORTS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <div className="mono" style={{ fontSize: 11, color: it.error ? 'var(--rust)' : 'var(--teal)', textAlign: 'right' }}>
-                    {it.error ? 'error' : `${it.rows.length} cards`}
-                  </div>
-                  <button onClick={() => removeItem(i)} title="Remove" style={{ background: 'transparent', border: 'none', color: 'var(--rust)', fontSize: 18, cursor: 'pointer' }}>×</button>
-                  {it.error && (
-                    <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--rust)', fontWeight: 600 }}>{it.error}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop: 18, display: 'flex', gap: 10, alignItems: 'center' }}>
-              <button onClick={handleUpload} disabled={uploading || valid.length === 0} className="btn btn-primary">
-                {uploading ? 'Uploading…' : `Upload ${valid.length} template${valid.length === 1 ? '' : 's'}`}
-              </button>
-              <button onClick={() => setItems([])} className="btn btn-ghost btn-sm">Clear</button>
-              {result && <span className="mono" style={{ fontSize: 12, color: result.startsWith('✓') ? 'var(--teal)' : 'var(--rust)', fontWeight: 600 }}>{result}</span>}
-            </div>
-          </section>
-        )}
-
-        <section className="panel-bordered" style={{ padding: '24px 28px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
             <div className="display" style={{ fontSize: 20, color: 'var(--plum)', flex: 1 }}>
-              Existing Templates ({existing.length})
+              Set Library ({existing.length})
             </div>
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="🔍 Filter by year / brand / title…"
@@ -319,12 +266,12 @@ export default function AdminTemplatesPage() {
             <button onClick={loadExisting} className="btn btn-ghost btn-sm">↻ Refresh</button>
           </div>
           <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
-            Re-uploading a CSV with the same year + brand + title automatically overrides the existing template (rows are replaced).
+            Every checklist available to users on the New Set page. Edit year/brand/title/sport, delete obsolete entries, or scroll down to add more.
           </p>
           {existingLoading ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
           ) : existing.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No templates yet. Drop a CSV above.</div>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No templates yet. Drop a CSV below.</div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
@@ -405,6 +352,59 @@ export default function AdminTemplatesPage() {
             </table>
           )}
         </section>
+
+        <section className="panel-bordered" style={{ padding: '24px 28px', marginBottom: 20 }}>
+          <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 6 }}>Add new templates</div>
+          <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 14 }}>
+            Drop one or more CSV files in standard format. Filenames are parsed for year/brand/sport.
+            You can edit the metadata for each file before uploading. Re-uploading a CSV that matches an existing year + brand + title replaces it in the library.
+          </p>
+          <input type="file" accept=".csv,text/csv" multiple
+            onChange={(e) => handleFiles(e.target.files)}
+            style={{ display: 'block', padding: '8px 12px', border: '2px solid var(--plum)', borderRadius: 10, background: 'var(--cream)', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', cursor: 'pointer' }} />
+        </section>
+
+        {items.length > 0 && (
+          <section className="panel-bordered" style={{ padding: '24px 28px', marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div className="display" style={{ fontSize: 20, color: 'var(--plum)' }}>Review &amp; Upload ({items.length})</div>
+              <div className="mono" style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+                {valid.length} of {items.length} ready
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {items.map((it, i) => (
+                <div key={i} style={{
+                  border: it.error ? '1.5px solid var(--rust)' : '1.5px solid var(--rule)',
+                  borderRadius: 8, padding: 12,
+                  display: 'grid', gridTemplateColumns: '1fr 80px 130px 2fr 110px 80px 32px', gap: 10, alignItems: 'center',
+                }}>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis' }} title={it.filename}>{it.filename}</div>
+                  <input type="text" value={it.year} onChange={e => updateItem(i, { year: e.target.value })} placeholder="Year" className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }} />
+                  <input type="text" value={it.brand} onChange={e => updateItem(i, { brand: e.target.value })} placeholder="Brand" className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }} />
+                  <input type="text" value={it.title} onChange={e => updateItem(i, { title: e.target.value })} placeholder="Title" className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }} />
+                  <select value={it.sport} onChange={e => updateItem(i, { sport: e.target.value })} className="input-sc" style={{ fontSize: 12, padding: '6px 8px' }}>
+                    {SPORTS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <div className="mono" style={{ fontSize: 11, color: it.error ? 'var(--rust)' : 'var(--teal)', textAlign: 'right' }}>
+                    {it.error ? 'error' : `${it.rows.length} cards`}
+                  </div>
+                  <button onClick={() => removeItem(i)} title="Remove" style={{ background: 'transparent', border: 'none', color: 'var(--rust)', fontSize: 18, cursor: 'pointer' }}>×</button>
+                  {it.error && (
+                    <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--rust)', fontWeight: 600 }}>{it.error}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 18, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <button onClick={handleUpload} disabled={uploading || valid.length === 0} className="btn btn-primary">
+                {uploading ? 'Uploading…' : `Upload ${valid.length} template${valid.length === 1 ? '' : 's'}`}
+              </button>
+              <button onClick={() => setItems([])} className="btn btn-ghost btn-sm">Clear</button>
+              {result && <span className="mono" style={{ fontSize: 12, color: result.startsWith('✓') ? 'var(--teal)' : 'var(--rust)', fontWeight: 600 }}>{result}</span>}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

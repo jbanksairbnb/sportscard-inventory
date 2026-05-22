@@ -170,9 +170,9 @@ export default function AdminPage() {
           <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: '18px 22px', marginBottom: 28 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 280 }}>
-                <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 6 }}>Bulk Upload Set Templates</div>
+                <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 6 }}>Manage Set Library</div>
                 <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55, margin: 0 }}>
-                  Drop one or more CSV checklists. Each becomes an official template available to all users on the New Set page.
+                  Browse every checklist available to users on the New Set page. Edit year / brand / title / sport, delete obsolete entries, search the catalog, and bulk-upload new CSVs — all on one page.
                 </p>
                 <details style={{ marginTop: 10 }}>
                   <summary style={{ cursor: 'pointer', fontSize: 12.5, color: 'var(--plum)', fontWeight: 700 }}>How to build the upload file ▾</summary>
@@ -193,7 +193,7 @@ export default function AdminPage() {
                 </details>
               </div>
               <button onClick={() => router.push('/admin/templates')} className="btn btn-primary">
-                Bulk Upload →
+                Open Library →
               </button>
             </div>
           </div>
