@@ -515,6 +515,12 @@ export default function SetEditorPage() {
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
   const [scansPickerOpen, setScansPickerOpen] = useState(false);
+  // "List Complete Set" modal: turns the whole set into a single
+  // marketplace listing (one price, one transaction). Default count of
+  // owned cards is pulled from rows so the seller sees what they're
+  // committing to before naming a price.
+  const [listSetOpen, setListSetOpen] = useState(false);
+  const [existingSetListing, setExistingSetListing] = useState<{ id: string; status: string; asking_price: number | null } | null>(null);
   // Tag # column is opt-in — most users won't use inventory tags so we
   // keep it hidden by default. Pref is per-browser via localStorage.
   const [showTagColumn, setShowTagColumn] = useState<boolean>(false);
@@ -623,6 +629,20 @@ export default function SetEditorPage() {
               if (r.source_row_id) map[r.source_row_id] = { id: r.id, status: r.status };
             }
             setListingsByRowId(map);
+
+            // Existing complete-set listing (if any) so the "List Complete
+            // Set" button can switch into edit mode instead of creating a
+            // duplicate. We allow only one active set listing per set.
+            const { data: setListings } = await supabase
+              .from('listings')
+              .select('id, status, asking_price')
+              .eq('user_id', user.id)
+              .eq('listing_type', 'set')
+              .eq('set_slug', paramSlug)
+              .neq('status', 'removed')
+              .order('created_at', { ascending: false })
+              .limit(1);
+            if (setListings && setListings[0]) setExistingSetListing(setListings[0] as { id: string; status: string; asking_price: number | null });
           }
           setShareToken(data.share_token ?? null);
           setIsShared(!!data.share_token);
@@ -1087,6 +1107,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm btn-outline"
               title="PDF want list with checkboxes — bring it to the card show">
               📄 Want List PDF
+            </button>
+            <button type="button" onClick={() => setListSetOpen(true)} disabled={!datasetTitle || !rows.length}
+              className="btn btn-sm" style={{ background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}
+              title="List this set as one marketplace item with a single price">
+              📚 List Complete Set
             </button>
           </div>
         </div>
@@ -1614,6 +1639,21 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
         );
       })()}
 
+      {listSetOpen && (
+        <ListCompleteSetModal
+          setSlug={slug}
+          setTitle={datasetTitle}
+          rows={rows}
+          existing={existingSetListing}
+          userId={userId}
+          onCancel={() => setListSetOpen(false)}
+          onSaved={(listing) => {
+            setExistingSetListing({ id: listing.id, status: listing.status, asking_price: listing.asking_price });
+            setListSetOpen(false);
+          }}
+        />
+      )}
+
       {scansPickerOpen && (
         <div onClick={() => setScansPickerOpen(false)}
           style={{
@@ -1655,6 +1695,211 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Marketplace listing for the whole set as a single SKU. One price, one
+// transaction. Saves into the same `listings` table with listing_type='set'
+// + set_slug pointer back to the seller's source set on their shelf.
+function ListCompleteSetModal({
+  setSlug, setTitle, rows, existing, userId, onCancel, onSaved,
+}: {
+  setSlug: string;
+  setTitle: string;
+  rows: Array<Record<string, any>>;
+  existing: { id: string; status: string; asking_price: number | null } | null;
+  userId: string;
+  onCancel: () => void;
+  onSaved: (l: { id: string; status: string; asking_price: number | null }) => void;
+}) {
+  const ownedCount = rows.filter(r => String(r['Owned'] || '') === 'Yes').length;
+  const totalRows = rows.length;
+  const [title, setTitle2] = useState(existing ? '' : `${setTitle} — Complete Set`);
+  const [askingPrice, setAskingPrice] = useState<string>(existing?.asking_price != null ? String(existing.asking_price) : '');
+  const [description, setDescription] = useState('');
+  const [heroPhoto, setHeroPhoto] = useState<string>('');
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [shipLabel, setShipLabel] = useState('Bubble Mailer with Tracking');
+  const [shipCost, setShipCost] = useState('10');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Pull the user's default shipping + an existing listing's fields if
+  // we're editing rather than creating fresh.
+  useEffect(() => {
+    if (!existing) return;
+    const supabase = createClient();
+    (async () => {
+      const { data } = await supabase.from('listings')
+        .select('title, description, shipping_options, photos')
+        .eq('id', existing.id).maybeSingle();
+      if (!data) return;
+      setTitle2(data.title || '');
+      setDescription(data.description || '');
+      const ship = (data.shipping_options as { label: string; cost: number }[] | null) || [];
+      if (ship[0]) { setShipLabel(ship[0].label); setShipCost(String(ship[0].cost)); }
+      const photos = (data.photos as string[] | null) || [];
+      if (photos[0]) setHeroPhoto(photos[0]);
+    })();
+  }, [existing]);
+
+  async function handlePhotoUpload(file: File) {
+    setPhotoError('');
+    if (!userId) { setPhotoError('Not signed in.'); return; }
+    if (file.size > 8 * 1024 * 1024) { setPhotoError('Image must be under 8 MB.'); return; }
+    setPhotoUploading(true);
+    const supabase = createClient();
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    // Store under the user's namespace; one folder per set-listing slug.
+    // We overwrite on subsequent uploads so we don't accumulate orphans.
+    const path = `${userId}/set-listings/${setSlug}/hero-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
+    if (upErr) { setPhotoUploading(false); setPhotoError(upErr.message); return; }
+    const { data } = supabase.storage.from('card-images').getPublicUrl(path);
+    setHeroPhoto(data.publicUrl);
+    setPhotoUploading(false);
+  }
+
+  async function handleSave() {
+    setError('');
+    const price = Number(askingPrice);
+    if (!title.trim()) { setError('Title is required.'); return; }
+    if (!askingPrice.trim() || Number.isNaN(price) || price <= 0) { setError('Asking price must be a positive number.'); return; }
+    setSaving(true);
+    const supabase = createClient();
+    const payload = {
+      user_id: userId,
+      listing_type: 'set',
+      set_slug: setSlug,
+      title: title.trim(),
+      description: description.trim() || null,
+      asking_price: price,
+      photos: heroPhoto.trim() ? [heroPhoto.trim()] : [],
+      shipping_options: [{ label: shipLabel.trim() || 'Shipping', cost: Number(shipCost) || 0 }],
+      status: 'active',
+      condition_type: 'raw',
+      raw_grade: null,
+      grading_company: null,
+      grade: null,
+      card_number: null,
+      player: null,
+      year: null,
+      brand: null,
+    };
+    if (existing) {
+      const { data, error } = await supabase.from('listings').update(payload).eq('id', existing.id).select('id, status, asking_price').single();
+      setSaving(false);
+      if (error) { setError(error.message); return; }
+      onSaved(data as { id: string; status: string; asking_price: number | null });
+    } else {
+      const { data, error } = await supabase.from('listings').insert(payload).select('id, status, asking_price').single();
+      setSaving(false);
+      if (error) { setError(error.message); return; }
+      onSaved(data as { id: string; status: string; asking_price: number | null });
+    }
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 8, padding: '8px 12px',
+    fontFamily: 'var(--font-body)', fontSize: 13.5, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+
+  return (
+    <div onClick={onCancel}
+      style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(42,20,52,0.55)', display: 'grid', placeItems: 'center', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 620, maxHeight: '92vh', overflowY: 'auto', background: 'var(--cream)', padding: '22px 26px' }}>
+        <div className="display" style={{ fontSize: 22, color: 'var(--plum)' }}>
+          📚 {existing ? 'Edit Complete-Set Listing' : 'List Complete Set'}
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 4, marginBottom: 18 }}>
+          One marketplace listing for the entire set. <strong>{ownedCount} of {totalRows}</strong> cards owned right now.
+          Buyers will see your full set contents (player, condition, images) before purchase.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <label className="input-label">Title *</label>
+            <input value={title} onChange={e => setTitle2(e.target.value)}
+              placeholder={`${setTitle} — Complete Set`} style={fieldStyle} maxLength={120} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="input-label">Asking Price ($) *</label>
+              <input type="number" min="0" step="0.01" value={askingPrice} onChange={e => setAskingPrice(e.target.value)}
+                placeholder="0.00" style={fieldStyle} />
+            </div>
+            <div style={{ flex: 2 }}>
+              <label className="input-label">Hero photo <span style={{ color: 'var(--ink-mute)', fontWeight: 600 }}>(shows in marketplace · optional)</span></label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {heroPhoto && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img loading="lazy" decoding="async" src={heroPhoto} alt="Hero preview"
+                    style={{ width: 56, height: 78, objectFit: 'cover', border: '1.5px solid var(--plum)', borderRadius: 6, flexShrink: 0 }} />
+                )}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <button type="button" onClick={() => photoInputRef.current?.click()}
+                    disabled={photoUploading} className="btn btn-outline btn-sm"
+                    style={{ justifyContent: 'center' }}>
+                    {photoUploading ? 'Uploading…' : heroPhoto ? '📷 Replace photo' : '📷 Upload photo'}
+                  </button>
+                  {heroPhoto && (
+                    <button type="button" onClick={() => setHeroPhoto('')} disabled={photoUploading}
+                      style={{ background: 'transparent', border: 0, color: 'var(--rust)', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0 }}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <input ref={photoInputRef} type="file" accept="image/*"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handlePhotoUpload(f); e.target.value = ''; }}
+                  style={{ display: 'none' }} />
+              </div>
+              {photoError && (
+                <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--rust)', fontWeight: 600 }}>{photoError}</div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="input-label">Description <span style={{ color: 'var(--ink-mute)', fontWeight: 600 }}>(call out completeness, condition, missing cards)</span></label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4}
+              placeholder={`e.g. ${totalRows === ownedCount ? 'Complete — all ' + totalRows + ' cards present.' : `Partial — ${ownedCount} of ${totalRows} cards. Missing #...`}`}
+              style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.5 }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 2 }}>
+              <label className="input-label">Shipping label</label>
+              <input value={shipLabel} onChange={e => setShipLabel(e.target.value)}
+                placeholder="Bubble Mailer with Tracking" style={fieldStyle} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="input-label">Shipping $</label>
+              <input type="number" min="0" step="0.01" value={shipCost} onChange={e => setShipCost(e.target.value)}
+                style={fieldStyle} />
+            </div>
+          </div>
+
+          {error && (
+            <div style={{
+              background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
+              borderRadius: 8, padding: '8px 12px', fontSize: 13, color: 'var(--rust)', fontWeight: 600,
+            }}>{error}</div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={saving} className="btn btn-primary btn-sm">
+              {saving ? 'Saving…' : (existing ? '✓ Save changes' : '✓ Publish set listing')}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
