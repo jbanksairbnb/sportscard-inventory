@@ -98,9 +98,12 @@ export async function claimPurchaseIntoBuyerSets(
     purchasePrice: number | null;
     sellerLabel: string | null;
     photos: string[] | null;
+    // Optional whitelist of set slugs to restrict the claim to.
+    // Empty / undefined / null means "every matching set".
+    setSlugs?: string[] | null;
   }
 ): Promise<number> {
-  const { buyerUserId, year, brand, cardNumber } = args;
+  const { buyerUserId, year, brand, cardNumber, setSlugs } = args;
   if (!buyerUserId || !year || !brand || !cardNumber) return 0;
 
   // Only fetch sets whose top-level year + brand match — keeps the
@@ -116,9 +119,11 @@ export async function claimPurchaseIntoBuyerSets(
   const today = new Date();
   const mmddyyyy = `${String(today.getMonth() + 1).padStart(2, '0')}/${String(today.getDate()).padStart(2, '0')}/${today.getFullYear()}`;
   const cardKey = String(cardNumber).trim();
+  const allowedSlugs = setSlugs && setSlugs.length > 0 ? new Set(setSlugs) : null;
   let totalUpdated = 0;
 
   for (const set of sets) {
+    if (allowedSlugs && !allowedSlugs.has(set.slug)) continue;
     const rows = Array.isArray(set.rows) ? set.rows as Row[] : [];
     let touched = false;
     const nextRows = rows.map(r => {

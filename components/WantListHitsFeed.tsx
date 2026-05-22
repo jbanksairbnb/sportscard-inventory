@@ -44,8 +44,9 @@ type WantRow = {
   setTitle: string;
   year: number;
   brand: string;
+  sport: string;
   cardNumber: string;
-  player: string;
+  player: string;       // Displayed in the hit; NOT part of the match key.
   targetConditionLow: string;
   targetConditionHigh: string;
   targetType: string; // "Raw" | "Graded" | ""
@@ -75,7 +76,9 @@ type Hit = Listing & {
   seller_name: string;
   seller_handle: string;
   seller_email: string;
-  matched_set_title: string;
+  // Every buyer set this listing matches. A single listing can satisfy
+  // multiple sets at once (e.g. master set + subset both need the card).
+  matched_sets: { slug: string; title: string }[];
 };
 
 type FilterId = 'all' | 'raw' | 'PSA' | 'SGC' | 'BGS' | 'CGC' | 'TAG';
@@ -151,11 +154,17 @@ function matchesCondition(listing: Listing, want: WantRow): boolean {
   }
   return false;
 }
+// Kept for any callers that still expect the per-row predicate; current
+// hit loop does the same checks inline via the wantIndex map.
 function matchesListing(listing: Listing, want: WantRow): boolean {
   if (listing.year !== want.year) return false;
   if ((listing.brand || '').trim().toLowerCase() !== want.brand.trim().toLowerCase()) return false;
-  if ((listing.player || '').trim().toLowerCase() !== want.player.trim().toLowerCase()) return false;
   if ((listing.card_number || '').trim() !== want.cardNumber.trim()) return false;
+  // Player intentionally NOT part of the match — two users formatting
+  // the same card's player string differently (e.g. "Joe Morgan" vs
+  // "Joe Morgan - Houston Astros") was creating false negatives.
+  // Card # is unique within (year, brand, sport) so dropping player
+  // doesn't cause collisions.
   return matchesCondition(listing, want);
 }
 
@@ -172,7 +181,7 @@ export default function WantListHitsFeed() {
 
            const { data: setsData } = await supabase
         .from('sets')
-        .select('slug, title, year, brand, rows, default_target')
+        .select('slug, title, year, brand, sport, rows, default_target')
         .eq('user_id', user.id);
 
       const wants: WantRow[] = [];
@@ -215,6 +224,7 @@ export default function WantListHitsFeed() {
             setTitle: s.title || `${s.year} ${s.brand}`,
             year: s.year || 0,
             brand: s.brand || '',
+            sport: s.sport || '',
             cardNumber,
             player,
             targetConditionLow: targetLow,
@@ -248,34 +258,56 @@ export default function WantListHitsFeed() {
         return yearBrandKeys.has(key);
       }) as Listing[];
 
-      // Build (year|brand|card#|player) → wants index for O(1) lookup
+      // Match key: year | brand | sport | card #. Player intentionally
+      // excluded — see matchesListing comment for why. Card # is unique
+      // within (year, brand, sport) so the key still uniquely identifies
+      // the physical card.
       const wantIndex = new Map<string, WantRow[]>();
       for (const w of wants) {
-        const key = `${w.year}|${w.brand.trim().toLowerCase()}|${w.cardNumber.trim()}|${w.player.trim().toLowerCase()}`;
+        const key = `${w.year}|${w.brand.trim().toLowerCase()}|${w.sport.trim().toLowerCase()}|${w.cardNumber.trim()}`;
         const arr = wantIndex.get(key) || [];
         arr.push(w);
         wantIndex.set(key, arr);
       }
 
-      const matched: { listing: Listing; want: WantRow }[] = [];
+      // Walk listings. A single listing can match across multiple buyer
+      // sets (master set + subset, etc.) — group by listing.id and
+      // collect every matching set per group. The listing's sport comes
+      // from the buyer's matching want set since listings table has no
+      // sport column yet; that's fine because the match key already
+      // restricts to matching (year, brand, sport).
+      const matchedByListing = new Map<string, { listing: Listing; sets: { slug: string; title: string }[] }>();
       for (const l of candidates) {
-        const key = `${l.year}|${(l.brand || '').trim().toLowerCase()}|${(l.card_number || '').trim()}|${(l.player || '').trim().toLowerCase()}`;
-        const matchingWants = wantIndex.get(key);
-        if (!matchingWants) continue;
-        for (const w of matchingWants) {
-          if (matchesCondition(l, w)) {
-            matched.push({ listing: l, want: w });
-            break;
+        const lYear = l.year ?? 0;
+        const lBrand = (l.brand || '').trim().toLowerCase();
+        const lCard = (l.card_number || '').trim();
+        // Try each candidate sport bucket that the buyer has.
+        const sportBuckets = new Set(wants.map(w => w.sport.trim().toLowerCase()));
+        for (const sp of sportBuckets) {
+          const key = `${lYear}|${lBrand}|${sp}|${lCard}`;
+          const matchingWants = wantIndex.get(key);
+          if (!matchingWants) continue;
+          for (const w of matchingWants) {
+            if (!matchesCondition(l, w)) continue;
+            const existing = matchedByListing.get(l.id);
+            if (existing) {
+              if (!existing.sets.some(s => s.slug === w.setSlug)) {
+                existing.sets.push({ slug: w.setSlug, title: w.setTitle });
+              }
+            } else {
+              matchedByListing.set(l.id, { listing: l, sets: [{ slug: w.setSlug, title: w.setTitle }] });
+            }
           }
         }
       }
+      const matched = Array.from(matchedByListing.values());
       const sellerIds = Array.from(new Set(matched.map(m => m.listing.user_id)));
       const { data: profiles } = sellerIds.length > 0
         ? await supabase.from('user_profiles').select('user_id, display_name, handle, email').in('user_id', sellerIds)
         : { data: [] as { user_id: string; display_name: string | null; handle: string | null; email: string | null }[] };
       const profileMap = new Map((profiles || []).map(p => [p.user_id, p]));
 
-      const enriched: Hit[] = matched.map(({ listing, want }) => {
+      const enriched: Hit[] = matched.map(({ listing, sets }) => {
         const profile = profileMap.get(listing.user_id);
         const email = profile?.email || '';
         return {
@@ -283,7 +315,7 @@ export default function WantListHitsFeed() {
           seller_name: profile?.display_name || profile?.handle || (email ? email.split('@')[0] : '—'),
           seller_handle: profile?.handle || '',
           seller_email: email,
-          matched_set_title: want.setTitle,
+          matched_sets: sets,
         };
       });
 
@@ -407,7 +439,9 @@ function HitItem({ hit }: { hit: Hit }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
           <span className="chip chip-rust" style={{ fontSize: 10 }}>◆ Want-list match</span>
           <span className="chip" style={{ fontSize: 10, background: 'var(--paper)', color: 'var(--plum)', border: '1.5px solid var(--rule)' }}>
-            from your {hit.matched_set_title} list
+            {hit.matched_sets.length === 1
+              ? `from your ${hit.matched_sets[0].title} list`
+              : `needed in ${hit.matched_sets.length} sets: ${hit.matched_sets.map(s => s.title).join(' · ')}`}
           </span>
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginLeft: 'auto', fontWeight: 600 }}>
             {fmtRelativeTime(hit.created_at)}

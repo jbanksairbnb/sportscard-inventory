@@ -35,8 +35,13 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await req.json().catch(() => ({})) as { purchase_id?: string }
+  const body = await req.json().catch(() => ({})) as { purchase_id?: string; set_slugs?: string[] }
   const purchaseId = body.purchase_id
+  // Optional whitelist of buyer-set slugs to restrict the update to. When
+  // a card matches across multiple of the buyer's sets and they only want
+  // some of them flagged Owned, the marketplace passes this list. Empty
+  // / undefined means "update every matching set" (legacy behavior).
+  const setSlugs = Array.isArray(body.set_slugs) ? body.set_slugs.filter(s => typeof s === 'string') : null
   if (!purchaseId) return NextResponse.json({ error: 'Missing purchase_id' }, { status: 400 })
 
   // Service-role client for cross-user reads (listing belongs to seller,
@@ -83,6 +88,7 @@ export async function POST(req: NextRequest) {
     purchasePrice: purchase.item_price != null ? Number(purchase.item_price) : null,
     sellerLabel,
     photos: Array.isArray(listing.photos) ? (listing.photos as string[]) : null,
+    setSlugs,
   })
 
   return NextResponse.json({ ok: true, updated })
