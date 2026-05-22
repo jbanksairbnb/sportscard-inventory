@@ -108,6 +108,7 @@ export default function AdminTemplatesPage() {
   const [result, setResult] = useState<string>('');
   const [existing, setExisting] = useState<ExistingTemplate[]>([]);
   const [existingLoading, setExistingLoading] = useState(true);
+  const [existingError, setExistingError] = useState<string>('');
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<ExistingTemplate>>({});
   const [search, setSearch] = useState('');
@@ -115,11 +116,22 @@ export default function AdminTemplatesPage() {
 
   async function loadExisting() {
     setExistingLoading(true);
+    setExistingError('');
     try {
       const res = await fetch('/api/admin/set-templates');
-      const data = await res.json();
-      if (res.ok) setExisting(data.templates || []);
-    } catch {} finally {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setExisting(data.templates || []);
+      } else {
+        setExistingError(
+          res.status === 401 ? 'Not signed in — log in first.' :
+          res.status === 403 ? 'Forbidden — your account is not marked admin. Ask an existing admin to flip is_admin on your profile.' :
+          data?.error || `Could not load library (HTTP ${res.status}).`
+        );
+      }
+    } catch (e) {
+      setExistingError(e instanceof Error ? e.message : 'Network error loading library.');
+    } finally {
       setExistingLoading(false);
     }
   }
@@ -268,9 +280,16 @@ export default function AdminTemplatesPage() {
           <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
             Every checklist available to users on the New Set page. Edit year/brand/title/sport, delete obsolete entries, or scroll down to add more.
           </p>
+          {existingError && (
+            <div style={{
+              padding: '10px 14px', marginBottom: 12,
+              background: 'rgba(197,74,44,0.08)', border: '1.5px solid var(--rust)', borderRadius: 8,
+              fontSize: 12.5, color: 'var(--plum)',
+            }}>✗ {existingError}</div>
+          )}
           {existingLoading ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
-          ) : existing.length === 0 ? (
+          ) : existingError ? null : existing.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>No templates yet. Drop a CSV below.</div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
