@@ -10,6 +10,7 @@ import SCLogo from '@/components/SCLogo';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 import MarketResearchModal from '@/components/MarketResearchModal';
 import PhotoEditor from '@/components/PhotoEditor';
+import { thumbUrl } from '@/lib/image-transform';
 
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
@@ -199,7 +200,7 @@ function ListingPhotoStrip({ photos }: { photos: string[] }) {
     <>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {photos.slice(0, 3).map((p, i) => (
-          <img key={p + i} src={p} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
+          <img key={p + i} loading="lazy" decoding="async" src={thumbUrl(p, 200)} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
             style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
         ))}
         {photos.length > 3 && (

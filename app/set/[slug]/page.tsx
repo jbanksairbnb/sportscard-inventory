@@ -10,6 +10,7 @@ import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
+import { thumbUrl } from "@/lib/image-transform";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -200,7 +201,7 @@ function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
       <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
       {url ? (
         <>
-          <img loading="lazy" decoding="async" src={url} alt={label} title="Click to view"
+          <img loading="lazy" decoding="async" src={thumbUrl(url, 160)} alt={label} title="Click to view"
             onClick={() => setShowModal(true)}
             style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           {showModal && (
