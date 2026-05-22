@@ -113,12 +113,21 @@ export default function NewSetPage() {
   const [templateFilterSport, setTemplateFilterSport] = useState('baseball');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [templateLoading, setTemplateLoading] = useState(false);
+  // Search-as-you-type on the Pick-a-Set picker. Combobox is open while
+  // typing or focused; collapses when blurred or after a pick.
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [deletingTemplate, setDeletingTemplate] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) router.push('/login');
-      else setUserId(user.id);
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) { router.push('/login'); return; }
+      setUserId(user.id);
+      const { data: profile } = await supabase
+        .from('user_profiles').select('is_admin').eq('user_id', user.id).maybeSingle();
+      setIsAdmin(!!profile?.is_admin);
     });
   }, [router]);
 
@@ -157,8 +166,10 @@ export default function NewSetPage() {
 
   async function handlePickTemplate(id: string) {
     setSelectedTemplateId(id);
+    setPickerOpen(false);
     if (!id) {
       setRows([]); setYear(''); setBrand(''); setDesc('');
+      setTemplateSearch('');
       return;
     }
     setTemplateLoading(true);
@@ -173,6 +184,8 @@ export default function NewSetPage() {
       setSport(data.sport || 'baseball');
       const titleMatch = String(data.title || '').match(/—\s*(.*)$/);
       setDesc(titleMatch ? titleMatch[1].trim() : data.title || '');
+      const picked = templates.find(t => t.id === id);
+      if (picked) setTemplateSearch(picked.title);
     } catch (e) {
       setErrors([e instanceof Error ? e.message : 'Failed to load template']);
     } finally {
@@ -185,6 +198,43 @@ export default function NewSetPage() {
     () => (year && brand && desc ? `${year.trim()} ${brand.trim()} — ${desc.trim()}` : ''),
     [year, brand, desc]
   );
+
+  // Searchable picker. Filters the loaded templates by typed text — match
+  // against title, year, and brand so "1971 opc" or just "o-pee-chee" both
+  // narrow the list.
+  const filteredTemplates = useMemo(() => {
+    const q = templateSearch.trim().toLowerCase();
+    if (!q) return templates;
+    return templates.filter(t =>
+      `${t.year || ''} ${t.brand || ''} ${t.title || ''}`.toLowerCase().includes(q)
+    );
+  }, [templates, templateSearch]);
+
+  async function handleDeleteTemplate() {
+    if (!isAdmin || !selectedTemplateId) return;
+    const picked = templates.find(t => t.id === selectedTemplateId);
+    if (!picked) return;
+    if (!confirm(`Delete "${picked.title}" from the library? Users who have already started a set from it are unaffected.`)) return;
+    setDeletingTemplate(true);
+    try {
+      const res = await fetch('/api/admin/set-templates', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: selectedTemplateId }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error || 'Failed to delete template');
+        return;
+      }
+      setTemplates(prev => prev.filter(t => t.id !== selectedTemplateId));
+      setSelectedTemplateId('');
+      setTemplateSearch('');
+      setRows([]); setYear(''); setBrand(''); setDesc('');
+    } finally {
+      setDeletingTemplate(false);
+    }
+  }
 
   function downloadCsvTemplate() {
     // Headers-only CSV so users have a starter file with the current column
@@ -365,18 +415,72 @@ export default function NewSetPage() {
                     {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </div>
-                <div style={{ flex: 1, minWidth: 240 }}>
+                <div style={{ flex: 1, minWidth: 240, position: 'relative' }}>
                   <label className="input-label">Pick a Set</label>
-                  <select value={selectedTemplateId} onChange={e => handlePickTemplate(e.target.value)}
-                    disabled={templatesLoading || templateLoading}
-                    className="input-sc" style={{ width: '100%' }}>
-                    <option value="">{templatesLoading ? 'Loading…' : templatesError ? '— failed to load —' : templates.length === 0 ? 'No templates available' : 'Select a set…'}</option>
-                    {templates.map(t => (
-                      <option key={t.id} value={t.id}>
-                        {t.title} ({t.card_count} cards){t.is_official ? ' ★ Official' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                    <input
+                      type="text"
+                      value={templateSearch}
+                      placeholder={templatesLoading ? 'Loading…' : templatesError ? '— failed to load —' : templates.length === 0 ? 'No templates available' : 'Type to search a set…'}
+                      disabled={templatesLoading || templateLoading || !!templatesError || templates.length === 0}
+                      onChange={(e) => { setTemplateSearch(e.target.value); setPickerOpen(true); if (selectedTemplateId) setSelectedTemplateId(''); }}
+                      onFocus={() => setPickerOpen(true)}
+                      onBlur={() => { setTimeout(() => setPickerOpen(false), 150); }}
+                      className="input-sc" style={{ flex: 1 }}
+                      autoComplete="off"
+                    />
+                    {selectedTemplateId && (
+                      <button type="button"
+                        onClick={() => { setSelectedTemplateId(''); setTemplateSearch(''); setRows([]); setYear(''); setBrand(''); setDesc(''); }}
+                        title="Clear selection"
+                        className="btn btn-ghost btn-sm">✕</button>
+                    )}
+                    {isAdmin && selectedTemplateId && (
+                      <button type="button"
+                        onClick={handleDeleteTemplate}
+                        disabled={deletingTemplate}
+                        title="Delete this set from the library (admin only)"
+                        className="btn btn-sm"
+                        style={{ background: 'transparent', border: '1.5px solid var(--rust)', color: 'var(--rust)' }}>
+                        {deletingTemplate ? '…' : '🗑'}
+                      </button>
+                    )}
+                  </div>
+                  {pickerOpen && !templatesLoading && !templatesError && filteredTemplates.length > 0 && (
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+                      maxHeight: 280, overflowY: 'auto', zIndex: 20,
+                      background: 'var(--cream)', border: '1.5px solid var(--plum)', borderRadius: 8,
+                      boxShadow: '0 6px 18px rgba(42,20,52,0.18)',
+                    }}>
+                      {filteredTemplates.map(t => (
+                        <button key={t.id} type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => handlePickTemplate(t.id)}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left',
+                            padding: '8px 12px', background: 'transparent', border: 'none',
+                            borderBottom: '1px solid var(--rule)',
+                            fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)',
+                            cursor: 'pointer',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--paper)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                          {t.title} <span style={{ color: 'var(--ink-mute)', fontSize: 12 }}>({t.card_count} cards{t.is_official ? ' · ★ Official' : ''})</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {pickerOpen && !templatesLoading && !templatesError && templates.length > 0 && filteredTemplates.length === 0 && (
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+                      padding: '10px 12px', zIndex: 20,
+                      background: 'var(--cream)', border: '1.5px solid var(--plum)', borderRadius: 8,
+                      fontSize: 12.5, color: 'var(--ink-mute)',
+                    }}>
+                      No sets match &ldquo;{templateSearch}&rdquo;.
+                    </div>
+                  )}
                   {templatesError && (
                     <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(197,74,44,0.08)', border: '1.5px solid var(--rust)', borderRadius: 8, fontSize: 12, color: 'var(--plum)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                       <span>{templatesError}</span>
