@@ -45,7 +45,7 @@ type AuctionRow = {
   fb_auction_lots: LotRow[];
 };
 
-const STATUS_FILTERS = ['all', 'draft', 'live', 'ended', 'settled'] as const;
+const STATUS_FILTERS = ['live', 'draft', 'ended', 'settled', 'all'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
 const DATE_RANGES = ['all', 'day', 'week', 'month'] as const;
@@ -107,7 +107,7 @@ export default function FbAuctionsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [auctions, setAuctions] = useState<AuctionRow[]>([]);
-  const [filter, setFilter] = useState<StatusFilter>('all');
+  const [filter, setFilter] = useState<StatusFilter>('live');
   const [dateRange, setDateRange] = useState<DateRange>('all');
 
   const [selectedDrafts, setSelectedDrafts] = useState<Set<string>>(new Set());

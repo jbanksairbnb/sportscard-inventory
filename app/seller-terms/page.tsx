@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 
@@ -75,11 +76,13 @@ export default function SellerTermsPage() {
         background: 'rgba(248,236,208,0.96)', borderBottom: '3px solid var(--plum)',
         padding: '12px 28px', display: 'flex', alignItems: 'center', gap: 12,
       }}>
-        <SCLogo size={40} />
-        <div style={{ lineHeight: 0.95 }}>
-          <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
-          <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
-        </div>
+        <Link href="/home" style={{ display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' }}>
+          <SCLogo size={40} />
+          <div style={{ lineHeight: 0.95 }}>
+            <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
+            <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
+          </div>
+        </Link>
       </header>
 
       <div style={{ flex: 1, display: 'grid', placeItems: 'center', padding: '40px 24px 80px' }}>

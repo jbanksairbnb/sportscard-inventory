@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import SCLogo from '@/components/SCLogo';
 
 type Header = {
@@ -159,13 +160,13 @@ export default function AdminSetHeadersPage() {
         borderBottom: '3px solid var(--plum)',
       }}>
         <div style={{ maxWidth: 1280, margin: '0 auto', padding: '10px 28px', display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Link href="/home" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
             <SCLogo size={40} />
             <div style={{ lineHeight: 0.95 }}>
               <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
               <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
             </div>
-          </div>
+          </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Admin · Set Headers ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button onClick={startNew} className="btn btn-primary btn-sm">+ New Header</button>

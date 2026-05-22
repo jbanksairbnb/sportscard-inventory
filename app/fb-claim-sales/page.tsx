@@ -52,7 +52,7 @@ type ItemRow = {
 type GroupRow = { id: string; name: string };
 type BidderRow = { id: string; name: string; fb_handle: string | null };
 
-const STATUS_FILTERS = ['all', 'draft', 'live', 'closed', 'settled'] as const;
+const STATUS_FILTERS = ['live', 'draft', 'closed', 'settled', 'all'] as const;
 type StatusFilter = typeof STATUS_FILTERS[number];
 
 const DATE_RANGES = ['all', 'day', 'week', 'month'] as const;
@@ -110,7 +110,7 @@ export default function ClaimSalesPage() {
   const [groupsById, setGroupsById] = useState<Record<string, GroupRow>>({});
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [historicalSales, setHistoricalSales] = useState<{ amount: number; occurred_at: string | null }[]>([]);
-  const [filter, setFilter] = useState<StatusFilter>('all');
+  const [filter, setFilter] = useState<StatusFilter>('live');
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [savingItems, setSavingItems] = useState<Set<string>>(new Set());
 
