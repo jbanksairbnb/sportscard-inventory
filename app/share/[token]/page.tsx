@@ -230,7 +230,7 @@ export default function SharePage() {
           maxWidth: 1280, margin: '0 auto', padding: '10px 28px',
           display: 'flex', alignItems: 'center', gap: 20,
         }}>
-          <Link href="/shared" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flexShrink: 0 }}>
+          <Link href="/home" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flexShrink: 0 }}>
             <SCLogo size={40} />
             <div style={{ lineHeight: 0.95 }}>
               <div className="wordmark" style={{ fontSize: 20, color: 'var(--orange)' }}>Sports</div>
