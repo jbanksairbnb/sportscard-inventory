@@ -11,6 +11,9 @@ type GradeResult = {
   notes: string;
   centering_front?: string;
   centering_back?: string;
+  corners?: string;
+  edges?: string;
+  surface?: string;
   top_flaws?: string[];
   usage: {
     input_tokens: number;
@@ -187,6 +190,29 @@ export default function GradeTestPage() {
             <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.55, marginBottom: 14 }}>
               {result.notes}
             </div>
+
+            {(result.corners || result.edges || result.surface) && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10, marginBottom: 14 }}>
+                {result.corners && (
+                  <div>
+                    <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Corners</div>
+                    <div style={{ fontSize: 13, color: 'var(--plum)' }}>{result.corners}</div>
+                  </div>
+                )}
+                {result.edges && (
+                  <div>
+                    <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Edges</div>
+                    <div style={{ fontSize: 13, color: 'var(--plum)' }}>{result.edges}</div>
+                  </div>
+                )}
+                {result.surface && (
+                  <div>
+                    <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Surface</div>
+                    <div style={{ fontSize: 13, color: 'var(--plum)' }}>{result.surface}</div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {(result.centering_front || result.centering_back) && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
