@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import { thumbUrl } from '@/lib/image-transform';
 
 type ConditionType = 'raw' | 'graded';
 type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
@@ -461,7 +462,7 @@ function MarketplacePageInner() {
                     cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
                   }}>
                   {l.photos && l.photos.length > 0 ? (
-                    <img loading="lazy" decoding="async" src={l.photos[0]} alt={l.title}
+                    <img loading="lazy" decoding="async" src={thumbUrl(l.photos[0], 500)} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)' }}>No photo</span>
@@ -525,7 +526,7 @@ function MarketplacePageInner() {
                     cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
                   }}>
                   {l.photos && l.photos.length > 0 ? (
-                    <img loading="lazy" decoding="async" src={l.photos[0]} alt={l.title}
+                    <img loading="lazy" decoding="async" src={thumbUrl(l.photos[0], 320)} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>

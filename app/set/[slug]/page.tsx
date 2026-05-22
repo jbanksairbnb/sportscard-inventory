@@ -10,6 +10,7 @@ import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
+import { thumbUrl } from "@/lib/image-transform";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -200,7 +201,7 @@ function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
       <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
       {url ? (
         <>
-          <img loading="lazy" decoding="async" src={url} alt={label} title="Click to view"
+          <img loading="lazy" decoding="async" src={thumbUrl(url, 160)} alt={label} title="Click to view"
             onClick={() => setShowModal(true)}
             style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           {showModal && (
@@ -1055,13 +1056,17 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   // stay visible while scrolling right. The Player column hosts the player
   // input PLUS a small Notes textarea, so it's wider than the other frozen
   // cells. Widths must match the actual cell widths.
-  const FROZEN_W = { check: 36, cardNum: 96, player: 288 };
+  const FROZEN_W = { check: 36, cardNum: 96, player: 288, tag: 112 };
   const FROZEN_LEFT = {
     check: 0,
     cardNum: FROZEN_W.check,
     player: FROZEN_W.check + FROZEN_W.cardNum,
+    tag: FROZEN_W.check + FROZEN_W.cardNum + FROZEN_W.player,
   };
-  const PLAYER_RIGHT_BORDER: React.CSSProperties = { boxShadow: 'inset -2px 0 0 var(--plum)' };
+  const FROZEN_RIGHT_BORDER: React.CSSProperties = { boxShadow: 'inset -2px 0 0 var(--plum)' };
+  // Tag # joins the frozen block when activated, so the right-edge divider
+  // moves from Player to Tag #.
+  const PLAYER_RIGHT_BORDER: React.CSSProperties = showTagColumn ? {} : FROZEN_RIGHT_BORDER;
 
   function thFrozen(left: number, width: number, extra: React.CSSProperties = {}): React.CSSProperties {
     return { ...TH_STYLE, position: 'sticky', top: 0, left, width, minWidth: width, zIndex: 30, ...extra };
@@ -1281,7 +1286,14 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                         Player {sortKey === 'Player' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                       </button>
                     </th>
-                    {showTagColumn && <SortableHeader label="Tag #" />}
+                    {showTagColumn && (
+                      <th style={thFrozen(FROZEN_LEFT.tag, FROZEN_W.tag, FROZEN_RIGHT_BORDER)}>
+                        <button type="button" onClick={() => handleSortClick('Tag #')}
+                          style={{ color: 'inherit', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3, fontWeight: sortKey === 'Tag #' ? 900 : 700 }}>
+                          Tag # {sortKey === 'Tag #' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                        </button>
+                      </th>
+                    )}
                     <SortableHeader label="Owned" />
                     <SortableHeader label="Raw Grade" />
                     <SortableHeader label="Grading Company" display="Grading Co." />
@@ -1333,7 +1345,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           }} />
                       </td>
                       {showTagColumn && (
-                        <td style={{ padding: '6px 8px', verticalAlign: 'top' }}>
+                        <td style={tdFrozen(FROZEN_LEFT.tag, FROZEN_W.tag, rowBg, FROZEN_RIGHT_BORDER)}>
                           <input value={v(row["Tag #"])}
                             onChange={(e) => onChangeCell(origIndex, "Tag #", e.target.value)}
                             placeholder="—"
