@@ -118,16 +118,20 @@ function SetCard({
   s,
   colorIndex,
   onDelete,
+  onPurposeChange,
 }: {
   s: SetRow;
   colorIndex: number;
   onDelete: (slug: string, title: string) => void;
+  onPurposeChange: (slug: string, next: Exclude<PurposeFilter, 'all'>) => void;
 }) {
   const color = SET_COLORS[colorIndex % SET_COLORS.length];
   const pct = s.owned_pct || 0;
   const owned = s.owned_count || 0;
   const gainLoss = s.gain_loss || 0;
   const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
+  const currentPurpose = (s.purpose || 'personal') as Exclude<PurposeFilter, 'all'>;
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const donutData = [
     { name: 'Owned',  value: Math.round(pct * 10) / 10 },
@@ -161,20 +165,63 @@ function SetCard({
             <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)' }}>
               {[s.year, s.brand].filter(Boolean).join(' · ')}
             </div>
-            {(() => {
-              const p = (s.purpose || 'personal') as Exclude<PurposeFilter, 'all'>;
-              return (
-                <span title={`${PURPOSE_LABELS[p]} set`}
-                  style={{
-                    fontSize: 8.5, fontWeight: 700, letterSpacing: '0.08em',
-                    padding: '1px 6px', borderRadius: 100,
-                    background: PURPOSE_BADGE_BG[p], color: PURPOSE_BADGE_FG[p],
-                    textTransform: 'uppercase',
+            <div style={{ position: 'relative' }}>
+              <button type="button"
+                onClick={() => setPickerOpen(o => !o)}
+                title="Click to change set category"
+                style={{
+                  fontSize: 8.5, fontWeight: 700, letterSpacing: '0.08em',
+                  padding: '2px 8px 2px 6px', borderRadius: 100,
+                  background: PURPOSE_BADGE_BG[currentPurpose], color: PURPOSE_BADGE_FG[currentPurpose],
+                  textTransform: 'uppercase', border: 'none', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                }}>
+                {PURPOSE_LABELS[currentPurpose]}
+                <span style={{ fontSize: 7, opacity: 0.85, lineHeight: 1 }}>▾</span>
+              </button>
+              {pickerOpen && (
+                <>
+                  <div
+                    onClick={() => setPickerOpen(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 25 }}
+                  />
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+                    background: 'var(--cream)', border: '1.5px solid var(--plum)',
+                    borderRadius: 8, padding: 4, zIndex: 26,
+                    boxShadow: '0 6px 18px rgba(42,20,52,0.2)',
+                    display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130,
                   }}>
-                  {PURPOSE_LABELS[p]}
-                </span>
-              );
-            })()}
+                    {(['personal', 'inventory', 'for-sale'] as const).map(opt => {
+                      const isCurrent = opt === currentPurpose;
+                      return (
+                        <button key={opt} type="button"
+                          onClick={() => { setPickerOpen(false); if (!isCurrent) onPurposeChange(s.slug, opt); }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '6px 10px', borderRadius: 6, border: 'none',
+                            background: isCurrent ? 'var(--paper)' : 'transparent',
+                            fontFamily: 'var(--font-body)', fontSize: 11.5, fontWeight: 700,
+                            color: 'var(--plum)', cursor: isCurrent ? 'default' : 'pointer',
+                            textAlign: 'left',
+                          }}
+                          onMouseEnter={e => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = 'var(--paper)'; }}
+                          onMouseLeave={e => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}>
+                          <span style={{
+                            width: 9, height: 9, borderRadius: 100,
+                            background: PURPOSE_BADGE_BG[opt],
+                            border: '1px solid var(--plum)',
+                            flexShrink: 0,
+                          }} />
+                          {PURPOSE_LABELS[opt]}
+                          {isCurrent && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--teal)' }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="progress" style={{ marginBottom: 6 }}>
@@ -239,21 +286,19 @@ function SetCard({
       <button
         type="button"
         onClick={() => onDelete(s.slug, s.title)}
-        title="Delete set"
+        title="Delete this set"
         style={{
           position: 'absolute', top: 10, right: 10,
-          padding: '3px 8px', fontSize: 11,
-          fontFamily: 'var(--font-body)', fontWeight: 700,
-          color: 'var(--ink-mute)', background: 'var(--paper)',
-          border: '1.5px solid var(--plum)', borderRadius: 100,
-          cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s',
+          width: 28, height: 28, padding: 0,
+          display: 'grid', placeItems: 'center',
+          fontSize: 13, lineHeight: 1,
+          color: 'var(--rust)', background: 'var(--paper)',
+          border: '1.5px solid var(--rust)', borderRadius: 100,
+          cursor: 'pointer',
         }}
-        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
-        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
-        onFocus={e => { (e.currentTarget as HTMLElement).style.opacity = '1'; }}
-        onBlur={e => { (e.currentTarget as HTMLElement).style.opacity = '0'; }}
+        aria-label={`Delete set ${s.title}`}
       >
-        ✕
+        🗑
       </button>
     </div>
   );
@@ -305,6 +350,23 @@ export default function HomePage() {
       .eq('slug', slug);
     if (error) { alert('Failed to delete: ' + error.message); return; }
     setSets((prev) => prev.filter((s) => s.slug !== slug));
+  }
+
+  async function handlePurposeChange(slug: string, next: Exclude<PurposeFilter, 'all'>) {
+    const prevSets = sets;
+    setSets((prev) => prev.map((s) => (s.slug === slug ? { ...s, purpose: next } : s)));
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    const { error } = await supabase
+      .from('sets')
+      .update({ purpose: next, updated_at: Date.now() })
+      .eq('user_id', user.id)
+      .eq('slug', slug);
+    if (error) {
+      alert('Failed to update set category: ' + error.message);
+      setSets(prevSets);
+    }
   }
 
   const [search, setSearch] = useState('');
@@ -407,7 +469,7 @@ export default function HomePage() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(480px, 1fr))', gap: 16 }}>
             {sorted.map((s, i) => (
-              <SetCard key={s.slug} s={s} colorIndex={i} onDelete={handleDeleteSet} />
+              <SetCard key={s.slug} s={s} colorIndex={i} onDelete={handleDeleteSet} onPurposeChange={handlePurposeChange} />
             ))}
           </div>
         )}
