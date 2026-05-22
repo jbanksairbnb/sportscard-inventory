@@ -46,20 +46,55 @@ function inferFromFilename(filename: string): { year: string; brand: string; tit
   const yearMatch = base.match(/\b(19|20)\d{2}\b/);
   const year = yearMatch ? yearMatch[0] : '';
   const lower = base.toLowerCase();
+
+  // Known brands first — preserves canonical capitalization / punctuation.
+  // Order matters: longer/multi-word patterns before shorter ones.
+  const KNOWN_BRANDS: Array<{ re: RegExp; brand: string }> = [
+    { re: /\bo[\s.-]?pee[\s.-]?chee\b/, brand: 'O-Pee-Chee' },
+    { re: /\bupper\s*deck\b/, brand: 'Upper Deck' },
+    { re: /\bplay\s*ball\b/, brand: 'Play Ball' },
+    { re: /\bstadium\s*club\b/, brand: 'Stadium Club' },
+    { re: /\btopps\b/, brand: 'Topps' },
+    { re: /\bbowman\b/, brand: 'Bowman' },
+    { re: /\bdonruss\b/, brand: 'Donruss' },
+    { re: /\bfleer\b/, brand: 'Fleer' },
+    { re: /\bgoudey\b/, brand: 'Goudey' },
+    { re: /\bleaf\b/, brand: 'Leaf' },
+    { re: /\bpanini\b/, brand: 'Panini' },
+    { re: /\bscore\b/, brand: 'Score' },
+    { re: /\bpinnacle\b/, brand: 'Pinnacle' },
+    { re: /\bsportflics\b/, brand: 'Sportflics' },
+  ];
   let brand = '';
-  if (/\btopps\b/.test(lower)) brand = 'Topps';
-  else if (/\bbowman\b/.test(lower)) brand = 'Bowman';
-  else if (/\bplay\s*ball\b/.test(lower)) brand = 'Play Ball';
-  else if (/\bdonruss\b/.test(lower)) brand = 'Donruss';
-  else if (/\bfleer\b/.test(lower)) brand = 'Fleer';
-  else if (/\bupper\s*deck\b/.test(lower)) brand = 'Upper Deck';
+  for (const { re, brand: b } of KNOWN_BRANDS) {
+    if (re.test(lower)) { brand = b; break; }
+  }
+
   let sport = 'baseball';
   if (/\bfootball\b|\bnfl\b/.test(lower)) sport = 'football';
   else if (/\bbasketball\b|\bnba\b/.test(lower)) sport = 'basketball';
   else if (/\bhockey\b|\bnhl\b/.test(lower)) sport = 'hockey';
+
+  // Fallback when no known brand matched: pull whatever sits between the
+  // year and the first sport/set-type keyword as the brand. Lets new
+  // brands (O-Pee-Chee Premier, Tristar, etc.) flow through without code
+  // changes — admin can still tweak in the review row.
+  if (!brand && year) {
+    const after = base.slice(base.indexOf(year) + year.length);
+    const stopRe = /\b(baseball|football|basketball|hockey|nfl|nba|nhl|mlb|base|complete|set|update|series|high\s*number|hi[\s-]?num|checklist|insert|subset|all[\s-]?star|rookie|hof|hall)\b/i;
+    const m = after.match(stopRe);
+    const raw = (m ? after.slice(0, m.index) : after).trim();
+    if (raw) {
+      brand = raw
+        .split(/\s+/)
+        .map(w => w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)
+        .join(' ');
+    }
+  }
+
   let title = base;
   if (year) title = title.replace(year, '').trim();
-  if (brand) title = title.replace(new RegExp(brand, 'i'), '').trim();
+  if (brand) title = title.replace(new RegExp(brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '').trim();
   title = title.replace(/\b(baseball|football|basketball|hockey|nfl|nba|nhl|mlb)\b/gi, '').trim();
   title = title.replace(/\s+/g, ' ');
   if (year && brand) title = `${year} ${brand} — ${title || 'Base Set'}`;
