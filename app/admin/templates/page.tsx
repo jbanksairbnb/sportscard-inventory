@@ -112,7 +112,25 @@ export default function AdminTemplatesPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<ExistingTemplate>>({});
   const [search, setSearch] = useState('');
+  const [sportFilter, setSportFilter] = useState<string>('all');
   const [working, setWorking] = useState<string | null>(null);
+
+  const filteredExisting = existing.filter(t => {
+    if (sportFilter !== 'all' && (t.sport || '') !== sportFilter) return false;
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return `${t.year || ''} ${t.brand || ''} ${t.title || ''}`.toLowerCase().includes(q);
+  });
+
+  // Title column shows just the part after "— " (e.g. "Base Set",
+  // "Hall of Famers"). Year + Brand are already their own columns, so
+  // the stored title duplicates them. Stored value left untouched so
+  // /set/new picker and external links keep working.
+  function shortTitle(full: string | null): string {
+    if (!full) return '';
+    const idx = full.indexOf('—');
+    return idx >= 0 ? full.slice(idx + 1).trim() : full;
+  }
 
   async function loadExisting() {
     setExistingLoading(true);
@@ -265,8 +283,14 @@ export default function AdminTemplatesPage() {
         <section className="panel-bordered" style={{ padding: '24px 28px', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
             <div className="display" style={{ fontSize: 20, color: 'var(--plum)', flex: 1 }}>
-              Set Library ({existing.length})
+              Set Library ({filteredExisting.length}{filteredExisting.length !== existing.length ? ` of ${existing.length}` : ''})
             </div>
+            <select value={sportFilter} onChange={e => setSportFilter(e.target.value)}
+              className="input-sc"
+              style={{ padding: '6px 12px', fontSize: 12.5, minWidth: 130 }}>
+              <option value="all">All sports</option>
+              {SPORTS.map(s => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
+            </select>
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="🔍 Filter by year / brand / title…"
               style={{
@@ -305,13 +329,7 @@ export default function AdminTemplatesPage() {
                 </tr>
               </thead>
               <tbody>
-                {existing
-                  .filter(t => {
-                    const q = search.trim().toLowerCase();
-                    if (!q) return true;
-                    return `${t.year || ''} ${t.brand || ''} ${t.title || ''}`.toLowerCase().includes(q);
-                  })
-                  .map(t => {
+                {filteredExisting.map(t => {
                     const isEditing = editId === t.id;
                     return (
                       <tr key={t.id} style={{ borderTop: '1px solid var(--rule)' }}>
@@ -331,7 +349,7 @@ export default function AdminTemplatesPage() {
                           {isEditing ? (
                             <input value={String(editDraft.title ?? t.title ?? '')} onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))}
                               className="input-sc" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }} />
-                          ) : t.title}
+                          ) : shortTitle(t.title)}
                         </td>
                         <td style={{ padding: '8px 10px' }}>
                           {isEditing ? (

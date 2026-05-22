@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   let q = admin
     .from('set_templates')
     .select('id, year, brand, title, sport, card_count, is_official, created_at')
-    .order('year', { ascending: false })
+    .order('year', { ascending: true })
     .order('brand', { ascending: true })
     .order('title', { ascending: true })
 

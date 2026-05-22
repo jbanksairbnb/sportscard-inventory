@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import Papa from "papaparse";
+import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
@@ -26,7 +27,7 @@ const EXPECTED_HEADERS = [
 ];
 
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => 1953 + i);
-const BRANDS = ["Topps", "Bowman", "Play Ball"] as const;
+const BRANDS = BRAND_NAMES;
 const YES_NO = ["Yes", "No"] as const;
 const COMPANIES = ["", "PSA", "SGC"] as const; // blank allowed
 const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
