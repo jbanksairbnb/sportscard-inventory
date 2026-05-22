@@ -20,6 +20,28 @@ type SetRow = {
   total_value: number;
   gain_loss: number;
   updated_at: number;
+  // Soft classification: 'personal' (collection), 'inventory' (building
+  // to sell), 'for-sale' (currently a complete-set marketplace listing).
+  // Drives the filter pills + tile badge on My Shelf.
+  purpose?: 'personal' | 'inventory' | 'for-sale';
+};
+
+type PurposeFilter = 'all' | 'personal' | 'inventory' | 'for-sale';
+
+const PURPOSE_LABELS: Record<Exclude<PurposeFilter, 'all'>, string> = {
+  personal: 'Personal',
+  inventory: 'Inventory',
+  'for-sale': 'For Sale',
+};
+const PURPOSE_BADGE_BG: Record<Exclude<PurposeFilter, 'all'>, string> = {
+  personal: 'var(--teal)',
+  inventory: 'var(--mustard)',
+  'for-sale': 'var(--orange)',
+};
+const PURPOSE_BADGE_FG: Record<Exclude<PurposeFilter, 'all'>, string> = {
+  personal: 'var(--cream)',
+  inventory: 'var(--plum)',
+  'for-sale': 'var(--cream)',
 };
 
 const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
@@ -135,8 +157,24 @@ function SetCard({
               {s.title}
             </div>
           </Link>
-          <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)', marginBottom: 10 }}>
-            {[s.year, s.brand].filter(Boolean).join(' · ')}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+            <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)' }}>
+              {[s.year, s.brand].filter(Boolean).join(' · ')}
+            </div>
+            {(() => {
+              const p = (s.purpose || 'personal') as Exclude<PurposeFilter, 'all'>;
+              return (
+                <span title={`${PURPOSE_LABELS[p]} set`}
+                  style={{
+                    fontSize: 8.5, fontWeight: 700, letterSpacing: '0.08em',
+                    padding: '1px 6px', borderRadius: 100,
+                    background: PURPOSE_BADGE_BG[p], color: PURPOSE_BADGE_FG[p],
+                    textTransform: 'uppercase',
+                  }}>
+                  {PURPOSE_LABELS[p]}
+                </span>
+              );
+            })()}
           </div>
 
           <div className="progress" style={{ marginBottom: 6 }}>
@@ -240,7 +278,7 @@ export default function HomePage() {
       setUserEmail(user.email || '');
       const { data } = await supabase
         .from('sets')
-        .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at')
+        .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at, purpose')
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
       if (data) setSets(data as SetRow[]);
@@ -270,15 +308,25 @@ export default function HomePage() {
   }
 
   const [search, setSearch] = useState('');
+  const [purposeFilter, setPurposeFilter] = useState<PurposeFilter>('all');
   const sorted = useMemo(() => {
     const arr = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
     const q = search.trim().toLowerCase();
-    if (!q) return arr;
-    return arr.filter(s => {
+    const purposed = purposeFilter === 'all'
+      ? arr
+      : arr.filter(s => (s.purpose || 'personal') === purposeFilter);
+    if (!q) return purposed;
+    return purposed.filter(s => {
       const hay = `${s.title} ${s.year || ''} ${s.brand || ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [sets, search]);
+  }, [sets, search, purposeFilter]);
+
+  const purposeCounts = useMemo(() => {
+    const c: Record<PurposeFilter, number> = { all: sets.length, personal: 0, inventory: 0, 'for-sale': 0 };
+    for (const s of sets) c[(s.purpose || 'personal') as Exclude<PurposeFilter, 'all'>]++;
+    return c;
+  }, [sets]);
 
   if (loading) {
     return (
@@ -314,6 +362,36 @@ export default function HomePage() {
             <Link href="/set/new" className="btn btn-primary btn-sm">+ New Upload</Link>
           </div>
         </div>
+
+        {sets.length > 0 && (
+          <div style={{
+            display: 'flex', gap: 6, flexWrap: 'wrap',
+            padding: '8px 12px', marginBottom: 18,
+            background: 'var(--paper)', borderRadius: 100, border: '1.5px solid var(--rule)',
+            alignItems: 'center', alignSelf: 'flex-start', width: 'fit-content', maxWidth: '100%',
+          }}>
+            <span className="eyebrow" style={{ fontSize: 9.5, color: 'var(--ink-mute)', marginRight: 6 }}>VIEW</span>
+            {(['all', 'personal', 'inventory', 'for-sale'] as const).map(id => {
+              const count = purposeCounts[id];
+              if (id !== 'all' && count === 0) return null;
+              const active = purposeFilter === id;
+              const label = id === 'all' ? 'All' : PURPOSE_LABELS[id];
+              return (
+                <button key={id} type="button" onClick={() => setPurposeFilter(id)}
+                  style={{
+                    fontSize: 11, fontWeight: 700, letterSpacing: '0.05em',
+                    padding: '4px 11px', borderRadius: 100,
+                    background: active ? 'var(--plum)' : 'transparent',
+                    color: active ? 'var(--mustard)' : 'var(--plum)',
+                    border: active ? '1.5px solid var(--plum)' : '1.5px solid transparent',
+                    cursor: 'pointer',
+                  }}>
+                  {label} <span style={{ opacity: 0.7, marginLeft: 2 }}>({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {sorted.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>

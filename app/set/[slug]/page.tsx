@@ -395,20 +395,21 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
 }
 
 function SetInfoModal({ initial, onClose, onSave }: {
-  initial: { title: string; year: string; brand: string; description: string; sport: string };
+  initial: { title: string; year: string; brand: string; description: string; sport: string; purpose: 'personal' | 'inventory' | 'for-sale' };
   onClose: () => void;
-  onSave: (patch: { title: string; year: string; brand: string; description: string; sport: string }) => void;
+  onSave: (patch: { title: string; year: string; brand: string; description: string; sport: string; purpose: 'personal' | 'inventory' | 'for-sale' }) => void;
 }) {
   const [title, setTitle] = useState(initial.title);
   const [year, setYear] = useState(initial.year);
   const [brand, setBrand] = useState(initial.brand);
   const [description, setDescription] = useState(initial.description);
   const [sport, setSport] = useState(initial.sport || 'baseball');
+  const [purpose, setPurpose] = useState<'personal' | 'inventory' | 'for-sale'>(initial.purpose || 'personal');
   const [error, setError] = useState('');
 
   function handleSave() {
     if (!title.trim()) { setError('Title is required.'); return; }
-    onSave({ title: title.trim(), year: year.trim(), brand: brand.trim(), description: description.trim(), sport });
+    onSave({ title: title.trim(), year: year.trim(), brand: brand.trim(), description: description.trim(), sport, purpose });
   }
 
   const fieldStyle: React.CSSProperties = {
@@ -466,6 +467,26 @@ function SetInfoModal({ initial, onClose, onSave }: {
               style={{ ...fieldStyle, resize: 'vertical' }} />
           </div>
 
+          <div>
+            <div className="eyebrow" style={labelStyle}>Purpose</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {([
+                ['personal', '🧑 Personal Collection'],
+                ['inventory', '🏷 Inventory (to sell)'],
+                ['for-sale', '🛒 For Sale (active listing)'],
+              ] as const).map(([val, label]) => (
+                <button key={val} type="button" onClick={() => setPurpose(val)}
+                  className={`btn btn-sm ${purpose === val ? 'btn-primary' : 'btn-ghost'}`}
+                  style={{ flex: 1, justifyContent: 'center', minWidth: 110 }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 6 }}>
+              Drives the filter pills on My Shelf. Publishing a complete-set listing flips this to &quot;For Sale&quot; automatically.
+            </div>
+          </div>
+
           {error && (
             <div style={{
               background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
@@ -502,6 +523,11 @@ export default function SetEditorPage() {
   const [year, setYear] = useState<string>("");
   const [brand, setBrand] = useState<string>("");
   const [desc, setDesc] = useState<string>("");
+  // 'personal' (default) · 'inventory' (building to sell) · 'for-sale'
+  // (currently has an active complete-set marketplace listing). The
+  // List-Complete-Set publish flow flips this to 'for-sale' for the
+  // seller; manual toggling lives in the Edit Info modal.
+  const [purpose, setPurpose] = useState<'personal' | 'inventory' | 'for-sale'>('personal');
   const [sport, setSport] = useState<string>("baseball");
   const [rows, setRows] = useState<Array<Record<string, any>>>([]);
   const [saveStatus, setSaveStatus] = useState<string>("");
@@ -608,6 +634,7 @@ export default function SetEditorPage() {
           setBrand(data.brand ?? "");
           setDesc(data.description ?? "");
           setSport(data.sport || "baseball");
+          setPurpose((data.purpose as 'personal' | 'inventory' | 'for-sale') || 'personal');
           // ensureRowIds backfills a stable _id on every row that's missing
           // one (legacy sets saved before per-row identity existed). The
           // backfilled IDs get persisted on the next autosave.
@@ -673,6 +700,7 @@ export default function SetEditorPage() {
         user_id: userId, slug, title: datasetTitle,
         year: Number(year) || null, brand, description: desc,
         owner_email: userEmail,
+        purpose,
         rows: theRows, row_count: theRows.length,
         owned_count: ownedCount, owned_pct: ownedPct,
         total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss,
@@ -1527,7 +1555,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
 
       {infoEditOpen && (
         <SetInfoModal
-          initial={{ title: datasetTitle, year, brand, description: desc, sport }}
+          initial={{ title: datasetTitle, year, brand, description: desc, sport, purpose }}
           onClose={() => setInfoEditOpen(false)}
           onSave={async (patch) => {
             setDatasetTitle(patch.title);
@@ -1535,6 +1563,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             setBrand(patch.brand);
             setDesc(patch.description);
             setSport(patch.sport);
+            setPurpose(patch.purpose);
             setInfoEditOpen(false);
             if (userId && slug && slug !== 'new') {
               const supabase = createClient();
@@ -1547,6 +1576,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                 brand: patch.brand,
                 description: patch.description,
                 sport: patch.sport,
+                purpose: patch.purpose,
                 owner_email: userEmail,
                 rows, row_count: rows.length,
                 owned_count: ownedCount, owned_pct: ownedPct,
