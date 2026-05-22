@@ -11,6 +11,7 @@ import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearch
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { thumbUrl } from "@/lib/image-transform";
+import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -27,7 +28,7 @@ const EXPECTED_HEADERS = [
 const TAG_VISIBLE_KEY = 'sc:set-show-tag';
 
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
-const BRANDS = ["Topps", "Bowman", "Play Ball"];
+const BRANDS = BRAND_NAMES;
 const YES_NO = ["Yes", "No"] as const;
 const COMPANIES = ["", "PSA", "SGC", "BGS", "CGC", "TAG"] as const;
 const GRADING_COMPANIES_LIST = ["PSA", "SGC", "BGS", "CGC", "TAG"] as const;

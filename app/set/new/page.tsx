@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import { BRANDS as BRAND_NAMES } from '@/lib/brands';
 
 // CSV schema for uploads. 'Notes' and 'Tag #' are seller-bookkeeping
 // fields — both optional (kept out of REQUIRED_HEADERS so old backups
@@ -21,7 +22,7 @@ const OPTIONAL_HEADERS = new Set(['Notes', 'Tag #']);
 const REQUIRED_HEADERS = EXPECTED_HEADERS.filter(h => !OPTIONAL_HEADERS.has(h));
 
 const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => String(1953 + i));
-const BRANDS = ['Topps', 'Bowman', 'Play Ball'];
+const BRANDS = BRAND_NAMES;
 const RAW_GRADES = ['', 'Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'] as const;
 const GRADES_NUMERIC = ['', ...Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''))];
 const SPORTS = [

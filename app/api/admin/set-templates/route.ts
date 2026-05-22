@@ -46,7 +46,7 @@ export async function GET() {
   const { data, error } = await admin
     .from('set_templates')
     .select('id, year, brand, title, sport, card_count, is_official, uploaded_by, updated_at, created_at')
-    .order('year', { ascending: false })
+    .order('year', { ascending: true })
     .order('brand', { ascending: true })
     .order('title', { ascending: true })
 
