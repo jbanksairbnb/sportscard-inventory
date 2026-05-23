@@ -139,6 +139,12 @@ async function evaluateOnce(ctx: CardContext, model: string, apiKey: string): Pr
   const response = await client.messages.create({
     model,
     max_tokens: 1024,
+    // Deterministic-as-possible sampling. Default temperature is 1.0,
+    // which caused 2+ grade-range variance on identical re-runs of the
+    // same card (the model latches onto a different flaw each time).
+    // temperature=0 doesn't fully eliminate non-determinism in vision
+    // calls but knocks variance down to mostly-identical.
+    temperature: 0,
     system: [
       {
         type: 'text',

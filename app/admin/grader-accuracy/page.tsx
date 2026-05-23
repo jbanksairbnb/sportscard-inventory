@@ -30,6 +30,7 @@ type Row = {
   user_action: string | null;
   user_final_grade: string | null;
   professional_grade: string | null;
+  seller_assessment: 'correct' | 'too_high' | 'too_low' | null;
 };
 
 type Stats = {
@@ -40,7 +41,10 @@ type Stats = {
   total_cost_dollars: number;
   avg_latency_ms: number;
   confidence_counts: Record<string, number>;
+  assessment_counts: Record<string, number>;
 };
+
+const RAW_GRADE_OPTIONS = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
 
 // Admin-only dashboard for AI grader accuracy + failure-pattern analysis.
 // Reads from card_grades (every evaluate-grade call lands a row, success
@@ -69,6 +73,24 @@ export default function GraderAccuracyPage() {
     setRows(data.rows || []);
     setStats(data.stats || null);
     setLoading(false);
+  }
+
+  // Optimistic update — patch the local row first so the UI feels instant,
+  // then fire the PATCH. Revert on failure.
+  async function rateGrade(rowId: string, patch: { seller_assessment?: 'correct' | 'too_high' | 'too_low' | null; user_final_grade?: string | null }) {
+    const before = rows.find(r => r.id === rowId);
+    setRows(prev => prev.map(r => r.id === rowId ? { ...r, ...patch } as Row : r));
+    try {
+      const res = await fetch('/api/admin/card-grades', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: rowId, ...patch }),
+      });
+      if (!res.ok) throw new Error('save failed');
+    } catch {
+      // Revert on failure
+      if (before) setRows(prev => prev.map(r => r.id === rowId ? before : r));
+    }
   }
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter, sourceFilter]);
@@ -110,12 +132,19 @@ export default function GraderAccuracyPage() {
             <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)', marginBottom: 6 }}>
               Last {stats.window_days} days · across all sources
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14 }}>
               <Stat label="Total graded" value={String(stats.total)} />
               <Stat label="Failure rate"
                 value={`${(stats.failure_rate * 100).toFixed(1)}%`}
                 hint={`${stats.failed} of ${stats.total}`}
                 accent={stats.failure_rate > 0.1 ? 'rust' : undefined} />
+              <Stat label="Accuracy"
+                value={(() => {
+                  const c = stats.assessment_counts.correct || 0;
+                  const total = c + (stats.assessment_counts.too_high || 0) + (stats.assessment_counts.too_low || 0);
+                  return total > 0 ? `${Math.round((c / total) * 100)}%` : '—';
+                })()}
+                hint={`${stats.assessment_counts.correct || 0}✓ ${stats.assessment_counts.too_high || 0}↓ ${stats.assessment_counts.too_low || 0}↑`} />
               <Stat label="Total cost" value={`$${stats.total_cost_dollars.toFixed(3)}`} />
               <Stat label="Avg latency" value={`${stats.avg_latency_ms.toLocaleString()} ms`} />
               <Stat label="Confidence mix"
@@ -196,7 +225,10 @@ export default function GraderAccuracyPage() {
                       <td style={{ ...td, fontSize: 11 }}>{r.ai_cost_dollars ? `$${Number(r.ai_cost_dollars).toFixed(4)}` : '—'}</td>
                       <td style={{ ...td, fontSize: 11 }}>{r.ai_latency_ms ? `${r.ai_latency_ms} ms` : '—'}</td>
                       <td style={{ ...td, fontSize: 11 }}>
-                        {r.professional_grade ? `🏆 ${r.professional_grade}` : (r.user_final_grade || r.user_action || '—')}
+                        {r.seller_assessment === 'correct' && <span style={{ color: 'var(--teal)' }}>✓ correct</span>}
+                        {r.seller_assessment === 'too_high' && <span style={{ color: 'var(--rust)' }}>↓ too high</span>}
+                        {r.seller_assessment === 'too_low' && <span style={{ color: 'var(--rust)' }}>↑ too low</span>}
+                        {!r.seller_assessment && (r.professional_grade ? `🏆 ${r.professional_grade}` : (r.user_final_grade || r.user_action || '—'))}
                       </td>
                     </tr>
                     {expanded && (
@@ -234,6 +266,41 @@ export default function GraderAccuracyPage() {
                                   )}
                                   <div style={{ marginTop: 10, fontSize: 11, color: 'var(--ink-mute)' }}>
                                     Model: {r.ai_model || '—'}
+                                  </div>
+
+                                  <div style={{
+                                    marginTop: 14, paddingTop: 12,
+                                    borderTop: '1.5px dashed var(--rule)',
+                                  }}>
+                                    <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)', marginBottom: 8 }}>
+                                      Was this grade right? (feeds prompt tuning)
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                                      <RatingButton
+                                        active={r.seller_assessment === 'correct'}
+                                        onClick={() => rateGrade(r.id, { seller_assessment: r.seller_assessment === 'correct' ? null : 'correct' })}
+                                        color="teal" label="✓ Correct" />
+                                      <RatingButton
+                                        active={r.seller_assessment === 'too_high'}
+                                        onClick={() => rateGrade(r.id, { seller_assessment: r.seller_assessment === 'too_high' ? null : 'too_high' })}
+                                        color="rust" label="↓ Too high" />
+                                      <RatingButton
+                                        active={r.seller_assessment === 'too_low'}
+                                        onClick={() => rateGrade(r.id, { seller_assessment: r.seller_assessment === 'too_low' ? null : 'too_low' })}
+                                        color="rust" label="↑ Too low" />
+                                      <span style={{ width: 8 }} />
+                                      <span className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
+                                        Your grade:
+                                      </span>
+                                      <select
+                                        value={r.user_final_grade || ''}
+                                        onChange={e => rateGrade(r.id, { user_final_grade: e.target.value || null })}
+                                        className="input-sc"
+                                        style={{ padding: '4px 8px', fontSize: 11.5 }}>
+                                        <option value="">—</option>
+                                        {RAW_GRADE_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                                      </select>
+                                    </div>
                                   </div>
                                 </>
                               )}
@@ -287,3 +354,20 @@ function formatTime(iso: string): string {
 
 const th: React.CSSProperties = { padding: '8px 10px', textAlign: 'left', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--plum)', letterSpacing: '0.05em', textTransform: 'uppercase' };
 const td: React.CSSProperties = { padding: '8px 10px', verticalAlign: 'middle' };
+
+function RatingButton({ active, onClick, color, label }: { active: boolean; onClick: () => void; color: 'teal' | 'rust'; label: string }) {
+  const accent = color === 'teal' ? 'var(--teal)' : 'var(--rust)';
+  return (
+    <button type="button" onClick={onClick}
+      style={{
+        padding: '5px 12px', borderRadius: 100,
+        border: `1.5px solid ${active ? accent : 'var(--rule)'}`,
+        background: active ? accent : 'transparent',
+        color: active ? 'var(--cream)' : 'var(--plum)',
+        fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+        fontFamily: 'var(--font-mono)',
+      }}>
+      {label}
+    </button>
+  );
+}
