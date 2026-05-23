@@ -214,6 +214,36 @@ export default function AdminPage() {
           </div>
 
           <div className="section-head" style={{ marginBottom: 16 }}>
+            <span className="eyebrow" style={{ fontSize: 14 }}>★ AI Grader ★</span>
+          </div>
+          <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: '18px 22px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 6 }}>🤖 Grader Accuracy</div>
+                <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55, margin: 0 }}>
+                  Every AI grade attempt is logged here — success, failure, cost, latency, and the model&apos;s per-attribute findings. Rate grades (correct / too high / too low) to feed prompt tuning and accuracy tracking.
+                </p>
+              </div>
+              <button onClick={() => router.push('/admin/grader-accuracy')} className="btn btn-primary">
+                Open Report →
+              </button>
+            </div>
+          </div>
+          <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: '18px 22px', marginBottom: 28 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div className="display" style={{ fontSize: 17, color: 'var(--plum)', marginBottom: 6 }}>🤖 Grade Test</div>
+                <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55, margin: 0 }}>
+                  One-off validation harness: paste two image URLs + metadata, see the model&apos;s grade range with full per-attribute breakdown. Useful for sanity-checking prompt changes against known-graded cards.
+                </p>
+              </div>
+              <button onClick={() => router.push('/admin/grade-test')} className="btn btn-outline">
+                Open Test →
+              </button>
+            </div>
+          </div>
+
+          <div className="section-head" style={{ marginBottom: 16 }}>
             <span className="eyebrow" style={{ fontSize: 14 }}>★ Membership Applications ★</span>
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
