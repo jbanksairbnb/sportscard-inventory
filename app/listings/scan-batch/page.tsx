@@ -1,11 +1,14 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
+import AIGradeBadge from '@/components/AIGradeBadge';
+import AIGradeToggle, { loadAIGradePreference, saveAIGradePreference } from '@/components/AIGradeToggle';
+import { useAIGrade, type AIGradeItem } from '@/lib/ai/use-ai-grade';
 
 type Listing = {
   id: string;
@@ -17,6 +20,9 @@ type Listing = {
   tag_number: string | null;
   status: 'draft' | 'active' | 'sold' | 'removed';
   photos: string[] | null;
+  condition_type: 'raw' | 'graded' | null;
+  raw_grade: string | null;
+  grading_company: string | null;
 };
 
 type PairMode = 'fronts-then-backs' | 'interleaved';
@@ -62,6 +68,22 @@ export default function ScanBatchToListingsPage() {
   const [error, setError] = useState('');
   const [savedSummary, setSavedSummary] = useState('');
 
+  // AI grading: same shape as scan-multi-card. Toggle persists across flows.
+  const [aiEnabled, setAiEnabled] = useState(true);
+  useEffect(() => { setAiEnabled(loadAIGradePreference()); }, []);
+  const ai = useAIGrade({ enabled: aiEnabled });
+  const [savedItems, setSavedItems] = useState<Array<{
+    listingId: string;
+    label: string;
+    image_front_url: string;
+    image_back_url: string;
+    prior_raw_grade: string;
+  }>>([]);
+  const autoAppliedRef = useRef<Set<string>>(new Set());
+  const [appliedGrades, setAppliedGrades] = useState<Record<string, string>>({});
+  const writeQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const aiEvaluatedCount = Object.values(ai.statuses).filter(s => s.state === 'done' || s.state === 'error').length;
+
   useEffect(() => {
     const supabase = createClient();
     async function load() {
@@ -71,7 +93,7 @@ export default function ScanBatchToListingsPage() {
       setUserId(user.id);
       const { data } = await supabase
         .from('listings')
-        .select('id, title, year, brand, card_number, player, tag_number, status, photos')
+        .select('id, title, year, brand, card_number, player, tag_number, status, photos, condition_type, raw_grade, grading_company')
         .eq('user_id', user.id)
         .in('status', ['draft', 'active'])
         .order('created_at', { ascending: false });
@@ -236,6 +258,8 @@ export default function ScanBatchToListingsPage() {
     setSaving(true);
     const supabase = createClient();
     const ts = Date.now();
+    // Snapshot of saved listings for the AI-grading UI on the review screen.
+    const snapshot: typeof savedItems = [];
     try {
       let updated = 0;
       for (let i = 0; i < selectedOrder.length; i++) {
@@ -272,9 +296,48 @@ export default function ScanBatchToListingsPage() {
           .eq('user_id', userId);
         if (updErr) throw new Error(`Update failed (${listingLabel(listing)}): ${updErr.message}`);
         updated++;
+
+        const front = slots.find(s => s.idx === 0)?.url || nextPhotos[0] || '';
+        const back = slots.find(s => s.idx === 1)?.url || nextPhotos[1] || '';
+        snapshot.push({
+          listingId,
+          label: listingLabel(listing),
+          image_front_url: front,
+          image_back_url: back,
+          prior_raw_grade: listing.raw_grade || '',
+        });
       }
       setSavedSummary(`${updated} listing${updated === 1 ? '' : 's'} updated with new scans`);
+      setSavedItems(snapshot);
       setPhase('review');
+
+      // Kick off AI grading on the saved listings. Skip cards that are
+      // professionally graded (real grade is truth) or that don't have
+      // both faces — partial scans aren't worth the spend.
+      if (aiEnabled) {
+        const aiItems: AIGradeItem[] = [];
+        for (const it of snapshot) {
+          const listing = listings.find(l => l.id === it.listingId);
+          if (!listing) continue;
+          const isGraded = listing.condition_type === 'graded'
+            || (listing.grading_company || '').trim() !== '';
+          if (isGraded) continue;
+          if (!it.image_front_url || !it.image_back_url) continue;
+          aiItems.push({
+            id: it.listingId,
+            context: {
+              year: listing.year,
+              brand: listing.brand,
+              set_title: null,
+              card_number: listing.card_number,
+              player: listing.player,
+              image_front_url: it.image_front_url,
+              image_back_url: it.image_back_url,
+            },
+          });
+        }
+        if (aiItems.length > 0) ai.evaluate(aiItems);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
     } finally {
@@ -282,10 +345,48 @@ export default function ScanBatchToListingsPage() {
     }
   }
 
+  // Serial DB writes for AI grade application. Multiple results land in
+  // parallel and each is a single-column update on listings — Postgres
+  // handles row-level concurrency fine, but we serialize anyway so an
+  // Undo click can't race past an in-flight write.
+  function writeListingGrade(listingId: string, rawGrade: string) {
+    if (!userId) return Promise.resolve();
+    const uid = userId;
+    const next = writeQueueRef.current.then(async () => {
+      const supabase = createClient();
+      const patch: { raw_grade: string | null; condition_type?: 'raw' } = {
+        raw_grade: rawGrade || null,
+      };
+      // If the listing is currently raw + ungraded, AI fill bumps it to
+      // condition_type='raw' so the marketplace shows the grade.
+      if (rawGrade) patch.condition_type = 'raw';
+      await supabase.from('listings').update(patch)
+        .eq('id', listingId).eq('user_id', uid);
+    });
+    writeQueueRef.current = next.catch(() => {});
+    return next;
+  }
+
+  useEffect(() => {
+    for (const it of savedItems) {
+      const s = ai.statuses[it.listingId];
+      if (s?.state !== 'done') continue;
+      if (autoAppliedRef.current.has(it.listingId)) continue;
+      autoAppliedRef.current.add(it.listingId);
+      const low = s.result.grade_low;
+      setAppliedGrades(prev => ({ ...prev, [it.listingId]: low }));
+      writeListingGrade(it.listingId, low);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ai.statuses, savedItems]);
+
   function startOver() {
     setSelectedOrder([]);
     setFiles([]);
     setSavedSummary('');
+    setSavedItems([]);
+    autoAppliedRef.current = new Set();
+    setAppliedGrades({});
     setPhase('pick');
   }
 
@@ -578,6 +679,18 @@ export default function ScanBatchToListingsPage() {
                   ← Back to listing pick
                 </button>
               </div>
+              <div style={{ marginTop: 12 }}>
+                <AIGradeToggle
+                  enabled={aiEnabled}
+                  onToggle={v => { setAiEnabled(v); saveAIGradePreference(v); }}
+                  totalCost={0}
+                  evaluatedCount={0}
+                  totalCount={0}
+                  softCapHit={false}
+                  hardCapHit={false}
+                  hardCap={ai.hardCap}
+                />
+              </div>
               {error && (
                 <div style={{ marginTop: 12, padding: 8, background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)', borderRadius: 6, color: 'var(--rust)', fontSize: 12 }}>
                   {error}
@@ -588,9 +701,65 @@ export default function ScanBatchToListingsPage() {
         )}
 
         {phase === 'review' && (
-          <section className="panel-bordered" style={{ padding: '40px 32px', textAlign: 'center' }}>
-            <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 10 }}>✓ Done</div>
-            <div className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>{savedSummary}</div>
+          <section className="panel-bordered" style={{ padding: '28px 32px' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 10 }}>✓ Done</div>
+              <div className="mono" style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>{savedSummary}</div>
+            </div>
+
+            {aiEnabled && savedItems.length > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ marginBottom: 10 }}>
+                  <AIGradeToggle
+                    enabled={aiEnabled}
+                    onToggle={v => { setAiEnabled(v); saveAIGradePreference(v); }}
+                    totalCost={ai.totalCost}
+                    evaluatedCount={aiEvaluatedCount}
+                    totalCount={savedItems.filter(it => it.image_front_url && it.image_back_url).length}
+                    softCapHit={ai.softCapHit}
+                    hardCapHit={ai.hardCapHit}
+                    hardCap={ai.hardCap}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {savedItems.map(it => {
+                    const status = ai.statuses[it.listingId];
+                    return (
+                      <div key={it.listingId} style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '8px 12px', border: '1.5px solid var(--rule)', borderRadius: 8,
+                      }}>
+                        <span style={{ fontSize: 13, color: 'var(--plum)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {it.label}
+                        </span>
+                        <AIGradeBadge
+                          status={status}
+                          appliedGrade={appliedGrades[it.listingId]}
+                          onUseHigh={status?.state === 'done' ? () => {
+                            setAppliedGrades(p => ({ ...p, [it.listingId]: status.result.grade_high }));
+                            writeListingGrade(it.listingId, status.result.grade_high);
+                          } : undefined}
+                          onUseLow={status?.state === 'done' && appliedGrades[it.listingId] !== status.result.grade_low ? () => {
+                            setAppliedGrades(p => ({ ...p, [it.listingId]: status.result.grade_low }));
+                            writeListingGrade(it.listingId, status.result.grade_low);
+                          } : undefined}
+                          onUndo={status?.state === 'done' ? () => {
+                            setAppliedGrades(p => {
+                              const n = { ...p };
+                              delete n[it.listingId];
+                              return n;
+                            });
+                            writeListingGrade(it.listingId, it.prior_raw_grade);
+                            ai.dismissResult(it.listingId);
+                          } : undefined}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button type="button" onClick={startOver} className="btn btn-primary">Scan another batch</button>
               <Link href="/listings" className="btn btn-outline">Back to My Listings</Link>
