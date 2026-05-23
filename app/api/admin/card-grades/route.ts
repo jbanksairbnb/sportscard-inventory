@@ -81,6 +81,18 @@ export async function GET(req: NextRequest) {
     if (r.ai_confidence) confidenceCounts[r.ai_confidence] = (confidenceCounts[r.ai_confidence] || 0) + 1;
   }
 
+  // Assessment counts across the 7-day window (separate from filtered table).
+  type AssessRow = { seller_assessment: string | null };
+  const { data: assessAgg } = await admin
+    .from('card_grades')
+    .select('seller_assessment')
+    .gte('created_at', sevenDaysAgo)
+    .not('seller_assessment', 'is', null);
+  const assessmentCounts: Record<string, number> = { correct: 0, too_high: 0, too_low: 0 };
+  for (const r of (assessAgg || []) as AssessRow[]) {
+    if (r.seller_assessment) assessmentCounts[r.seller_assessment] = (assessmentCounts[r.seller_assessment] || 0) + 1;
+  }
+
   return NextResponse.json({
     rows: data || [],
     stats: {
@@ -91,6 +103,57 @@ export async function GET(req: NextRequest) {
       total_cost_dollars: totalCost,
       avg_latency_ms: avgLatency,
       confidence_counts: confidenceCounts,
+      assessment_counts: assessmentCounts,
     },
   });
+}
+
+// PATCH: rate a specific card_grade row from the dashboard. Updates
+// seller_assessment (correct/too_high/too_low) and/or user_final_grade
+// (the precise grade the seller thinks is right). Admin-only.
+export async function PATCH(req: NextRequest) {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll(); },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
+          } catch {}
+        },
+      },
+    }
+  );
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const admin = adminClient();
+  if (!(await isAdminUser(admin, user))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const id = String(body?.id || '').trim();
+  if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+
+  const patch: Record<string, unknown> = {};
+  if ('seller_assessment' in body) {
+    const v = body.seller_assessment;
+    if (v === null) patch.seller_assessment = null;
+    else if (v === 'correct' || v === 'too_high' || v === 'too_low') patch.seller_assessment = v;
+    else return NextResponse.json({ error: 'invalid seller_assessment' }, { status: 400 });
+  }
+  if ('user_final_grade' in body) {
+    const v = body.user_final_grade;
+    patch.user_final_grade = v === null || v === '' ? null : String(v);
+  }
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ error: 'no patchable fields' }, { status: 400 });
+  }
+
+  const { error } = await admin.from('card_grades').update(patch).eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }
