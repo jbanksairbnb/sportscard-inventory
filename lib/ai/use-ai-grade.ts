@@ -50,7 +50,10 @@ export type AIGradeStatus =
 
 export type AIGradeItem = { id: string; context: AIGradeRowContext };
 
-const CONCURRENCY = 5;
+// 3 in flight keeps us well under Anthropic's per-minute rate limits.
+// Was 5 — caused ~50% failure rate on 14-listing batches due to 429s.
+// Retry-with-backoff in the grader is the primary defense; this is belt+suspenders.
+const CONCURRENCY = 3;
 const DEFAULT_SOFT_CAP = 0.50;
 const DEFAULT_HARD_CAP = 2.00;
 
@@ -68,6 +71,9 @@ export function useAIGrade(options?: {
   enabled?: boolean;
   hardCapDollars?: number;
   softCapDollars?: number;
+  // Tagged onto every logged grade in the DB so the admin dashboard can
+  // slice accuracy by surface. Pass the page identifier e.g. "scan-batch".
+  source?: string;
 }) {
   const hardCap = options?.hardCapDollars ?? DEFAULT_HARD_CAP;
   const softCap = options?.softCapDollars ?? DEFAULT_SOFT_CAP;
@@ -95,6 +101,7 @@ export function useAIGrade(options?: {
           set_title: item.context.set_title,
           card_number: item.context.card_number,
           player: item.context.player,
+          source: options?.source,
         }),
       });
       const data = await res.json();

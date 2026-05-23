@@ -99,6 +99,33 @@ export async function evaluateCardGrade(ctx: CardContext): Promise<GradeResult> 
   // Haiku 4.5 is the cost-default; Sonnet 4.6 available via env for harder cards.
   const model = process.env.CARD_GRADER_MODEL || 'claude-haiku-4-5';
 
+  // Retry-with-backoff for transient failures. Anthropic returns 429 on
+  // per-minute rate limit and occasional 5xx on image-URL fetch timeouts.
+  // Three attempts, exponential 1s/2s/4s, only on retryable codes.
+  return await withRetry(() => evaluateOnce(ctx, model, apiKey), 3);
+}
+
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts: number): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastError = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      // Retryable: rate limit (429), server errors (5xx), connection errors,
+      // and the "Could not process image" message Anthropic returns when
+      // image fetch from the upstream URL times out.
+      const retryable = /\b429\b|\b5\d\d\b|ECONN|ETIMEDOUT|Could not process image|overloaded/i.test(msg);
+      if (!retryable || attempt === maxAttempts - 1) throw e;
+      const delayMs = 1000 * Math.pow(2, attempt);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastError;
+}
+
+async function evaluateOnce(ctx: CardContext, model: string, apiKey: string): Promise<GradeResult> {
   const client = new Anthropic({ apiKey });
 
   const metadata = [

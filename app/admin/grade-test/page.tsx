@@ -54,6 +54,7 @@ export default function GradeTestPage() {
           image_back_url: back.trim(),
           year: year ? Number(year) : null,
           brand, set_title: setTitle, card_number: cardNumber, player,
+          source: 'grade-test',
         }),
       });
       const data = await res.json();
