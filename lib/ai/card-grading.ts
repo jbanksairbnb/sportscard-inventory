@@ -27,7 +27,7 @@ Do not skip ahead to a grade. Examine each attribute below and report what you f
    - Fraying or fuzziness (cardboard fibers visible at the corner tip)
    - Dings or dents (a small indent or chip at the very tip — easy to miss, look closely)
    - Color loss or whitening at the corner tip
-   A single noticeably-dinged or rounded corner caps the grade at PSA 6-7 even if the rest is mint. Be specific: don't say "corners look ok" — say which corners you examined and what you saw at each.
+   When grading from a phone scan, account for camera-induced effects: highlight glare can make corners appear whiter than they are under good lighting, and small focus blur can mimic fraying. If you see SUSPECTED corner wear that you can't clearly confirm, err on the side of leniency — call it a possible minor concern in notes and widen your range upward rather than slamming the grade. A clearly-dinged corner caps the grade at PSA 6-7; a faintly-soft-looking corner from a phone photo does NOT.
 
 **2. EDGES (all four).** Run your eye along each of the four edges — top, bottom, left, right. Look for:
    - Edge chipping (small pieces of the edge are missing or flaked)
@@ -65,7 +65,7 @@ export type CardContext = {
   card_number: string | null;
   player: string | null;
   image_front_url: string;
-  image_back_url: string;
+  image_back_url: string | null;
 };
 
 export type GradeResult = {
@@ -182,10 +182,14 @@ export async function evaluateCardGrade(ctx: CardContext): Promise<GradeResult> 
         role: 'user',
         content: [
           { type: 'image', source: { type: 'url', url: ctx.image_front_url } },
-          { type: 'image', source: { type: 'url', url: ctx.image_back_url } },
+          ...(ctx.image_back_url
+            ? [{ type: 'image' as const, source: { type: 'url' as const, url: ctx.image_back_url } }]
+            : []),
           {
             type: 'text',
-            text: `Card metadata: ${metadata}\n\nGrade this card using the PSA 1-10 rubric. The first image is the FRONT, the second image is the BACK. Call the report_grade tool with your assessment.`,
+            text: ctx.image_back_url
+              ? `Card metadata: ${metadata}\n\nGrade this card using the PSA 1-10 rubric. The first image is the FRONT, the second image is the BACK. Call the report_grade tool with your assessment.`
+              : `Card metadata: ${metadata}\n\nGrade this card using the PSA 1-10 rubric. ONLY THE FRONT image is available — no back photo was provided. Assess what you can from the front (corners, edges, surface, front centering). Set confidence to "low" since you cannot evaluate the back. Widen your range accordingly and note in \`notes\` that you graded front-only.`,
           },
         ],
       },

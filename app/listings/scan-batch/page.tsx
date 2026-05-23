@@ -311,9 +311,11 @@ export default function ScanBatchToListingsPage() {
       setSavedItems(snapshot);
       setPhase('review');
 
-      // Kick off AI grading on the saved listings. Skip cards that are
-      // professionally graded (real grade is truth) or that don't have
-      // both faces — partial scans aren't worth the spend.
+      // Kick off AI grading on the saved listings. Only skip cards that
+      // are professionally graded (real grade is truth — running AI on
+      // PSA-encapsulated cards isn't useful because the holder warps
+      // the image). Front-only or back-only scans still get graded;
+      // the API + prompt handle that with a low-confidence result.
       if (aiEnabled) {
         const aiItems: AIGradeItem[] = [];
         for (const it of snapshot) {
@@ -322,7 +324,7 @@ export default function ScanBatchToListingsPage() {
           const isGraded = listing.condition_type === 'graded'
             || (listing.grading_company || '').trim() !== '';
           if (isGraded) continue;
-          if (!it.image_front_url || !it.image_back_url) continue;
+          if (!it.image_front_url) continue; // truly nothing to grade
           aiItems.push({
             id: it.listingId,
             context: {
@@ -332,7 +334,7 @@ export default function ScanBatchToListingsPage() {
               card_number: listing.card_number,
               player: listing.player,
               image_front_url: it.image_front_url,
-              image_back_url: it.image_back_url,
+              image_back_url: it.image_back_url || null,
             },
           });
         }
@@ -751,6 +753,23 @@ export default function ScanBatchToListingsPage() {
                             });
                             writeListingGrade(it.listingId, it.prior_raw_grade);
                             ai.dismissResult(it.listingId);
+                          } : undefined}
+                          onRetry={status?.state === 'error' ? () => {
+                            const listing = listings.find(l => l.id === it.listingId);
+                            if (!listing) return;
+                            autoAppliedRef.current.delete(it.listingId);
+                            ai.retry({
+                              id: it.listingId,
+                              context: {
+                                year: listing.year,
+                                brand: listing.brand,
+                                set_title: null,
+                                card_number: listing.card_number,
+                                player: listing.player,
+                                image_front_url: it.image_front_url,
+                                image_back_url: it.image_back_url || null,
+                              },
+                            });
                           } : undefined}
                         />
                       </div>
