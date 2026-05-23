@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -69,14 +69,25 @@ export default function ScanMultiCardPage() {
   useEffect(() => { setAiEnabled(loadAIGradePreference()); }, []);
   const ai = useAIGrade({ enabled: aiEnabled });
   // After-save snapshot: what was saved, so we can render badges + apply
-  // AI suggestions back to the set rows.
+  // AI suggestions back to the set rows. prior_raw_grade is what the cell
+  // held before AI overwrote it, used for the badge's "Undo" action.
   const [savedItems, setSavedItems] = useState<Array<{
     origIndex: number;
     cardNumber: string;
     player: string;
     image_front_url: string;
     image_back_url: string;
+    prior_raw_grade: string;
   }>>([]);
+  // Tracks which rows have had AI grade_low auto-applied. Prevents the
+  // useEffect from firing the write twice if React re-renders.
+  const autoAppliedRef = useRef<Set<number>>(new Set());
+  // Latest applied grade per row (for the badge label after Use High).
+  const [appliedGrades, setAppliedGrades] = useState<Record<number, string>>({});
+  // Serial queue for DB writes — multiple AI results land in parallel,
+  // each does a read-modify-write on the same rows JSON, so we chain
+  // them through a single Promise to avoid lost updates.
+  const writeQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const aiEvaluatedCount = Object.values(ai.statuses).filter(s => s.state === 'done' || s.state === 'error').length;
 
@@ -242,7 +253,8 @@ export default function ScanMultiCardPage() {
       const back = String(row['Image 2'] || '');
       const cardNumber = String(row['Card #'] || '');
       const player = String(row['Player'] || row['Description'] || '');
-      snapshot.push({ origIndex, cardNumber, player, image_front_url: front, image_back_url: back });
+      const priorRawGrade = String(row['Raw Grade'] || '');
+      snapshot.push({ origIndex, cardNumber, player, image_front_url: front, image_back_url: back, prior_raw_grade: priorRawGrade });
       // Skip cards that are already professionally graded — actual grade is truth.
       const alreadyGraded = String(row['Grading Company'] || '').trim() !== '';
       if (front && back && !alreadyGraded) {
@@ -268,20 +280,43 @@ export default function ScanMultiCardPage() {
     }
   }
 
-  // Apply an AI suggestion to the set row in the DB. Called when the seller
-  // clicks "Use [grade]" on a badge. We do a small per-row update rather
-  // than batching so each click feels immediate.
-  async function applyAIGrade(origIndex: number, rawGrade: string) {
-    if (!currentSet || !userId) return;
-    const supabase = createClient();
-    const { data: latest } = await supabase.from('sets')
-      .select('rows').eq('user_id', userId).eq('slug', currentSet.slug).maybeSingle();
-    const rows: CardRow[] = Array.isArray(latest?.rows) ? [...(latest!.rows as CardRow[])] : [];
-    if (!rows[origIndex]) return;
-    rows[origIndex] = { ...rows[origIndex], 'Raw Grade': rawGrade };
-    await supabase.from('sets').update({ rows, updated_at: Date.now() })
-      .eq('user_id', userId).eq('slug', currentSet.slug);
+  // Write Raw Grade to the set row, overwriting any existing value. Passing
+  // empty string clears the field (used by Undo). All writes are serialized
+  // through writeQueueRef so concurrent AI results don't clobber each other.
+  function writeRawGrade(origIndex: number, rawGrade: string) {
+    if (!currentSet || !userId) return Promise.resolve();
+    const slug = currentSet.slug;
+    const uid = userId;
+    const next = writeQueueRef.current.then(async () => {
+      const supabase = createClient();
+      const { data: latest } = await supabase.from('sets')
+        .select('rows').eq('user_id', uid).eq('slug', slug).maybeSingle();
+      const rows: CardRow[] = Array.isArray(latest?.rows) ? [...(latest!.rows as CardRow[])] : [];
+      if (!rows[origIndex]) return;
+      const updated = { ...rows[origIndex] };
+      if (rawGrade) updated['Raw Grade'] = rawGrade; else delete updated['Raw Grade'];
+      rows[origIndex] = updated;
+      await supabase.from('sets').update({ rows, updated_at: Date.now() })
+        .eq('user_id', uid).eq('slug', slug);
+    });
+    writeQueueRef.current = next.catch(() => {});
+    return next;
   }
+
+  // Auto-apply AI grade_low as soon as each evaluation lands. Overwrites
+  // any prior Raw Grade — that prior value lives on savedItems for Undo.
+  useEffect(() => {
+    for (const it of savedItems) {
+      const s = ai.statuses[String(it.origIndex)];
+      if (s?.state !== 'done') continue;
+      if (autoAppliedRef.current.has(it.origIndex)) continue;
+      autoAppliedRef.current.add(it.origIndex);
+      const low = s.result.grade_low;
+      setAppliedGrades(prev => ({ ...prev, [it.origIndex]: low }));
+      writeRawGrade(it.origIndex, low);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ai.statuses, savedItems]);
 
   function startOver() {
     if (frontSplit) frontSplit.previews.forEach(URL.revokeObjectURL);
@@ -680,15 +715,26 @@ export default function ScanMultiCardPage() {
                         </span>
                         <AIGradeBadge
                           status={status}
-                          onUseLow={status?.state === 'done' ? () => {
-                            applyAIGrade(it.origIndex, status.result.grade_low);
-                            ai.dismissResult(String(it.origIndex));
-                          } : undefined}
+                          appliedGrade={appliedGrades[it.origIndex]}
+                          // grade_low is auto-applied on result; the button
+                          // switches to grade_high. Undo restores prior_raw_grade.
                           onUseHigh={status?.state === 'done' ? () => {
-                            applyAIGrade(it.origIndex, status.result.grade_high);
+                            setAppliedGrades(p => ({ ...p, [it.origIndex]: status.result.grade_high }));
+                            writeRawGrade(it.origIndex, status.result.grade_high);
+                          } : undefined}
+                          onUseLow={status?.state === 'done' && appliedGrades[it.origIndex] !== status.result.grade_low ? () => {
+                            setAppliedGrades(p => ({ ...p, [it.origIndex]: status.result.grade_low }));
+                            writeRawGrade(it.origIndex, status.result.grade_low);
+                          } : undefined}
+                          onUndo={status?.state === 'done' ? () => {
+                            setAppliedGrades(p => {
+                              const n = { ...p };
+                              delete n[it.origIndex];
+                              return n;
+                            });
+                            writeRawGrade(it.origIndex, it.prior_raw_grade);
                             ai.dismissResult(String(it.origIndex));
                           } : undefined}
-                          onDismiss={status?.state === 'done' ? () => ai.dismissResult(String(it.origIndex)) : undefined}
                         />
                       </div>
                     );

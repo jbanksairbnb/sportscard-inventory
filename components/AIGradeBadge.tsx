@@ -7,16 +7,24 @@ import type { AIGradeStatus } from '@/lib/ai/use-ai-grade';
 //   - pending    → small spinner
 //   - error      → small red ✗
 //   - done       → orange 🤖 badge; hover for full assessment
-//   - done + dismissed → no badge at all (seller has overridden)
+//   - done + dismissed → no badge at all (seller has overridden via Undo)
+//
+// If `appliedGrade` is set, the badge label reflects the currently-applied
+// value (auto-fill UX). Without it, the badge falls back to showing the
+// AI's range (opt-in UX).
 export default function AIGradeBadge({
   status,
+  appliedGrade,
   onUseLow,
   onUseHigh,
+  onUndo,
   onDismiss,
 }: {
   status: AIGradeStatus | undefined;
+  appliedGrade?: string;
   onUseLow?: () => void;
   onUseHigh?: () => void;
+  onUndo?: () => void;
   onDismiss?: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -55,6 +63,10 @@ export default function AIGradeBadge({
 
   const r = status.result;
   const range = r.grade_low === r.grade_high ? r.grade_low : `${r.grade_low} → ${r.grade_high}`;
+  // When the page is auto-applying grades, show what's currently in the
+  // cell rather than the range — gives the seller a clear "this is what
+  // was saved" signal. Range still appears in the popover.
+  const label = appliedGrade ? `${appliedGrade} applied` : range;
 
   return (
     <span style={{ position: 'relative', display: 'inline-block' }}>
@@ -68,7 +80,7 @@ export default function AIGradeBadge({
           fontSize: 11, color: 'var(--plum)', fontWeight: 700,
           fontFamily: 'var(--font-mono)',
         }}>
-        🤖 {range}
+        🤖 {label}
       </button>
       {open && (
         <>
@@ -133,7 +145,7 @@ export default function AIGradeBadge({
             <div style={{ display: 'flex', gap: 6, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--rule)' }}>
               {onUseLow && (
                 <button type="button" onClick={() => { onUseLow(); setOpen(false); }}
-                  className="btn btn-primary btn-sm" style={{ flex: 1 }}>
+                  className="btn btn-outline btn-sm" style={{ flex: 1 }}>
                   Use {r.grade_low}
                 </button>
               )}
@@ -142,6 +154,10 @@ export default function AIGradeBadge({
                   className="btn btn-outline btn-sm" style={{ flex: 1 }}>
                   Use {r.grade_high}
                 </button>
+              )}
+              {onUndo && (
+                <button type="button" onClick={() => { onUndo(); setOpen(false); }}
+                  className="btn btn-ghost btn-sm">Undo</button>
               )}
               {onDismiss && (
                 <button type="button" onClick={() => { onDismiss(); setOpen(false); }}
