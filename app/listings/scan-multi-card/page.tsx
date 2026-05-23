@@ -67,7 +67,7 @@ export default function ScanMultiCardPage() {
   // sellers' preference survives across scan flows and sessions).
   const [aiEnabled, setAiEnabled] = useState(true);
   useEffect(() => { setAiEnabled(loadAIGradePreference()); }, []);
-  const ai = useAIGrade({ enabled: aiEnabled });
+  const ai = useAIGrade({ enabled: aiEnabled, source: 'scan-multi-card' });
   // After-save snapshot: what was saved, so we can render badges + apply
   // AI suggestions back to the set rows. prior_raw_grade is what the cell
   // held before AI overwrote it, used for the badge's "Undo" action.

@@ -71,7 +71,7 @@ export default function ScanBatchToListingsPage() {
   // AI grading: same shape as scan-multi-card. Toggle persists across flows.
   const [aiEnabled, setAiEnabled] = useState(true);
   useEffect(() => { setAiEnabled(loadAIGradePreference()); }, []);
-  const ai = useAIGrade({ enabled: aiEnabled });
+  const ai = useAIGrade({ enabled: aiEnabled, source: 'scan-batch' });
   const [savedItems, setSavedItems] = useState<Array<{
     listingId: string;
     label: string;
