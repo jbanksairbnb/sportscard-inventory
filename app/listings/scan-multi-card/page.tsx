@@ -8,6 +8,9 @@ import { isSeller } from '@/lib/sellerGuard';
 import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import SCLogo from '@/components/SCLogo';
 import MultiCardSplitter, { SplitResult } from '@/components/MultiCardSplitter';
+import AIGradeBadge from '@/components/AIGradeBadge';
+import AIGradeToggle, { loadAIGradePreference, saveAIGradePreference } from '@/components/AIGradeToggle';
+import { useAIGrade, type AIGradeItem } from '@/lib/ai/use-ai-grade';
 
 type CardRow = Record<string, unknown>;
 type SetSummary = {
@@ -59,6 +62,23 @@ export default function ScanMultiCardPage() {
   const [draggingPos, setDraggingPos] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<number | null>(null);
   const [savedSummary, setSavedSummary] = useState('');
+
+  // AI grading hook + per-session toggle (persisted to localStorage so
+  // sellers' preference survives across scan flows and sessions).
+  const [aiEnabled, setAiEnabled] = useState(true);
+  useEffect(() => { setAiEnabled(loadAIGradePreference()); }, []);
+  const ai = useAIGrade({ enabled: aiEnabled });
+  // After-save snapshot: what was saved, so we can render badges + apply
+  // AI suggestions back to the set rows.
+  const [savedItems, setSavedItems] = useState<Array<{
+    origIndex: number;
+    cardNumber: string;
+    player: string;
+    image_front_url: string;
+    image_back_url: string;
+  }>>([]);
+
+  const aiEvaluatedCount = Object.values(ai.statuses).filter(s => s.state === 'done' || s.state === 'error').length;
 
   useEffect(() => {
     const supabase = createClient();
@@ -209,7 +229,58 @@ export default function ScanMultiCardPage() {
       return;
     }
     setSavedSummary(`${attached} card${attached === 1 ? '' : 's'} updated in ${currentSet.title || currentSet.slug}`);
+
+    // Snapshot what we saved so we can render rows + apply AI suggestions
+    // back to the set. Only rows with BOTH images participate in AI grading
+    // (front-only would give a confidence-low result; not worth the spend).
+    const snapshot: typeof savedItems = [];
+    const aiItems: AIGradeItem[] = [];
+    for (const position of assignedPositions) {
+      const origIndex = assignment[position]!;
+      const row = updatedRows[origIndex] || {};
+      const front = String(row['Image 1'] || '');
+      const back = String(row['Image 2'] || '');
+      const cardNumber = String(row['Card #'] || '');
+      const player = String(row['Player'] || row['Description'] || '');
+      snapshot.push({ origIndex, cardNumber, player, image_front_url: front, image_back_url: back });
+      // Skip cards that are already professionally graded — actual grade is truth.
+      const alreadyGraded = String(row['Grading Company'] || '').trim() !== '';
+      if (front && back && !alreadyGraded) {
+        aiItems.push({
+          id: String(origIndex),
+          context: {
+            year: currentSet.year ?? null,
+            brand: currentSet.brand ?? null,
+            set_title: currentSet.title ?? null,
+            card_number: cardNumber || null,
+            player: player || null,
+            image_front_url: front,
+            image_back_url: back,
+          },
+        });
+      }
+    }
+    setSavedItems(snapshot);
     setPhase('done');
+    if (aiEnabled && aiItems.length > 0) {
+      // Fire-and-forget — the 'done' phase renders evaluation progress.
+      ai.evaluate(aiItems);
+    }
+  }
+
+  // Apply an AI suggestion to the set row in the DB. Called when the seller
+  // clicks "Use [grade]" on a badge. We do a small per-row update rather
+  // than batching so each click feels immediate.
+  async function applyAIGrade(origIndex: number, rawGrade: string) {
+    if (!currentSet || !userId) return;
+    const supabase = createClient();
+    const { data: latest } = await supabase.from('sets')
+      .select('rows').eq('user_id', userId).eq('slug', currentSet.slug).maybeSingle();
+    const rows: CardRow[] = Array.isArray(latest?.rows) ? [...(latest!.rows as CardRow[])] : [];
+    if (!rows[origIndex]) return;
+    rows[origIndex] = { ...rows[origIndex], 'Raw Grade': rawGrade };
+    await supabase.from('sets').update({ rows, updated_at: Date.now() })
+      .eq('user_id', userId).eq('slug', currentSet.slug);
   }
 
   function startOver() {
@@ -536,6 +607,19 @@ export default function ScanMultiCardPage() {
               </div>
             )}
 
+            <div style={{ marginTop: 14 }}>
+              <AIGradeToggle
+                enabled={aiEnabled}
+                onToggle={v => { setAiEnabled(v); saveAIGradePreference(v); }}
+                totalCost={0}
+                evaluatedCount={0}
+                totalCount={0}
+                softCapHit={false}
+                hardCapHit={false}
+                hardCap={ai.hardCap}
+              />
+            </div>
+
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
               {quota && quota.isCapped && (
                 <span className="mono" title="Buyers are capped at 100 photos. Sellers are uncapped."
@@ -560,9 +644,59 @@ export default function ScanMultiCardPage() {
         )}
 
         {phase === 'done' && (
-          <div className="panel-bordered" style={{ padding: 28, textAlign: 'center' }}>
-            <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 8 }}>Done!</div>
-            <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 18 }}>{savedSummary}</p>
+          <div className="panel-bordered" style={{ padding: 28 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 8 }}>Done!</div>
+              <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 18 }}>{savedSummary}</p>
+            </div>
+
+            {aiEnabled && savedItems.length > 0 && (
+              <section style={{ marginTop: 8, marginBottom: 18 }}>
+                <div style={{ marginBottom: 10 }}>
+                  <AIGradeToggle
+                    enabled={aiEnabled}
+                    onToggle={v => { setAiEnabled(v); saveAIGradePreference(v); }}
+                    totalCost={ai.totalCost}
+                    evaluatedCount={aiEvaluatedCount}
+                    totalCount={savedItems.filter(it => it.image_front_url && it.image_back_url).length}
+                    softCapHit={ai.softCapHit}
+                    hardCapHit={ai.hardCapHit}
+                    hardCap={ai.hardCap}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {savedItems.map(it => {
+                    const status = ai.statuses[String(it.origIndex)];
+                    return (
+                      <div key={it.origIndex} style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '8px 12px', border: '1.5px solid var(--rule)', borderRadius: 8,
+                      }}>
+                        <span className="mono" style={{ fontSize: 12, color: 'var(--ink-soft)', minWidth: 50 }}>
+                          #{it.cardNumber || '—'}
+                        </span>
+                        <span style={{ fontSize: 13, color: 'var(--plum)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {it.player || '(unnamed)'}
+                        </span>
+                        <AIGradeBadge
+                          status={status}
+                          onUseLow={status?.state === 'done' ? () => {
+                            applyAIGrade(it.origIndex, status.result.grade_low);
+                            ai.dismissResult(String(it.origIndex));
+                          } : undefined}
+                          onUseHigh={status?.state === 'done' ? () => {
+                            applyAIGrade(it.origIndex, status.result.grade_high);
+                            ai.dismissResult(String(it.origIndex));
+                          } : undefined}
+                          onDismiss={status?.state === 'done' ? () => ai.dismissResult(String(it.origIndex)) : undefined}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
               <button onClick={startOver} className="btn btn-primary">Scan another sheet</button>
               {currentSet && (
