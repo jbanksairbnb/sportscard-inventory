@@ -9,6 +9,7 @@ import SCLogo from '@/components/SCLogo';
 import AIGradeBadge from '@/components/AIGradeBadge';
 import AIGradeToggle, { loadAIGradePreference, saveAIGradePreference } from '@/components/AIGradeToggle';
 import { useAIGrade, type AIGradeItem } from '@/lib/ai/use-ai-grade';
+import { buildListingTitle } from '@/lib/listingTitle';
 
 type Listing = {
   id: string;
@@ -356,12 +357,28 @@ export default function ScanBatchToListingsPage() {
     const uid = userId;
     const next = writeQueueRef.current.then(async () => {
       const supabase = createClient();
-      const patch: { raw_grade: string | null; condition_type?: 'raw' } = {
+      const listing = listings.find(l => l.id === listingId);
+      const patch: { raw_grade: string | null; condition_type?: 'raw'; title?: string } = {
         raw_grade: rawGrade || null,
       };
       // If the listing is currently raw + ungraded, AI fill bumps it to
       // condition_type='raw' so the marketplace shows the grade.
       if (rawGrade) patch.condition_type = 'raw';
+      // Title includes the grade label ("1976 Topps #316 Robin Yount NM"),
+      // so it has to be rebuilt whenever raw_grade changes. Without this,
+      // the listing card on /listings and the marketplace keeps showing
+      // the old grade until the seller manually re-saves.
+      if (listing && listing.condition_type !== 'graded') {
+        patch.title = buildListingTitle({
+          year: listing.year,
+          brand: listing.brand,
+          card_number: listing.card_number,
+          player: listing.player,
+          condition_type: rawGrade ? 'raw' : listing.condition_type,
+          raw_grade: rawGrade || null,
+          grading_company: listing.grading_company,
+        });
+      }
       await supabase.from('listings').update(patch)
         .eq('id', listingId).eq('user_id', uid);
     });

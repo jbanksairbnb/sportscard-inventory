@@ -1,6 +1,7 @@
 'use client';
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
+import { buildListingTitle, GRADE_LABELS as SHARED_GRADE_LABELS } from '@/lib/listingTitle';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Papa from 'papaparse';
@@ -53,13 +54,7 @@ type Listing = {
 const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
 const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
 const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
-const GRADE_LABELS: Record<string, string> = {
-  '10': 'GEM MT', '9.5': 'GEM MT', '9': 'MINT',
-  '8.5': 'NM-MT+', '8': 'NM-MT', '7.5': 'NM+', '7': 'NM',
-  '6.5': 'EX-MT+', '6': 'EX-MT', '5.5': 'EX+', '5': 'EX',
-  '4.5': 'VG-EX+', '4': 'VG-EX', '3.5': 'VG+', '3': 'VG',
-  '2.5': 'GOOD+', '2': 'GOOD', '1.5': 'FAIR', '1': 'POOR',
-};
+const GRADE_LABELS = SHARED_GRADE_LABELS;
 const DEFAULT_SHIPPING_OPTIONS: ShippingOption[] = [
   { label: 'PWE (Plain White Envelope)', cost: 1.00 },
   { label: 'Bubble Mailer with Tracking', cost: 5.00 },
@@ -86,23 +81,7 @@ function emptyDraft(userId: string, defaults?: ShippingOption[]): Partial<Listin
     status: 'draft',
   };
 }
-function buildTitle(d: Partial<Listing>): string {
-  let condition = '';
-  if (d.condition_type === 'graded' && d.grading_company && d.grade) {
-    const label = GRADE_LABELS[String(d.grade)] || '';
-    condition = label ? `${d.grading_company} ${d.grade} ${label}` : `${d.grading_company} ${d.grade}`;
-  } else if (d.condition_type === 'raw' && d.raw_grade) {
-    condition = d.raw_grade;
-  }
-  const parts = [
-    d.year ? String(d.year) : '',
-    d.brand || '',
-    d.card_number ? `#${d.card_number}` : '',
-    d.player || '',
-    condition,
-  ].filter(Boolean);
-  return parts.join(' ').trim();
-}
+const buildTitle = buildListingTitle;
 function fmtMoney(n: number | null) {
   if (n === null || n === undefined) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
