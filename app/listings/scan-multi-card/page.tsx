@@ -255,9 +255,11 @@ export default function ScanMultiCardPage() {
       const player = String(row['Player'] || row['Description'] || '');
       const priorRawGrade = String(row['Raw Grade'] || '');
       snapshot.push({ origIndex, cardNumber, player, image_front_url: front, image_back_url: back, prior_raw_grade: priorRawGrade });
-      // Skip cards that are already professionally graded — actual grade is truth.
+      // Skip cards that are already professionally graded — actual grade
+      // is truth. Front-only or back-only scans still get graded with a
+      // low-confidence result rather than being silently dropped.
       const alreadyGraded = String(row['Grading Company'] || '').trim() !== '';
-      if (front && back && !alreadyGraded) {
+      if (front && !alreadyGraded) {
         aiItems.push({
           id: String(origIndex),
           context: {
@@ -267,7 +269,7 @@ export default function ScanMultiCardPage() {
             card_number: cardNumber || null,
             player: player || null,
             image_front_url: front,
-            image_back_url: back,
+            image_back_url: back || null,
           },
         });
       }
@@ -734,6 +736,21 @@ export default function ScanMultiCardPage() {
                             });
                             writeRawGrade(it.origIndex, it.prior_raw_grade);
                             ai.dismissResult(String(it.origIndex));
+                          } : undefined}
+                          onRetry={status?.state === 'error' && currentSet ? () => {
+                            autoAppliedRef.current.delete(it.origIndex);
+                            ai.retry({
+                              id: String(it.origIndex),
+                              context: {
+                                year: currentSet.year ?? null,
+                                brand: currentSet.brand ?? null,
+                                set_title: currentSet.title ?? null,
+                                card_number: it.cardNumber || null,
+                                player: it.player || null,
+                                image_front_url: it.image_front_url,
+                                image_back_url: it.image_back_url || null,
+                              },
+                            });
                           } : undefined}
                         />
                       </div>

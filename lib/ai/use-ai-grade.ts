@@ -15,7 +15,11 @@ export type AIGradeRowContext = {
   card_number: string | null;
   player: string | null;
   image_front_url: string;
-  image_back_url: string;
+  // Back image is optional — the API + grader handle front-only cards by
+  // reducing confidence and noting the gap in the notes field. Skipping
+  // back-less cards entirely meant some scans never got an AI grade,
+  // which is what "couldn't be graded" was on the review screen.
+  image_back_url: string | null;
 };
 
 export type AIGradeResult = {
@@ -146,6 +150,11 @@ export function useAIGrade(options?: {
     });
   }, []);
 
+  // Re-fire a single row's evaluation. Used by the badge's Retry button
+  // when the first attempt errored (transient API failure, etc.). Caller
+  // passes the original item so we re-use the same context + id.
+  const retry = useCallback((item: AIGradeItem) => evaluateOne(item), [evaluateOne]);
+
   return {
     statuses,
     totalCost,
@@ -154,6 +163,7 @@ export function useAIGrade(options?: {
     softCap,
     hardCap,
     evaluate,
+    retry,
     dismissResult,
   };
 }

@@ -28,14 +28,14 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const image_front_url = String(body?.image_front_url || '').trim();
   const image_back_url = String(body?.image_back_url || '').trim();
-  if (!image_front_url || !image_back_url) {
-    return NextResponse.json({ error: 'image_front_url and image_back_url are required' }, { status: 400 });
+  if (!image_front_url) {
+    return NextResponse.json({ error: 'image_front_url is required' }, { status: 400 });
   }
 
   try {
     const result = await evaluateCardGrade({
       image_front_url,
-      image_back_url,
+      image_back_url: image_back_url || null,
       year: body?.year ? Number(body.year) : null,
       brand: body?.brand ? String(body.brand) : null,
       set_title: body?.set_title ? String(body.set_title) : null,

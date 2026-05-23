@@ -57,6 +57,16 @@ export default function AIGradeToggle({
         </span>
       </label>
 
+      {enabled && (
+        <div style={{
+          width: '100%', padding: '6px 10px', borderRadius: 6,
+          background: 'rgba(217,150,68,0.12)', border: '1px solid var(--mustard)',
+          fontSize: 11.5, color: 'var(--plum)',
+        }}>
+          ⚠ This will <strong>overwrite the existing condition</strong> on every scanned card. The AI&apos;s lower-bound grade is applied automatically; use Undo on a card&apos;s badge to revert.
+        </div>
+      )}
+
       {enabled && totalCount > 0 && (
         <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 700 }}>
           {evaluatedCount} / {totalCount} evaluated · ${totalCost.toFixed(4)}

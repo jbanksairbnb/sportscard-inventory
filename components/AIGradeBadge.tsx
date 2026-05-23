@@ -5,7 +5,7 @@ import type { AIGradeStatus } from '@/lib/ai/use-ai-grade';
 
 // Compact per-row 🤖 indicator with hover popover. States:
 //   - pending    → small spinner
-//   - error      → small red ✗
+//   - error      → red ✗ with click-to-see reason + Retry
 //   - done       → orange 🤖 badge; hover for full assessment
 //   - done + dismissed → no badge at all (seller has overridden via Undo)
 //
@@ -19,6 +19,7 @@ export default function AIGradeBadge({
   onUseHigh,
   onUndo,
   onDismiss,
+  onRetry,
 }: {
   status: AIGradeStatus | undefined;
   appliedGrade?: string;
@@ -26,6 +27,7 @@ export default function AIGradeBadge({
   onUseHigh?: () => void;
   onUndo?: () => void;
   onDismiss?: () => void;
+  onRetry?: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -49,11 +51,45 @@ export default function AIGradeBadge({
   }
 
   if (status.state === 'error') {
+    // Friendly reason for the most common error from the hook
+    const isCostCap = status.error === 'cost-cap-reached';
+    const reason = isCostCap
+      ? 'Cost cap reached — toggle off and on to reset.'
+      : status.error;
     return (
-      <span title={`AI failed: ${status.error}`} style={{
-        fontSize: 11, color: 'var(--rust)', fontWeight: 700, cursor: 'help',
-      }}>
-        🤖 ✗
+      <span style={{ position: 'relative', display: 'inline-block' }}>
+        <button type="button"
+          onClick={() => setOpen(o => !o)}
+          title={reason}
+          style={{
+            background: 'rgba(197,74,44,0.10)', border: '1.5px solid var(--rust)',
+            borderRadius: 100, padding: '1px 8px', cursor: 'pointer',
+            fontSize: 11, color: 'var(--rust)', fontWeight: 700,
+            fontFamily: 'var(--font-mono)',
+          }}>
+          🤖 ✗ failed
+        </button>
+        {open && (
+          <>
+            <div onClick={() => setOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 50 }} />
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 51,
+              minWidth: 260, maxWidth: 360,
+              background: 'var(--cream)', border: '2px solid var(--rust)', borderRadius: 10,
+              padding: 12, boxShadow: '0 8px 24px rgba(42,20,52,0.22)',
+            }}>
+              <div className="eyebrow" style={{ fontSize: 10, color: 'var(--rust)', marginBottom: 4 }}>AI grading failed</div>
+              <div style={{ fontSize: 12, color: 'var(--ink)', marginBottom: 10, wordBreak: 'break-word' }}>
+                {reason}
+              </div>
+              {onRetry && !isCostCap && (
+                <button type="button" onClick={() => { onRetry(); setOpen(false); }}
+                  className="btn btn-outline btn-sm">Retry</button>
+              )}
+            </div>
+          </>
+        )}
       </span>
     );
   }
