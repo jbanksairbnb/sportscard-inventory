@@ -392,9 +392,13 @@ export default function ScanBatchToListingsPage() {
       if (s?.state !== 'done') continue;
       if (autoAppliedRef.current.has(it.listingId)) continue;
       autoAppliedRef.current.add(it.listingId);
-      const low = s.result.grade_low;
-      setAppliedGrades(prev => ({ ...prev, [it.listingId]: low }));
-      writeListingGrade(it.listingId, low);
+      // Default to the HIGH end of the AI's range. Seller feedback: the AI
+      // skews about one grade harsh, so the conservative-low default was
+      // under-grading roughly half the cards. They can flip to Low or Undo
+      // from the badge if a specific card looks better with the low end.
+      const def = s.result.grade_high;
+      setAppliedGrades(prev => ({ ...prev, [it.listingId]: def }));
+      writeListingGrade(it.listingId, def);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ai.statuses, savedItems]);
@@ -754,11 +758,11 @@ export default function ScanBatchToListingsPage() {
                         <AIGradeBadge
                           status={status}
                           appliedGrade={appliedGrades[it.listingId]}
-                          onUseHigh={status?.state === 'done' ? () => {
+                          onUseHigh={status?.state === 'done' && appliedGrades[it.listingId] !== status.result.grade_high ? () => {
                             setAppliedGrades(p => ({ ...p, [it.listingId]: status.result.grade_high }));
                             writeListingGrade(it.listingId, status.result.grade_high);
                           } : undefined}
-                          onUseLow={status?.state === 'done' && appliedGrades[it.listingId] !== status.result.grade_low ? () => {
+                          onUseLow={status?.state === 'done' ? () => {
                             setAppliedGrades(p => ({ ...p, [it.listingId]: status.result.grade_low }));
                             writeListingGrade(it.listingId, status.result.grade_low);
                           } : undefined}

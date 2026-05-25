@@ -305,17 +305,21 @@ export default function ScanMultiCardPage() {
     return next;
   }
 
-  // Auto-apply AI grade_low as soon as each evaluation lands. Overwrites
-  // any prior Raw Grade — that prior value lives on savedItems for Undo.
+  // Auto-apply the AI's HIGH grade as soon as each evaluation lands.
+  // Overwrites any prior Raw Grade — that prior value lives on savedItems
+  // for Undo. Seller feedback: AI skews ~1 grade harsh, so defaulting to
+  // grade_low was under-grading too many cards; defaulting to grade_high
+  // is closer to seller intent. Use Low / Use High / Undo on the badge to
+  // adjust any specific row.
   useEffect(() => {
     for (const it of savedItems) {
       const s = ai.statuses[String(it.origIndex)];
       if (s?.state !== 'done') continue;
       if (autoAppliedRef.current.has(it.origIndex)) continue;
       autoAppliedRef.current.add(it.origIndex);
-      const low = s.result.grade_low;
-      setAppliedGrades(prev => ({ ...prev, [it.origIndex]: low }));
-      writeRawGrade(it.origIndex, low);
+      const def = s.result.grade_high;
+      setAppliedGrades(prev => ({ ...prev, [it.origIndex]: def }));
+      writeRawGrade(it.origIndex, def);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ai.statuses, savedItems]);
@@ -718,13 +722,14 @@ export default function ScanMultiCardPage() {
                         <AIGradeBadge
                           status={status}
                           appliedGrade={appliedGrades[it.origIndex]}
-                          // grade_low is auto-applied on result; the button
-                          // switches to grade_high. Undo restores prior_raw_grade.
-                          onUseHigh={status?.state === 'done' ? () => {
+                          // grade_high is auto-applied on result; Use Low
+                          // switches to the conservative end, Undo restores
+                          // prior_raw_grade.
+                          onUseHigh={status?.state === 'done' && appliedGrades[it.origIndex] !== status.result.grade_high ? () => {
                             setAppliedGrades(p => ({ ...p, [it.origIndex]: status.result.grade_high }));
                             writeRawGrade(it.origIndex, status.result.grade_high);
                           } : undefined}
-                          onUseLow={status?.state === 'done' && appliedGrades[it.origIndex] !== status.result.grade_low ? () => {
+                          onUseLow={status?.state === 'done' ? () => {
                             setAppliedGrades(p => ({ ...p, [it.origIndex]: status.result.grade_low }));
                             writeRawGrade(it.origIndex, status.result.grade_low);
                           } : undefined}
