@@ -120,6 +120,7 @@ export default function PurchasesPage() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ My Purchases ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Link href="/" className="btn btn-ghost btn-sm">My Shelf</Link>
             <Link href="/marketplace" className="btn btn-ghost btn-sm">Marketplace</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
