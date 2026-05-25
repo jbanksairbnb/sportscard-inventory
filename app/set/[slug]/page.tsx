@@ -12,7 +12,7 @@ import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { thumbUrl } from "@/lib/image-transform";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
-import { RAW_GRADES as SHARED_RAW_GRADES } from "@/lib/listingTitle";
+import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -796,6 +796,127 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     router.push(`/listings?${params.toString()}`);
   }
 
+  // Bulk version of handleListForSale: build draft listings for every
+  // selected row that's owned + not already linked to a listing, insert
+  // them in one batch, then flip the source rows to Not Owned. Used from
+  // the bulk-edit toolbar when the set's purpose is 'inventory'. No
+  // condition validation here — drafts can land incomplete; the seller
+  // fills in any missing condition/grade on /listings before activating.
+  async function handleBulkSendToMarketplace() {
+    if (selectedRows.size === 0 || !userId) return;
+
+    const selectedIndices = Array.from(selectedRows).sort((a, b) => a - b);
+    const eligibleRows: { row: Record<string, any>; origIndex: number }[] = [];
+    let skippedNotOwned = 0;
+    let skippedAlreadyListed = 0;
+
+    for (const idx of selectedIndices) {
+      const row = rows[idx];
+      if (!row) continue;
+      if (String(row['Owned'] || '') !== 'Yes') { skippedNotOwned++; continue; }
+      const rowId = typeof row['_id'] === 'string' ? row['_id'] : '';
+      // Skip rows that already have an open listing — the per-row Sell button
+      // hides itself in that case (see line ~1480) and bulk should mirror.
+      // listingsByRowId is keyed by row id; "linked" means the row already
+      // has a non-removed listing. Same gate the per-row Sell button uses.
+      const linked = rowId ? listingsByRowId[rowId] : null;
+      if (linked && linked.status !== 'sold') {
+        skippedAlreadyListed++;
+        continue;
+      }
+      eligibleRows.push({ row, origIndex: idx });
+    }
+
+    if (eligibleRows.length === 0) {
+      alert(`Nothing to send. Selected ${selectedIndices.length} card${selectedIndices.length === 1 ? '' : 's'}: ${skippedNotOwned} not marked Owned, ${skippedAlreadyListed} already listed.`);
+      return;
+    }
+
+    const summary = [
+      `Send ${eligibleRows.length} card${eligibleRows.length === 1 ? '' : 's'} to your marketplace drafts?`,
+      skippedNotOwned > 0 ? `${skippedNotOwned} not-owned card${skippedNotOwned === 1 ? '' : 's'} will be skipped.` : '',
+      skippedAlreadyListed > 0 ? `${skippedAlreadyListed} already-listed card${skippedAlreadyListed === 1 ? '' : 's'} will be skipped.` : '',
+      'Each card will be marked Not Owned and a draft listing will be created. You can edit or activate the drafts from My Listings.',
+    ].filter(Boolean).join('\n\n');
+    if (!confirm(summary)) return;
+
+    const supabase = createClient();
+
+    // Build the draft-listing payload. Mirrors handleListForSale's per-row
+    // mapping plus the buildListingTitle call so titles render correctly.
+    const payload = eligibleRows.map(({ row }) => {
+      const rowId = typeof row['_id'] === 'string' ? row['_id'] : null;
+      const gradingCompany = String(row['Grading Company'] || '').trim();
+      const gradeVal = String(row['Grade'] || '').trim();
+      const rawGrade = String(row['Raw Grade'] || '').trim();
+      const conditionType: 'raw' | 'graded' = gradingCompany ? 'graded' : 'raw';
+      const cost = String(row['Cost'] || '').replace(/[^0-9.]/g, '');
+      const target = String(row['Target Price'] || '').replace(/[^0-9.]/g, '');
+      const photos: string[] = [];
+      const img1 = String(row['Image 1'] || '');
+      const img2 = String(row['Image 2'] || '');
+      if (img1) photos.push(img1);
+      if (img2) photos.push(img2);
+
+      const titleFields = {
+        year: year ? Number(year) : null,
+        brand: brand || null,
+        card_number: row['Card #'] ? String(row['Card #']) : null,
+        player: row['Player'] ? String(row['Player']) : null,
+        condition_type: conditionType,
+        raw_grade: conditionType === 'raw' ? (rawGrade || null) : null,
+        grading_company: conditionType === 'graded' ? (gradingCompany || null) : null,
+        grade: conditionType === 'graded' ? (gradeVal || null) : null,
+      };
+
+      return {
+        user_id: userId,
+        title: buildListingTitle(titleFields),
+        year: titleFields.year,
+        brand: titleFields.brand,
+        card_number: titleFields.card_number,
+        player: titleFields.player,
+        condition_type: conditionType,
+        raw_grade: titleFields.raw_grade,
+        grading_company: titleFields.grading_company,
+        grade: titleFields.grade,
+        asking_price: target ? Number(target) : null,
+        cost: cost ? Number(cost) : null,
+        tag_number: String(row['Tag #'] || '').trim() || null,
+        photos,
+        status: 'draft' as const,
+        description: null,
+        source_set_slug: slug || null,
+        source_card_number: row['Card #'] ? String(row['Card #']) : null,
+        source_row_id: rowId,
+      };
+    });
+
+    const { data: created, error } = await supabase.from('listings').insert(payload).select('id');
+    if (error) {
+      alert(`Failed to create drafts: ${error.message}`);
+      return;
+    }
+
+    // Flip every successfully-sent row to Not Owned in one pass.
+    const sentRowIds = new Set(
+      eligibleRows.map(({ row }) => typeof row['_id'] === 'string' ? row['_id'] : '').filter(Boolean)
+    );
+    if (sentRowIds.size > 0) {
+      const { nextRows, touched } = applyOwnedTransition(rows, { rowIds: sentRowIds }, false);
+      if (touched) {
+        setRows(nextRows);
+        scheduleAutoSave(nextRows);
+      }
+    }
+    clearSelection();
+
+    const n = (created || []).length;
+    if (confirm(`Created ${n} draft listing${n === 1 ? '' : 's'}. Open My Listings now to review and activate?`)) {
+      router.push('/listings');
+    }
+  }
+
   function onChangeCell(index: number, field: string, value: any) {
     const copy = [...rows];
     const r = { ...copy[index] };
@@ -1251,6 +1372,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm" style={{ background: 'var(--mustard)', color: 'var(--plum)', border: '1.5px solid var(--mustard)' }}>
               📋 Duplicate
             </button>
+            {canSell && purpose === 'inventory' && (
+              <button type="button" onClick={handleBulkSendToMarketplace}
+                title="Create draft listings for every selected card and flip the rows to Not Owned"
+                className="btn btn-sm" style={{ background: 'var(--orange)', color: 'var(--cream)', border: '1.5px solid var(--orange)' }}>
+                $ Send Selected to Marketplace
+              </button>
+            )}
             <button type="button" onClick={deleteSelected}
               className="btn btn-sm" style={{ background: 'var(--rust)', color: 'var(--cream)', border: '1.5px solid var(--rust)' }}>
               🗑 Delete
