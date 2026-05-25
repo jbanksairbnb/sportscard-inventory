@@ -6,12 +6,13 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
+import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 
 type PairMode = 'fronts-only' | 'fronts-then-backs' | 'interleaved';
 type ConditionType = 'raw' | 'graded';
 type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
-const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
+const RAW_GRADES = SHARED_RAW_GRADES as readonly string[];
 const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
 const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
 const GRADE_LABELS: Record<string, string> = {

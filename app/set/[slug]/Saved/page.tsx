@@ -7,6 +7,7 @@ import Link from "next/link";
 import Image from "next/image";
 import Papa from "papaparse";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
+import { RAW_GRADES as SHARED_RAW_GRADES } from "@/lib/listingTitle";
 
 /* =====================  Constants  ===================== */
 const EXPECTED_HEADERS = [
@@ -30,7 +31,7 @@ const YEARS = Array.from({ length: 2025 - 1953 + 1 }, (_, i) => 1953 + i);
 const BRANDS = BRAND_NAMES;
 const YES_NO = ["Yes", "No"] as const;
 const COMPANIES = ["", "PSA", "SGC"] as const; // blank allowed
-const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
+const RAW_GRADES = ["", ...SHARED_RAW_GRADES] as const;
 
 // 10 → 1 by 0.5 increments, plus blank
 const GRADES_NUMERIC = ["", ...Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""))];

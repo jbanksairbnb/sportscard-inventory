@@ -12,6 +12,7 @@ import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { thumbUrl } from "@/lib/image-transform";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
+import { RAW_GRADES as SHARED_RAW_GRADES } from "@/lib/listingTitle";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -32,8 +33,8 @@ const BRANDS = BRAND_NAMES;
 const YES_NO = ["Yes", "No"] as const;
 const COMPANIES = ["", "PSA", "SGC", "BGS", "CGC", "TAG"] as const;
 const GRADING_COMPANIES_LIST = ["PSA", "SGC", "BGS", "CGC", "TAG"] as const;
-const RAW_GRADES = ["", "Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
-const RAW_TARGET_GRADES = ["Gem Mint", "Mint", "NM-MT", "NM", "EXMT", "EX", "VG-EX", "VG", "G", "P"] as const;
+const RAW_GRADES = ["", ...SHARED_RAW_GRADES] as const;
+const RAW_TARGET_GRADES = SHARED_RAW_GRADES;
 const GRADES_NUMERIC = ["", ...Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""))];
 const TARGET_GRADES_NUMERIC = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ""));
 
