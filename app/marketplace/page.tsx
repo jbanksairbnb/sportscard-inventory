@@ -6,9 +6,16 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import { thumbUrl } from '@/lib/image-transform';
+import { RAW_GRADES } from '@/lib/listingTitle';
 
 type ConditionType = 'raw' | 'graded';
 type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
+
+// Numeric graded ladder, best → worst. Half-grades included for completeness.
+const GRADED_NUMERIC_GRADES = [
+  '10', '9.5', '9', '8.5', '8', '7.5', '7', '6.5', '6', '5.5',
+  '5', '4.5', '4', '3.5', '3', '2.5', '2', '1.5', '1',
+];
 
 type MarketplaceListing = {
   id: string;
@@ -142,6 +149,14 @@ function MarketplacePageInner() {
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [search, setSearch] = useState(searchParams.get('q') || '');
     const [conditionFilter, setConditionFilter] = useState<'all' | 'raw' | 'graded'>('all');
+  // Raw range: values are RAW_GRADES labels. Min = worst acceptable
+  // (lower in the ladder), Max = best you want (higher in the ladder).
+  // Empty string = "no bound on this side."
+  const [rawMin, setRawMin] = useState('');
+  const [rawMax, setRawMax] = useState('');
+  // Graded range: numeric grade strings (e.g. "8.5"). Same min/max semantics.
+  const [gradedMin, setGradedMin] = useState('');
+  const [gradedMax, setGradedMax] = useState('');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [view, setView] = useState<'grid' | 'list'>('grid');
@@ -328,6 +343,40 @@ function MarketplacePageInner() {
       if (l.user_id === currentUserId) return false;
       if (wantListOnly && !isOnWantList(l)) return false;
       if (conditionFilter !== 'all' && l.condition_type !== conditionFilter) return false;
+
+      // Raw condition range. RAW_GRADES is ordered best → worst, so a
+      // BETTER grade has a LOWER index. "Min condition" = worst the buyer
+      // will accept (the largest acceptable index); "Max condition" =
+      // best they want (the smallest acceptable index).
+      if (conditionFilter === 'raw' && (rawMin || rawMax)) {
+        if (l.condition_type !== 'raw' || !l.raw_grade) return false;
+        const idx = RAW_GRADES.indexOf(l.raw_grade as typeof RAW_GRADES[number]);
+        if (idx < 0) return false;   // listing's raw_grade isn't on the canonical ladder
+        if (rawMax) {
+          const maxIdx = RAW_GRADES.indexOf(rawMax as typeof RAW_GRADES[number]);
+          if (maxIdx >= 0 && idx < maxIdx) return false;
+        }
+        if (rawMin) {
+          const minIdx = RAW_GRADES.indexOf(rawMin as typeof RAW_GRADES[number]);
+          if (minIdx >= 0 && idx > minIdx) return false;
+        }
+      }
+
+      // Graded numeric range. Higher number = better grade.
+      if (conditionFilter === 'graded' && (gradedMin || gradedMax)) {
+        if (l.condition_type !== 'graded' || !l.grade) return false;
+        const g = parseFloat(l.grade);
+        if (Number.isNaN(g)) return false;
+        if (gradedMin) {
+          const m = parseFloat(gradedMin);
+          if (!Number.isNaN(m) && g < m) return false;
+        }
+        if (gradedMax) {
+          const m = parseFloat(gradedMax);
+          if (!Number.isNaN(m) && g > m) return false;
+        }
+      }
+
       if (minPrice) {
         const m = Number(minPrice);
         if (!Number.isNaN(m) && (l.asking_price ?? 0) < m) return false;
@@ -358,7 +407,7 @@ function MarketplacePageInner() {
     });
     return filteredArr;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listings, currentUserId, conditionFilter, minPrice, maxPrice, search, wantListOnly, wantListKeys]);
+  }, [listings, currentUserId, conditionFilter, rawMin, rawMax, gradedMin, gradedMax, minPrice, maxPrice, search, wantListOnly, wantListKeys]);
 
   const wantListMatchCount = useMemo(
     () => listings.filter(l => l.user_id !== currentUserId && isOnWantList(l)).length,
@@ -412,6 +461,55 @@ function MarketplacePageInner() {
               </button>
             ))}
           </div>
+
+          {/* Conditional Min/Max range — Raw uses the label ladder, Graded uses numeric grades.
+              "Min" = worst-acceptable, "Max" = best-acceptable. Empty = unbounded. */}
+          {conditionFilter === 'raw' && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Cond.</span>
+              <select value={rawMin} onChange={e => setRawMin(e.target.value)}
+                title="Min condition (worst acceptable)"
+                style={{ border: '1.5px solid var(--plum)', borderRadius: 6, padding: '6px 8px', fontSize: 12, color: 'var(--plum)', background: 'var(--cream)' }}>
+                <option value="">min</option>
+                {RAW_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+              <span style={{ color: 'var(--ink-mute)' }}>–</span>
+              <select value={rawMax} onChange={e => setRawMax(e.target.value)}
+                title="Max condition (best you want)"
+                style={{ border: '1.5px solid var(--plum)', borderRadius: 6, padding: '6px 8px', fontSize: 12, color: 'var(--plum)', background: 'var(--cream)' }}>
+                <option value="">max</option>
+                {RAW_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+              {(rawMin || rawMax) && (
+                <button type="button" onClick={() => { setRawMin(''); setRawMax(''); }}
+                  className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '4px 8px' }}
+                  title="Clear condition range">✕</button>
+              )}
+            </div>
+          )}
+          {conditionFilter === 'graded' && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Grade</span>
+              <select value={gradedMin} onChange={e => setGradedMin(e.target.value)}
+                title="Min grade (lowest acceptable)"
+                style={{ border: '1.5px solid var(--plum)', borderRadius: 6, padding: '6px 8px', fontSize: 12, color: 'var(--plum)', background: 'var(--cream)' }}>
+                <option value="">min</option>
+                {GRADED_NUMERIC_GRADES.slice().reverse().map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+              <span style={{ color: 'var(--ink-mute)' }}>–</span>
+              <select value={gradedMax} onChange={e => setGradedMax(e.target.value)}
+                title="Max grade (highest you want)"
+                style={{ border: '1.5px solid var(--plum)', borderRadius: 6, padding: '6px 8px', fontSize: 12, color: 'var(--plum)', background: 'var(--cream)' }}>
+                <option value="">max</option>
+                {GRADED_NUMERIC_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+              {(gradedMin || gradedMax) && (
+                <button type="button" onClick={() => { setGradedMin(''); setGradedMax(''); }}
+                  className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '4px 8px' }}
+                  title="Clear grade range">✕</button>
+              )}
+            </div>
+          )}
           <button type="button" onClick={() => setWantListOnly(v => !v)}
             disabled={wantListKeys.size === 0}
             title={wantListKeys.size === 0
