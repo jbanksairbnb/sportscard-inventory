@@ -63,7 +63,7 @@ export default function AIGradeToggle({
           background: 'rgba(217,150,68,0.12)', border: '1px solid var(--mustard)',
           fontSize: 11.5, color: 'var(--plum)',
         }}>
-          ⚠ This will <strong>overwrite the existing condition</strong> on every scanned card. The AI&apos;s lower-bound grade is applied automatically; use Undo on a card&apos;s badge to revert.
+          ⚠ This will <strong>overwrite the existing condition</strong> on every scanned card. The AI&apos;s upper-bound grade is applied automatically; use the badge on any card to switch to the lower bound or Undo.
         </div>
       )}
 
