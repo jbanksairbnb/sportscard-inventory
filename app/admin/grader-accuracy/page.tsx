@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import SCLogo from '@/components/SCLogo';
+import { RAW_GRADES as RAW_GRADE_OPTIONS } from '@/lib/listingTitle';
 
 type Row = {
   id: string;
@@ -43,8 +44,6 @@ type Stats = {
   confidence_counts: Record<string, number>;
   assessment_counts: Record<string, number>;
 };
-
-const RAW_GRADE_OPTIONS = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
 
 // Admin-only dashboard for AI grader accuracy + failure-pattern analysis.
 // Reads from card_grades (every evaluate-grade call lands a row, success

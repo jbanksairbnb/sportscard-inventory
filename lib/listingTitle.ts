@@ -7,13 +7,47 @@
 // rewriting raw_grade post-save — scan-batch needs the same builder to
 // keep titles in sync when the AI grade lands.
 
+// Raw-grade ladder, best to worst. The +'s are halfway between the
+// tiers (NM+ is between NM-MT and NM, EXMT+ between EXMT and NM, etc.),
+// modeled after PSA's half-grades. Centralized here so every dropdown
+// across listings, sets, scan-inbox, and the grader-accuracy dashboard
+// shares one source of truth — when we add a tier, every selector
+// picks it up automatically.
+export const RAW_GRADES = [
+  'Gem Mint',
+  'Mint',
+  'NM-MT',
+  'NM+',
+  'NM',
+  'EXMT+',
+  'EXMT',
+  'EX+',
+  'EX',
+  'VG-EX',
+  'VG+',
+  'VG',
+  'G',
+  'P',
+] as const;
+export type RawGrade = typeof RAW_GRADES[number];
+
 export const GRADE_LABELS: Record<string, string> = {
   '10': 'GEM MT', '9.5': 'GEM MT', '9': 'MINT',
   '8.5': 'NM-MT+', '8': 'NM-MT', '7.5': 'NM+', '7': 'NM',
-  '6.5': 'EX-MT+', '6': 'EX-MT', '5.5': 'EX+', '5': 'EX',
+  '6.5': 'EXMT+', '6': 'EXMT', '5.5': 'EX+', '5': 'EX',
   '4.5': 'VG-EX+', '4': 'VG-EX', '3.5': 'VG+', '3': 'VG',
   '2.5': 'GOOD+', '2': 'GOOD', '1.5': 'FAIR', '1': 'POOR',
 };
+
+// Normalize legacy spellings so the AI-grader's old "EX-MT" output
+// matches the canonical "EXMT" used by dropdowns. Returns the input
+// unchanged if it's already canonical.
+export function normalizeRawGrade(g: string | null | undefined): string | null {
+  if (!g) return g ?? null;
+  if (g === 'EX-MT') return 'EXMT';
+  if (g === 'EX-MT+') return 'EXMT+';
+  return g;
+}
 
 export type ListingTitleFields = {
   year?: number | null;

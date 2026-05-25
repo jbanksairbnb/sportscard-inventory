@@ -1,7 +1,7 @@
 'use client';
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import { buildListingTitle, GRADE_LABELS as SHARED_GRADE_LABELS } from '@/lib/listingTitle';
+import { buildListingTitle, GRADE_LABELS as SHARED_GRADE_LABELS, RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Papa from 'papaparse';
@@ -51,7 +51,7 @@ type Listing = {
   created_at: string;
 };
 
-const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
+const RAW_GRADES = SHARED_RAW_GRADES as readonly string[];
 const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
 const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
 const GRADE_LABELS = SHARED_GRADE_LABELS;
