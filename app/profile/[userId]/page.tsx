@@ -18,6 +18,7 @@ type Profile = {
   cover_url: string | null;
   cover_position_x: number | null;
   cover_position_y: number | null;
+  cover_zoom: number | null;
   favorite_cards: (string | null)[] | null;
   profile_shared: boolean | null;
 };
@@ -62,7 +63,7 @@ export default function ProfilePage() {
     async function load() {
       const [{ data: profileData }, { data: setsData }, { data: allSets }] = await Promise.all([
         supabase.from('user_profiles')
-          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, cover_position_x, cover_position_y, favorite_cards, profile_shared')
+          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, cover_position_x, cover_position_y, cover_zoom, favorite_cards, profile_shared')
           .eq('user_id', userId).single(),
         supabase.from('sets')
           .select('share_token, title, year, brand, row_count, owned_count, owned_pct')
@@ -166,11 +167,28 @@ export default function ProfilePage() {
       <section>
         <div className="halftone" style={{
           position: 'relative', height: 280,
-          background: profile?.cover_url
-            ? `url(${profile.cover_url}) ${profile.cover_position_x ?? 50}% ${profile.cover_position_y ?? 50}% / cover no-repeat`
-            : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
+          background: profile?.cover_url ? undefined : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
           borderBottom: '3px solid var(--plum)', overflow: 'hidden',
-        }} />
+        }}>
+          {profile?.cover_url && (() => {
+            const px = profile.cover_position_x ?? 50;
+            const py = profile.cover_position_y ?? 50;
+            const pz = profile.cover_zoom != null ? Number(profile.cover_zoom) : 1.0;
+            return (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={profile.cover_url} alt=""
+                style={{
+                  position: 'absolute', inset: 0,
+                  width: '100%', height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: `${px}% ${py}%`,
+                  transform: `scale(${pz})`,
+                  transformOrigin: `${px}% ${py}%`,
+                  userSelect: 'none', pointerEvents: 'none',
+                }} />
+            );
+          })()}
+        </div>
         <div style={{
           maxWidth: 1280, margin: '0 auto', padding: '0 28px',
           display: 'flex', alignItems: 'flex-start', gap: 20, marginTop: -64, position: 'relative', zIndex: 1,

@@ -130,7 +130,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   avatar: string | null; cover: string | null;
   profile: CollectorProfile;
   onAvatarChange: (url: string) => void; onCoverChange: (url: string) => void;
-  onCoverPositionChange: (x: number, y: number) => void;
+  onCoverPositionChange: (x: number, y: number, zoom: number) => void;
   onToggleShared: () => void;
 }) {
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -141,23 +141,32 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   const [adjustingCover, setAdjustingCover] = useState(false);
   const [posX, setPosX] = useState<number>(profile.cover_position_x);
   const [posY, setPosY] = useState<number>(profile.cover_position_y);
+  const [zoom, setZoom] = useState<number>(profile.cover_zoom);
   const dragStartRef = useRef<{ x: number; y: number; startPosX: number; startPosY: number } | null>(null);
+
+  // Clamp range for the zoom slider. 1.0 = fit (same as cover today).
+  // Allow a little zoom-out (down to 0.7) for landscape banners that need
+  // breathing room; cap zoom-in at 3× to avoid extreme pixelation.
+  const ZOOM_MIN = 0.7;
+  const ZOOM_MAX = 3.0;
 
   useEffect(() => {
     if (!adjustingCover) {
       setPosX(profile.cover_position_x);
       setPosY(profile.cover_position_y);
+      setZoom(profile.cover_zoom);
     }
-  }, [profile.cover_position_x, profile.cover_position_y, adjustingCover]);
+  }, [profile.cover_position_x, profile.cover_position_y, profile.cover_zoom, adjustingCover]);
 
   function startReposition() {
     setPosX(profile.cover_position_x);
     setPosY(profile.cover_position_y);
+    setZoom(profile.cover_zoom);
     setAdjustingCover(true);
   }
 
   async function saveCoverPosition() {
-    onCoverPositionChange(posX, posY);
+    onCoverPositionChange(posX, posY, zoom);
     setAdjustingCover(false);
     if (userId) {
       const supabase = createClient();
@@ -165,6 +174,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
         user_id: userId,
         cover_position_x: posX,
         cover_position_y: posY,
+        cover_zoom: zoom,
       });
     }
   }
@@ -172,7 +182,12 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   function cancelReposition() {
     setPosX(profile.cover_position_x);
     setPosY(profile.cover_position_y);
+    setZoom(profile.cover_zoom);
     setAdjustingCover(false);
+  }
+
+  function bumpZoom(delta: number) {
+    setZoom(z => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round((z + delta) * 100) / 100)));
   }
 
    function onCoverPointerDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -236,13 +251,28 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
         onPointerUp={onCoverPointerUp}
         style={{
           position: 'relative', height: 360,
-          background: cover
-            ? `url(${cover}) ${posX}% ${posY}% / cover no-repeat`
-            : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
+          background: cover ? undefined : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
           borderBottom: '3px solid var(--plum)', overflow: 'hidden',
           cursor: adjustingCover ? (dragStartRef.current ? 'grabbing' : 'grab') : 'default',
           touchAction: adjustingCover ? 'none' : 'auto',
         }}>
+        {cover && (
+          /* Cover renders as a positioned img so we can layer transform:scale
+             on top of object-fit:cover. At zoom=1.0 this is visually
+             identical to background-size:cover. transform-origin tracks the
+             reposition point so zooming keeps that point in place. */
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={cover} alt=""
+            style={{
+              position: 'absolute', inset: 0,
+              width: '100%', height: '100%',
+              objectFit: 'cover',
+              objectPosition: `${posX}% ${posY}%`,
+              transform: `scale(${zoom})`,
+              transformOrigin: `${posX}% ${posY}%`,
+              userSelect: 'none', pointerEvents: 'none',
+            }} />
+        )}
         {!cover && (
           <svg viewBox="0 0 1280 360" preserveAspectRatio="xMidYMid slice"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
@@ -269,6 +299,28 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
         <div style={{ position: 'absolute', top: 18, right: 22, display: 'flex', gap: 8 }}>
           {adjustingCover ? (
             <>
+              {/* Zoom controls live next to Save. Slider value 0.7–3.0 → multiplied
+                  onto object-fit:cover via transform:scale on the img element.
+                  Round-trip clamp matches bumpZoom() so +/- buttons and slider agree. */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px', borderRadius: 100,
+                background: 'rgba(245,233,208,0.95)', border: '1.5px solid var(--plum)',
+              }}>
+                <button type="button" onClick={() => bumpZoom(-0.1)}
+                  title="Zoom out"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, color: 'var(--plum)', fontWeight: 700, padding: '0 4px' }}>−</button>
+                <input type="range" min={ZOOM_MIN} max={ZOOM_MAX} step={0.05}
+                  value={zoom}
+                  onChange={e => setZoom(Number(e.target.value))}
+                  style={{ width: 100, accentColor: 'var(--orange)' }} />
+                <button type="button" onClick={() => bumpZoom(0.1)}
+                  title="Zoom in"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, color: 'var(--plum)', fontWeight: 700, padding: '0 4px' }}>+</button>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 700, minWidth: 30 }}>
+                  {Math.round(zoom * 100)}%
+                </span>
+              </div>
               <button className="btn btn-primary btn-sm" onClick={saveCoverPosition}
                 style={{ background: 'var(--teal)', color: 'var(--cream)', borderColor: 'var(--teal)' }}>
                 ✓ Save position
@@ -1172,8 +1224,8 @@ const MOCK_ACTIVITY = [
   { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
 ];
 
-type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; profile_shared: boolean; cover_position_x: number; cover_position_y: number; };
-const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, profile_shared: true, cover_position_x: 50, cover_position_y: 50 };
+type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; profile_shared: boolean; cover_position_x: number; cover_position_y: number; cover_zoom: number; };
+const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, profile_shared: true, cover_position_x: 50, cover_position_y: 50, cover_zoom: 1.0 };
 
 function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
   const [editing, setEditing] = useState(false);
@@ -1593,7 +1645,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
             const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, seller_terms_accepted_at, value_private, profile_shared, cover_position_x, cover_position_y')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, seller_terms_accepted_at, value_private, profile_shared, cover_position_x, cover_position_y, cover_zoom')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1605,6 +1657,7 @@ export default function HomePage() {
           profile_shared: profileData.profile_shared !== false,  // default true
           cover_position_x: profileData.cover_position_x != null ? Number(profileData.cover_position_x) : 50,
           cover_position_y: profileData.cover_position_y != null ? Number(profileData.cover_position_y) : 50,
+          cover_zoom: profileData.cover_zoom != null ? Number(profileData.cover_zoom) : 1.0,
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
@@ -1650,7 +1703,7 @@ export default function HomePage() {
       <LogoShowcase />
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}
-        onCoverPositionChange={(x, y) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y }))}
+        onCoverPositionChange={(x, y, z) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y, cover_zoom: z }))}
         onToggleShared={async () => {
           if (!userId) return;
           const next = !profile.profile_shared;
