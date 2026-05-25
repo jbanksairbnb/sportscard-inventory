@@ -24,6 +24,9 @@ type SetRow = {
   // to sell), 'for-sale' (currently a complete-set marketplace listing).
   // Drives the filter pills + tile badge on My Shelf.
   purpose?: 'personal' | 'inventory' | 'for-sale';
+  // When non-null, the set is publicly viewable at /share/<token> and
+  // appears in /shared (Community Sets). Toggled inline from My Shelf.
+  share_token?: string | null;
 };
 
 type PurposeFilter = 'all' | 'personal' | 'inventory' | 'for-sale';
@@ -119,11 +122,13 @@ function SetCard({
   colorIndex,
   onDelete,
   onPurposeChange,
+  onToggleShare,
 }: {
   s: SetRow;
   colorIndex: number;
   onDelete: (slug: string, title: string) => void;
   onPurposeChange: (slug: string, next: Exclude<PurposeFilter, 'all'>) => void;
+  onToggleShare: (slug: string, currentlyShared: boolean) => void;
 }) {
   const color = SET_COLORS[colorIndex % SET_COLORS.length];
   const pct = s.owned_pct || 0;
@@ -283,6 +288,34 @@ function SetCard({
         </div>
       </div>
 
+      {(() => {
+        const isShared = !!s.share_token;
+        return (
+          <button
+            type="button"
+            onClick={() => onToggleShare(s.slug, isShared)}
+            title={isShared ? 'Public — click to make private' : 'Private — click to share with the community'}
+            style={{
+              position: 'absolute', top: 10, right: 46,
+              padding: '4px 10px', height: 28,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+              lineHeight: 1, textTransform: 'uppercase',
+              fontFamily: 'var(--font-mono)',
+              color: isShared ? 'var(--cream)' : 'var(--ink-mute)',
+              background: isShared ? 'var(--orange)' : 'var(--paper)',
+              border: `1.5px solid ${isShared ? 'var(--orange)' : 'var(--rule)'}`,
+              borderRadius: 100, cursor: 'pointer',
+            }}
+            aria-label={isShared ? `Unshare set ${s.title}` : `Share set ${s.title}`}
+            aria-pressed={isShared}
+          >
+            <span aria-hidden="true">{isShared ? '🔗' : '🔒'}</span>
+            {isShared ? 'Shared' : 'Share'}
+          </button>
+        );
+      })()}
+
       <button
         type="button"
         onClick={() => onDelete(s.slug, s.title)}
@@ -323,7 +356,7 @@ export default function HomePage() {
       setUserEmail(user.email || '');
       const { data } = await supabase
         .from('sets')
-        .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at, purpose')
+        .select('slug, title, year, brand, description, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at, purpose, share_token')
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
       if (data) setSets(data as SetRow[]);
@@ -350,6 +383,29 @@ export default function HomePage() {
       .eq('slug', slug);
     if (error) { alert('Failed to delete: ' + error.message); return; }
     setSets((prev) => prev.filter((s) => s.slug !== slug));
+  }
+
+  // Toggle share state from the My Shelf card. share_token: null = private,
+  // any UUID = publicly viewable at /share/<token>. Mirrors the toggle on the
+  // set detail page so seller can flip from either surface.
+  async function handleToggleShare(slug: string, currentlyShared: boolean) {
+    const prevSets = sets;
+    const nextToken = currentlyShared ? null : (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    setSets((prev) => prev.map((s) => (s.slug === slug ? { ...s, share_token: nextToken } : s)));
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    const { error } = await supabase
+      .from('sets')
+      .update({ share_token: nextToken })
+      .eq('user_id', user.id)
+      .eq('slug', slug);
+    if (error) {
+      alert('Failed to update share state: ' + error.message);
+      setSets(prevSets);
+    }
   }
 
   async function handlePurposeChange(slug: string, next: Exclude<PurposeFilter, 'all'>) {
@@ -469,7 +525,7 @@ export default function HomePage() {
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(480px, 1fr))', gap: 16 }}>
             {sorted.map((s, i) => (
-              <SetCard key={s.slug} s={s} colorIndex={i} onDelete={handleDeleteSet} onPurposeChange={handlePurposeChange} />
+              <SetCard key={s.slug} s={s} colorIndex={i} onDelete={handleDeleteSet} onPurposeChange={handlePurposeChange} onToggleShare={handleToggleShare} />
             ))}
           </div>
         )}
