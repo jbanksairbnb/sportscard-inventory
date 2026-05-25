@@ -221,6 +221,11 @@ function matchesCondition(detected: ConditionDetection, want: WantRow): boolean 
   const targetType = want.targetType === 'Raw' ? 'raw' : want.targetType === 'Graded' ? 'graded' : null
   if (targetType && detected.type !== targetType) return false
 
+  // Defense: if the want specifies grading companies but Target Type is blank,
+  // treat it as Graded intent. Without this, a row with companies=PSA but no
+  // explicit Target Type would let raw listings through.
+  if (!targetType && want.targetGradingCompanies.length > 0 && detected.type !== 'graded') return false
+
   if (detected.type === 'raw') {
     const lowRank = want.targetConditionLow ? rawRank(want.targetConditionLow) : 0
     const highRank = want.targetConditionHigh ? rawRank(want.targetConditionHigh) : 999
@@ -408,12 +413,17 @@ export async function POST(req: NextRequest) {
       const explicitLow = String(row['Target Condition - Low'] || row['Target Condition'] || '').trim()
       const explicitHigh = String(row['Target Condition - High'] || '').trim()
       const explicitCompaniesRaw = String(row['Target Grading Companies'] || '').trim()
-      const hasExplicit = !!(explicitType || explicitLow || explicitHigh || explicitCompaniesRaw)
 
-      const targetType = hasExplicit ? explicitType : (setDefault.type || '').trim()
-      const targetLow = hasExplicit ? explicitLow : (setDefault.low || '').trim()
-      const targetHigh = hasExplicit ? explicitHigh : (setDefault.high || '').trim()
-      const targetCompaniesRaw = hasExplicit ? explicitCompaniesRaw : (setDefault.companies || '').trim()
+      // Per-field fallback to set default. Earlier this used an all-or-nothing
+      // `hasExplicit` check — if ANY of the four per-row fields were set, all
+      // four switched to the row's value (so a row with only a Low specified
+      // would silently lose the set's "Graded" Target Type and fall back to
+      // Any, letting raw cards through a Graded set search). Now each field
+      // independently checks its own value.
+      const targetType = explicitType || (setDefault.type || '').trim()
+      const targetLow = explicitLow || (setDefault.low || '').trim()
+      const targetHigh = explicitHigh || (setDefault.high || '').trim()
+      const targetCompaniesRaw = explicitCompaniesRaw || (setDefault.companies || '').trim()
 
       wants.push({
         setSlug: s.slug,
