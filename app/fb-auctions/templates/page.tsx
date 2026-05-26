@@ -72,6 +72,16 @@ const VARIABLES_MULTI_LOT = [
   { key: '{lot_number}', desc: 'Sequential lot number (1, 2, 3...)' },
   ...VARIABLES_SINGLE,
 ];
+// Available inside the multi-card Decorative Intro field (post_header).
+// The body of the parent post already injects the user-typed title and
+// description automatically, so the intro is for decoration only — the
+// {auction_title} placeholder is the canonical way to echo the title
+// in a banner without hard-coding it.
+const VARIABLES_MULTI_HEADER = [
+  { key: '{auction_title}', desc: 'Title of the auction (typed on the New Auction page)' },
+  { key: '{lot_count}', desc: 'Number of lots in this auction' },
+  { key: '{ends_at}', desc: 'Optional end date/time if you set one' },
+];
 
 export default function FbTemplatesPage() {
   const router = useRouter();
@@ -320,6 +330,11 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
 }) {
   const isSingle = editing.template_type === 'single';
   const isWinning = editing.template_type === 'winning';
+  const isMulti = !isSingle && !isWinning;
+  // Multi templates have two variable scopes: the Decorative Intro
+  // (auction-level placeholders) and the Lot Template (per-card
+  // placeholders). Showing both keeps the user from guessing which
+  // tokens live where.
   const variables = isWinning ? VARIABLES_WINNING : isSingle ? VARIABLES_SINGLE : VARIABLES_MULTI_LOT;
   const typeLabel = isWinning ? 'Winning Bid Message' : isSingle ? 'Single Card' : 'Multi-Card';
   const defaultLabel = isWinning ? 'winning-bid' : isSingle ? 'single-card' : 'multi-card';
@@ -396,6 +411,14 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
             ) : (
               <>
                 <div>
+                  <label className="input-label">Decorative Intro (optional)</label>
+                  <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
+                    Sits at the very top of the parent post, above the title and description you type per auction. Use <span className="mono">{'{auction_title}'}</span> here instead of hard-coding a title so every new auction gets the right one. Leave the bidding rules / shipping out of this field — those belong in Auction Info below so the description lands before them.
+                  </div>
+                  <textarea value={editing.post_header || ''} onChange={e => setEditing({ ...editing, post_header: e.target.value })}
+                    rows={4} style={textareaStyle} placeholder={'🌟🌟 Auction 🌟🌟\n{auction_title}'} />
+                </div>
+                <div>
                   <label className="input-label">Lot Template — per-card comment *</label>
                   <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 4 }}>
                     This is the format used for each card&apos;s comment under the parent post.
@@ -428,21 +451,50 @@ function TemplateEditor({ editing, setEditing, saving, onSave, onClose }: {
 
           <div style={{ background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 10, padding: 16 }}>
             <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', marginBottom: 10 }}>★ Variables ★</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 10, lineHeight: 1.5 }}>
-              {isWinning
-                ? 'Use these in the header / footer. They get filled in per buyer when you generate the message.'
-                : isSingle
-                ? 'Use these in the Card Body Template. They auto-fill from the chosen listing.'
-                : 'Use these in the Lot Template. They auto-fill per card. The Auction Info typically has no variables.'}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {variables.map(v => (
-                <div key={v.key} style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
-                  <span className="mono" style={{ background: 'var(--cream)', padding: '1px 5px', borderRadius: 4, color: 'var(--plum)', fontWeight: 700 }}>{v.key}</span>
-                  <span style={{ marginLeft: 6 }}>{v.desc}</span>
+            {isMulti ? (
+              <>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 6, fontWeight: 700 }}>Decorative Intro</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 8, lineHeight: 1.5 }}>
+                  Filled in from the auction you&apos;re creating.
                 </div>
-              ))}
-            </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>
+                  {VARIABLES_MULTI_HEADER.map(v => (
+                    <div key={v.key} style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                      <span className="mono" style={{ background: 'var(--cream)', padding: '1px 5px', borderRadius: 4, color: 'var(--plum)', fontWeight: 700 }}>{v.key}</span>
+                      <span style={{ marginLeft: 6 }}>{v.desc}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 6, fontWeight: 700 }}>Lot Template</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 8, lineHeight: 1.5 }}>
+                  Auto-fill per card. The Auction Info typically has no variables.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {VARIABLES_MULTI_LOT.map(v => (
+                    <div key={v.key} style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                      <span className="mono" style={{ background: 'var(--cream)', padding: '1px 5px', borderRadius: 4, color: 'var(--plum)', fontWeight: 700 }}>{v.key}</span>
+                      <span style={{ marginLeft: 6 }}>{v.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginBottom: 10, lineHeight: 1.5 }}>
+                  {isWinning
+                    ? 'Use these in the header / footer. They get filled in per buyer when you generate the message.'
+                    : 'Use these in the Card Body Template. They auto-fill from the chosen listing.'}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {variables.map(v => (
+                    <div key={v.key} style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                      <span className="mono" style={{ background: 'var(--cream)', padding: '1px 5px', borderRadius: 4, color: 'var(--plum)', fontWeight: 700 }}>{v.key}</span>
+                      <span style={{ marginLeft: 6 }}>{v.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
             <div style={{ marginTop: 16, padding: 10, background: 'var(--cream)', border: '1px dashed var(--rule)', borderRadius: 6, fontSize: 11, color: 'var(--ink-mute)', lineHeight: 1.5 }}>
               💡 <strong>Tip:</strong> Press Enter for line breaks. <span className="mono">$</span> is literal — type directly.
             </div>
