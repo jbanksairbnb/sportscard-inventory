@@ -432,11 +432,33 @@ function NewFbAuctionPageInner() {
 
   const filteredListings = useMemo(() => {
     const q = searchQuery.trim();
-    if (!q) return listings;
-    const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
-    return listings.filter(l => {
-      const hay = [l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '', l.description, l.raw_grade, l.grading_company, l.grade].filter(Boolean).join(' ').toLowerCase();
-      return terms.every(t => hay.includes(t));
+    const base = !q ? listings : (() => {
+      const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      return listings.filter(l => {
+        const hay = [l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '', l.description, l.raw_grade, l.grading_company, l.grade].filter(Boolean).join(' ').toLowerCase();
+        return terms.every(t => hay.includes(t));
+      });
+    })();
+    // Default order: year ascending then numeric card # ascending. Set
+    // breaks (e.g. filter "1967") land in card-number order so the seller
+    // can scan the list the same way the cards sit in the binder.
+    // card_number is a string (can be "234", "234A", "T1") — parseInt
+    // strips the suffix and ties fall back to lexical compare. Rows
+    // missing year or card # sink to the bottom so they don't scramble
+    // the run when present.
+    const cardNumKey = (s: string | null) => {
+      if (!s) return { n: Number.POSITIVE_INFINITY, s: '' };
+      const m = s.match(/^\s*(\d+)/);
+      return { n: m ? parseInt(m[1], 10) : Number.POSITIVE_INFINITY, s };
+    };
+    return [...base].sort((a, b) => {
+      const ay = a.year ?? Number.POSITIVE_INFINITY;
+      const by = b.year ?? Number.POSITIVE_INFINITY;
+      if (ay !== by) return ay - by;
+      const ak = cardNumKey(a.card_number);
+      const bk = cardNumKey(b.card_number);
+      if (ak.n !== bk.n) return ak.n - bk.n;
+      return ak.s.localeCompare(bk.s);
     });
   }, [listings, searchQuery]);
 
