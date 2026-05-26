@@ -123,11 +123,16 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     const fw = frontSrc.width, fh = frontSrc.height;
     const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
     const gap = backSrc ? 60 : 0;
-    const outer = 60;
+    // Cards are taller than they are wide, so equal horizontal/vertical
+    // padding visually reads as a tall frame. Keep the side padding the
+    // same as the inter-card gap and trim the top/bottom to half so the
+    // cards fill more of the canvas vertically.
+    const outerX = 60;
+    const outerY = 30;
     const innerW = fw + (backSrc ? bw + gap : 0);
     const innerH = Math.max(fh, bh);
-    const w = innerW + outer * 2;
-    const h = innerH + outer * 2;
+    const w = innerW + outerX * 2;
+    const h = innerH + outerY * 2;
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -135,9 +140,9 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     if (!ctx) return null;
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(frontSrc, outer, outer + (innerH - fh) / 2);
+    ctx.drawImage(frontSrc, outerX, outerY + (innerH - fh) / 2);
     if (backSrc) {
-      ctx.drawImage(backSrc, outer + fw + gap, outer + (innerH - bh) / 2);
+      ctx.drawImage(backSrc, outerX + fw + gap, outerY + (innerH - bh) / 2);
     }
     return await new Promise<Blob | null>(res => canvas.toBlob(b => res(b), 'image/jpeg', 0.95));
   } catch {
