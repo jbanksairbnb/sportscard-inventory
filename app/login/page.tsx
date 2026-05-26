@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import SCLogo from '@/components/SCLogo'
@@ -16,6 +16,16 @@ type Intent = 'buyer' | 'seller'
 const SIGNUP_INTENT_KEY = 'sc:signup-intent'
 
 export default function LoginPage() {
+  // useSearchParams (added below to surface ?error=) forces a CSR bailout,
+  // which Next requires be wrapped in a Suspense boundary at the page root.
+  return (
+    <Suspense fallback={null}>
+      <LoginInner />
+    </Suspense>
+  )
+}
+
+function LoginInner() {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')

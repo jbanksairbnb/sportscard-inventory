@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { Suspense, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
@@ -17,6 +17,16 @@ import { createClient } from '@/lib/supabase/client'
 type Status = 'verifying' | 'ready' | 'error'
 
 export default function ResetPasswordPage() {
+  // useSearchParams forces a client-side-render bailout, which Next requires
+  // be wrapped in a Suspense boundary so prerendering can still emit a shell.
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordInner />
+    </Suspense>
+  )
+}
+
+function ResetPasswordInner() {
   const [status, setStatus] = useState<Status>('verifying')
   const [initError, setInitError] = useState('')
   const [password, setPassword] = useState('')
