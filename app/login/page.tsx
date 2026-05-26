@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import SCLogo from '@/components/SCLogo'
 
@@ -28,6 +28,15 @@ export default function LoginPage() {
   // — we render the "check your email" screen instead of the form.
   const [awaitingConfirmation, setAwaitingConfirmation] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // Surface errors bubbled up from /auth/callback (e.g. an expired or
+  // cross-device password reset link). Without this, the user just sees a
+  // blank login screen and has no idea why their email link "didn't work."
+  useEffect(() => {
+    const err = searchParams.get('error')
+    if (err) setError(err)
+  }, [searchParams])
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -97,8 +106,14 @@ export default function LoginPage() {
         router.refresh()
       }
     } else {
+      // Land directly on the reset-password page (not /auth/callback). The
+      // server callback only handles the PKCE ?code= query param, but Supabase
+      // recovery emails can return either ?code=, ?token_hash=&type=recovery,
+      // or #access_token=... depending on project config — and hash fragments
+      // never reach a server route handler. Doing the exchange client-side on
+      // the destination page handles all three cases without losing the token.
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
+        redirectTo: `${window.location.origin}/auth/reset-password`,
       })
       if (error) {
         setError(error.message)
