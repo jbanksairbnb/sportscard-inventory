@@ -47,8 +47,8 @@ Do not skip ahead to a grade. Examine each attribute below and report what you f
 
 ## Grading rules you MUST follow
 
-1. Use the LABELS below in your response, not numeric PSA numbers. The "+" labels are half-grades (between two whole tiers) — pick them when the card is clearly better than the lower tier but not quite the upper tier:
-   10 → "Gem Mint" · 9 → "Mint" · 8 → "NM-MT" · 7.5 → "NM+" · 7 → "NM" · 6.5 → "EXMT+" · 6 → "EXMT" · 5.5 → "EX+" · 5 → "EX" · 4 → "VG-EX" · 3.5 → "VG+" · 3 → "VG" · 2 → "G" · 1 → "P"
+1. Use the LABELS below in your response, not numeric PSA numbers. The "+" and slash labels are half-grades (between two whole tiers) — pick them when the card is clearly better than the lower tier but not quite the upper tier:
+   10 → "Gem Mint" · 9 → "Mint" · 8 → "NM-MT" · 7.5 → "NM+" · 7 → "NM" · 6.5 → "EXMT+" · 6 → "EXMT" · 5.5 → "EX+" · 5 → "EX" · 4.5 → "VG-EX+" · 4 → "VG-EX" · 3.5 → "VG+" · 3 → "VG" · 2.5 → "G/VG" · 2 → "G" · 1 → "P"
 2. Return a RANGE: \`grade_low\` is the worst-case label, \`grade_high\` is the best-case label. The high should never be a worse grade than the low. A 2-step range is typical; a 1-step range only if you have high confidence.
 3. The grade is gated by the WORST attribute. A card with mint surface but one dinged corner is an EX-MT (PSA 6) at best, not an NM. Don't let strong areas overrule weak ones.
 4. Adjust your baseline for ERA. Pre-1970 cards have softer print quality and looser PSA centering tolerances (a 60/40 1955 Topps reads very differently from a 60/40 1989 Score). Older cards rarely 10; modern base cards often 9-10.
@@ -92,7 +92,7 @@ export type GradeResult = {
 // can pick half-tiers when a card sits between two whole grades.
 const RAW_GRADE_LABELS = [
   'Gem Mint', 'Mint', 'NM-MT', 'NM+', 'NM', 'EXMT+', 'EXMT', 'EX+', 'EX',
-  'VG-EX', 'VG+', 'VG', 'G', 'P',
+  'VG-EX+', 'VG-EX', 'VG+', 'VG', 'G/VG', 'G', 'P',
 ] as const;
 
 export async function evaluateCardGrade(ctx: CardContext): Promise<GradeResult> {

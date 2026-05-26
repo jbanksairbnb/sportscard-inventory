@@ -142,8 +142,34 @@ function asNumberForSort(field: string, row: Record<string, any>): number | null
 function textForSort(raw: any): string { return String(raw ?? "").toLowerCase(); }
 
 /* =====================  Image Modal  ===================== */
-function ImageViewModal({ urls, onClose, onDelete }: { urls: string[]; onClose: () => void; onDelete?: () => void }) {
-  const [idx, setIdx] = useState(0);
+type LightboxItem = {
+  url: string;
+  origIndex: number;   // original row index, so we can wire delete back
+  slot: 1 | 2;         // which image field (Image 1 / Image 2)
+  cardNum: string;
+  player: string;
+};
+
+function ImageViewModal({ items, idx, setIdx, onClose, onDelete }: {
+  items: LightboxItem[];
+  idx: number;
+  setIdx: (i: number) => void;
+  onClose: () => void;
+  onDelete?: (item: LightboxItem) => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'ArrowLeft') { setIdx(Math.max(0, idx - 1)); e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { setIdx(Math.min(items.length - 1, idx + 1)); e.preventDefault(); }
+      else if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [idx, items.length, setIdx, onClose]);
+
+  if (items.length === 0) return null;
+  const current = items[idx];
+  if (!current) return null;
   const arrowBtn: React.CSSProperties = {
     pointerEvents: 'all', background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
     border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
@@ -156,18 +182,36 @@ function ImageViewModal({ urls, onClose, onDelete }: { urls: string[]; onClose: 
       background: 'rgba(42, 20, 52, 0.88)',
     }} onClick={onClose}>
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img loading="lazy" decoding="async" src={urls[idx]} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
-        {urls.length > 1 && (
-          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', pointerEvents: 'none', padding: '0 4px' }}>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.max(0, i - 1)); }}
+        <img loading="lazy" decoding="async" src={current.url} alt="Card"
+          style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
+        <div style={{
+          marginTop: 12, padding: '8px 14px',
+          background: 'rgba(248,236,208,0.96)', border: '2px solid var(--plum)',
+          borderRadius: 8, color: 'var(--plum)', textAlign: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>
+            {current.cardNum ? `#${current.cardNum}` : ''}
+          </span>
+          <span className="display" style={{ fontSize: 14 }}>{current.player || '—'}</span>
+          <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>
+            {current.slot === 1 ? 'Front' : 'Back'}
+          </span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginLeft: 8 }}>
+            {idx + 1} / {items.length}
+          </span>
+        </div>
+        {items.length > 1 && (
+          <div style={{ position: 'absolute', top: '40%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', pointerEvents: 'none', padding: '0 4px' }}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(Math.max(0, idx - 1)); }}
               style={{ ...arrowBtn, opacity: idx === 0 ? 0.25 : 1 }} disabled={idx === 0}>‹</button>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(i => Math.min(urls.length - 1, i + 1)); }}
-              style={{ ...arrowBtn, opacity: idx === urls.length - 1 ? 0.25 : 1 }} disabled={idx === urls.length - 1}>›</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setIdx(Math.min(items.length - 1, idx + 1)); }}
+              style={{ ...arrowBtn, opacity: idx === items.length - 1 ? 0.25 : 1 }} disabled={idx === items.length - 1}>›</button>
           </div>
         )}
         <div style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 8 }}>
-          {onDelete && idx === 0 && (
-            <button type="button" onClick={onDelete} className="btn btn-sm"
+          {onDelete && (
+            <button type="button" onClick={() => onDelete(current)} className="btn btn-sm"
               style={{ background: 'var(--rust)', color: 'var(--cream)', borderColor: 'var(--rust)' }}>
               🗑 Delete
             </button>
@@ -180,14 +224,15 @@ function ImageViewModal({ urls, onClose, onDelete }: { urls: string[]; onClose: 
 }
 
 /* =====================  Image Cell  ===================== */
-function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
-  url: string; label: string; otherUrl?: string;
+function ImageCell({ url, label, onUpload, onView }: {
+  url: string; label: string;
   onUpload: (file: File) => Promise<void>;
-  onDelete: () => void;
+  // Click-through to the page-level lightbox so prev/next walks every
+  // image in the set rather than just the front/back of this card.
+  onView: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [showModal, setShowModal] = useState(false);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -202,15 +247,9 @@ function ImageCell({ url, label, otherUrl, onUpload, onDelete }: {
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
       <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
       {url ? (
-        <>
-          <img loading="lazy" decoding="async" src={thumbUrl(url, 160)} alt={label} title="Click to view"
-            onClick={() => setShowModal(true)}
-            style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
-          {showModal && (
-            <ImageViewModal urls={[url, ...(otherUrl ? [otherUrl] : [])]} onClose={() => setShowModal(false)}
-              onDelete={() => { onDelete(); setShowModal(false); }} />
-          )}
-        </>
+        <img loading="lazy" decoding="async" src={thumbUrl(url, 160)} alt={label} title="Click to view"
+          onClick={onView}
+          style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
       ) : (
         <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}
           style={{
@@ -540,6 +579,10 @@ export default function SetEditorPage() {
   const [isShared, setIsShared] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [targetEditIndex, setTargetEditIndex] = useState<number | null>(null);
+  // Page-level lightbox state, lifted out of ImageCell so prev/next can
+  // walk every image in the visible set (not just the front/back of the
+  // card the user clicked).
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [bulkField, setBulkField] = useState<string>('Owned');
   const [bulkValue, setBulkValue] = useState<string>('Yes');
@@ -1162,6 +1205,28 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     });
   }, [rows, showNeededOnly, sortKey, sortDir]);
 
+  // Flat image list across every visible row, in the table's display order.
+  // Used by the page-level lightbox so clicking any thumbnail lets the
+  // user scroll through every photo in the set.
+  const lightboxItems: LightboxItem[] = useMemo(() => {
+    const items: LightboxItem[] = [];
+    for (const { row, origIndex } of displayRows) {
+      const cardNum = row['Card #'] ? String(row['Card #']) : '';
+      const player = String(row['Player'] || row['Description'] || '');
+      const img1 = String(row['Image 1'] || '');
+      const img2 = String(row['Image 2'] || '');
+      if (img1) items.push({ url: img1, origIndex, slot: 1, cardNum, player });
+      if (img2) items.push({ url: img2, origIndex, slot: 2, cardNum, player });
+    }
+    return items;
+  }, [displayRows]);
+
+  function openLightboxFor(origIndex: number, slot: 1 | 2) {
+    const flat = lightboxItems.findIndex(it => it.origIndex === origIndex && it.slot === slot);
+    if (flat < 0) return;
+    setLightboxIdx(flat);
+  }
+
   function handleSortClick(key: SortKey) {
     if (sortKey !== key) { setSortKey(key); setSortDir(DEFAULT_DIR[key] ?? 'asc'); }
     else setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -1591,15 +1656,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 1"])} label="Img 1"
-                          otherUrl={v(row["Image 2"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 1, file)}
-                          onDelete={() => handleImageDelete(origIndex, 1)} />
+                          onView={() => openLightboxFor(origIndex, 1)} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle' }}>
                         <ImageCell url={v(row["Image 2"])} label="Img 2"
-                          otherUrl={v(row["Image 1"]) || undefined}
                           onUpload={(file) => handleImageUpload(origIndex, 2, file)}
-                          onDelete={() => handleImageDelete(origIndex, 2)} />
+                          onView={() => openLightboxFor(origIndex, 2)} />
                       </td>
                       <td style={{ padding: '6px 8px', verticalAlign: 'middle', textAlign: 'center' }}>
                         {(() => {
@@ -1866,6 +1929,18 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             </div>
           </div>
         </div>
+      )}
+      {lightboxIdx != null && lightboxItems.length > 0 && (
+        <ImageViewModal
+          items={lightboxItems}
+          idx={Math.min(lightboxIdx, lightboxItems.length - 1)}
+          setIdx={setLightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+          onDelete={(item) => {
+            handleImageDelete(item.origIndex, item.slot);
+            setLightboxIdx(null);
+          }}
+        />
       )}
     </div>
   );

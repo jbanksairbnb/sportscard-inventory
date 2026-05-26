@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 // Read-only render of a seller's set contents on the public set listing
-// page. Lives as a client component so we can wire up an image lightbox
-// (clicking an image opens a fullscreen viewer; arrow keys cycle between
-// Image 1 and Image 2 when both exist).
+// page. The lightbox cycles through every image in the listing (not just
+// the two on the card the buyer clicked) so they can flip through the
+// whole set without closing and re-opening per card.
 
 export type ContentsRow = {
   cardLabel: string;
@@ -13,27 +13,43 @@ export type ContentsRow = {
   images: string[];
 };
 
-export default function SetContentsTable({ rows }: { rows: ContentsRow[] }) {
-  const [lbImages, setLbImages] = useState<string[] | null>(null);
-  const [lbIdx, setLbIdx] = useState(0);
+type FlatImage = { url: string; cardLabel: string; conditionLabel: string };
 
-  function openLightbox(images: string[], startIdx: number) {
-    if (images.length === 0) return;
-    setLbImages(images);
-    setLbIdx(startIdx);
+export default function SetContentsTable({ rows }: { rows: ContentsRow[] }) {
+  const [lbIdx, setLbIdx] = useState<number | null>(null);
+
+  // Single flat list across every card so prev/next walks the whole set.
+  const allImages: FlatImage[] = useMemo(() => {
+    const items: FlatImage[] = [];
+    for (const r of rows) {
+      for (const url of r.images) {
+        items.push({ url, cardLabel: r.cardLabel, conditionLabel: r.conditionLabel });
+      }
+    }
+    return items;
+  }, [rows]);
+
+  // Translate (row, sideIdx) to the flat index by summing prior rows'
+  // image counts. Avoids relying on URL uniqueness in case a buyer is
+  // looking at a set where the same image appears twice.
+  function openLightbox(rowIdx: number, sideIdx: number) {
+    if (rows[rowIdx]?.images.length === 0) return;
+    let flat = 0;
+    for (let i = 0; i < rowIdx; i++) flat += rows[i].images.length;
+    setLbIdx(flat + sideIdx);
   }
-  function closeLightbox() { setLbImages(null); setLbIdx(0); }
+  function closeLightbox() { setLbIdx(null); }
 
   useEffect(() => {
-    if (!lbImages) return;
+    if (lbIdx == null) return;
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape') { closeLightbox(); return; }
-      if (e.key === 'ArrowRight') setLbIdx(i => Math.min((lbImages?.length || 1) - 1, i + 1));
-      if (e.key === 'ArrowLeft') setLbIdx(i => Math.max(0, i - 1));
+      if (e.key === 'ArrowRight') setLbIdx(i => (i == null ? null : Math.min(allImages.length - 1, i + 1)));
+      if (e.key === 'ArrowLeft') setLbIdx(i => (i == null ? null : Math.max(0, i - 1)));
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [lbImages]);
+  }, [lbIdx, allImages.length]);
 
   if (rows.length === 0) {
     return (
@@ -62,7 +78,7 @@ export default function SetContentsTable({ rows }: { rows: ContentsRow[] }) {
                 <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
                   <td style={{ padding: '8px 14px' }}>
                     <button type="button"
-                      onClick={() => openLightbox(r.images, 0)}
+                      onClick={() => openLightbox(i, 0)}
                       disabled={!clickable}
                       title={clickable ? 'Click to enlarge' : 'No image'}
                       style={{
@@ -90,7 +106,7 @@ export default function SetContentsTable({ rows }: { rows: ContentsRow[] }) {
         </table>
       </div>
 
-      {lbImages && (
+      {lbIdx != null && allImages[lbIdx] && (
         <div onClick={closeLightbox}
           style={{
             position: 'fixed', inset: 0, zIndex: 200,
@@ -98,13 +114,13 @@ export default function SetContentsTable({ rows }: { rows: ContentsRow[] }) {
             display: 'grid', placeItems: 'center', padding: 20,
           }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lbImages[lbIdx]} alt=""
-            style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 12, display: 'block' }}
+          <img src={allImages[lbIdx].url} alt=""
+            style={{ maxWidth: '90vw', maxHeight: '82vh', borderRadius: 12, display: 'block' }}
             onClick={e => e.stopPropagation()} />
-          {lbImages.length > 1 && (
+          {allImages.length > 1 && (
             <>
               <button type="button"
-                onClick={e => { e.stopPropagation(); setLbIdx(i => Math.max(0, i - 1)); }}
+                onClick={e => { e.stopPropagation(); setLbIdx(i => (i == null ? null : Math.max(0, i - 1))); }}
                 disabled={lbIdx === 0}
                 style={{
                   position: 'fixed', left: 20, top: '50%', transform: 'translateY(-50%)',
@@ -113,21 +129,30 @@ export default function SetContentsTable({ rows }: { rows: ContentsRow[] }) {
                   cursor: lbIdx === 0 ? 'default' : 'pointer', opacity: lbIdx === 0 ? 0.4 : 1,
                 }}>←</button>
               <button type="button"
-                onClick={e => { e.stopPropagation(); setLbIdx(i => Math.min(lbImages.length - 1, i + 1)); }}
-                disabled={lbIdx === lbImages.length - 1}
+                onClick={e => { e.stopPropagation(); setLbIdx(i => (i == null ? null : Math.min(allImages.length - 1, i + 1))); }}
+                disabled={lbIdx === allImages.length - 1}
                 style={{
                   position: 'fixed', right: 20, top: '50%', transform: 'translateY(-50%)',
                   background: 'var(--cream)', border: '2px solid var(--plum)', borderRadius: 100,
                   padding: '10px 14px', fontSize: 18, fontWeight: 700, color: 'var(--plum)',
-                  cursor: lbIdx === lbImages.length - 1 ? 'default' : 'pointer',
-                  opacity: lbIdx === lbImages.length - 1 ? 0.4 : 1,
+                  cursor: lbIdx === allImages.length - 1 ? 'default' : 'pointer',
+                  opacity: lbIdx === allImages.length - 1 ? 0.4 : 1,
                 }}>→</button>
-              <div className="mono" style={{
+              <div style={{
                 position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-                background: 'var(--cream)', border: '1.5px solid var(--plum)', borderRadius: 100,
-                padding: '4px 12px', fontSize: 12, color: 'var(--plum)', fontWeight: 700,
-              }}>
-                {lbIdx + 1} / {lbImages.length}
+                background: 'var(--cream)', border: '1.5px solid var(--plum)', borderRadius: 12,
+                padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                maxWidth: '92vw', justifyContent: 'center',
+              }} onClick={e => e.stopPropagation()}>
+                <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>
+                  {allImages[lbIdx].cardLabel}
+                </span>
+                <span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)' }}>
+                  {allImages[lbIdx].conditionLabel}
+                </span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>
+                  {lbIdx + 1} / {allImages.length}
+                </span>
               </div>
             </>
           )}
