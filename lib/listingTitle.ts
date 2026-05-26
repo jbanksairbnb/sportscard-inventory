@@ -23,9 +23,11 @@ export const RAW_GRADES = [
   'EXMT',
   'EX+',
   'EX',
+  'VG-EX+',
   'VG-EX',
   'VG+',
   'VG',
+  'G/VG',
   'G',
   'P',
 ] as const;

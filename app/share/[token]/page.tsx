@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -19,7 +19,28 @@ type SetData = {
   rows: CardRow[];
 };
 
-function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+type FlatImage = { url: string; cardNum: string; player: string; side: 'Front' | 'Back' };
+
+function ImageLightbox({ items, idx, setIdx, onClose }: {
+  items: FlatImage[]; idx: number; setIdx: (i: number) => void; onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'ArrowLeft') { setIdx(Math.max(0, idx - 1)); e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { setIdx(Math.min(items.length - 1, idx + 1)); e.preventDefault(); }
+      else if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [items.length, idx, setIdx, onClose]);
+
+  if (items.length === 0) return null;
+  const current = items[idx];
+  const arrowBtn: React.CSSProperties = {
+    background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
   return (
     <div
       style={{
@@ -30,13 +51,39 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
       onClick={onClose}
     >
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img loading="lazy" decoding="async" src={url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 12, display: 'block' }} />
-        <button
-          type="button"
-          onClick={onClose}
-          className="btn btn-sm"
-          style={{ position: 'absolute', top: 4, right: 4 }}
-        >
+        <img loading="lazy" decoding="async" src={current.url} alt="Card"
+          style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
+        <div style={{
+          marginTop: 12, padding: '8px 14px',
+          background: 'rgba(248,236,208,0.96)', border: '2px solid var(--plum)',
+          borderRadius: 8, color: 'var(--plum)', textAlign: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>
+            {current.cardNum ? `#${current.cardNum}` : ''}
+          </span>
+          <span className="display" style={{ fontSize: 14 }}>{current.player || '—'}</span>
+          <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>{current.side}</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginLeft: 8 }}>
+            {idx + 1} / {items.length}
+          </span>
+        </div>
+        {items.length > 1 && (
+          <div style={{ position: 'absolute', top: '40%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px', pointerEvents: 'none' }}>
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); setIdx(Math.max(0, idx - 1)); }}
+              disabled={idx === 0}
+              style={{ ...arrowBtn, pointerEvents: 'auto', opacity: idx === 0 ? 0.35 : 1 }}
+              title="Previous (←)">‹</button>
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); setIdx(Math.min(items.length - 1, idx + 1)); }}
+              disabled={idx === items.length - 1}
+              style={{ ...arrowBtn, pointerEvents: 'auto', opacity: idx === items.length - 1 ? 0.35 : 1 }}
+              title="Next (→)">›</button>
+          </div>
+        )}
+        <button type="button" onClick={onClose} className="btn btn-sm"
+          style={{ position: 'absolute', top: 4, right: 4 }}>
           ✕
         </button>
       </div>
@@ -44,8 +91,10 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
   );
 }
 
-function CardTile({ row }: { row: CardRow }) {
-  const [lightboxUrl, setLightboxUrl] = useState('');
+function CardTile({ row, onImageClick }: {
+  row: CardRow;
+  onImageClick: (side: 'Front' | 'Back') => void;
+}) {
   const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
   const description = String(row['Player'] || row['Description'] || '');
   const gradingCo = String(row['Grading Company'] || '');
@@ -56,94 +105,90 @@ function CardTile({ row }: { row: CardRow }) {
   const details = [gradingCo, grade].filter(Boolean).join('  ·  ');
 
   return (
-    <>
-      <div className="panel" style={{ padding: '14px 16px', position: 'relative' }}>
-        {owned && (
-          <div style={{
-            position: 'absolute', top: 10, right: 10,
-            background: 'var(--teal)', color: 'var(--cream)',
-            fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
-            padding: '2px 7px', borderRadius: 100,
-          }}>
-            OWNED
-          </div>
-        )}
-        <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 700, marginBottom: 4 }}>
-          {cardNum}
+    <div className="panel" style={{ padding: '14px 16px', position: 'relative' }}>
+      {owned && (
+        <div style={{
+          position: 'absolute', top: 10, right: 10,
+          background: 'var(--teal)', color: 'var(--cream)',
+          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+          padding: '2px 7px', borderRadius: 100,
+        }}>
+          OWNED
         </div>
-        <div className="display" style={{ fontSize: 14, color: 'var(--plum)', marginBottom: 4, lineHeight: 1.2 }}>
-          {description || '—'}
-        </div>
-        {details && (
-          <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 6 }}>
-            {details}
-          </div>
-        )}
-        {(img1 || img2) && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            {img1 && (
-              <img
-                src={img1}
-                alt="Front"
-                onClick={() => setLightboxUrl(img1)}
-                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
-              />
-            )}
-            {img2 && (
-              <img
-                src={img2}
-                alt="Back"
-                onClick={() => setLightboxUrl(img2)}
-                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
-              />
-            )}
-          </div>
-        )}
+      )}
+      <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 700, marginBottom: 4 }}>
+        {cardNum}
       </div>
-      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
-    </>
+      <div className="display" style={{ fontSize: 14, color: 'var(--plum)', marginBottom: 4, lineHeight: 1.2 }}>
+        {description || '—'}
+      </div>
+      {details && (
+        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 6 }}>
+          {details}
+        </div>
+      )}
+      {(img1 || img2) && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          {img1 && (
+            <img
+              src={img1}
+              alt="Front"
+              onClick={() => onImageClick('Front')}
+              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
+            />
+          )}
+          {img2 && (
+            <img
+              src={img2}
+              alt="Back"
+              onClick={() => onImageClick('Back')}
+              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-function ListRow({ row, even }: { row: CardRow; even: boolean }) {
-  const [lightboxUrl, setLightboxUrl] = useState('');
+function ListRow({ row, even, onImageClick }: {
+  row: CardRow; even: boolean;
+  onImageClick: (side: 'Front' | 'Back') => void;
+}) {
   const owned = String(row['Owned'] || '') === 'Yes';
   const gradingCo = String(row['Grading Company'] || '');
   const grade = row['Grade'] ? `Grade ${row['Grade']}` : '';
   const img1 = String(row['Image 1'] || '');
   const img2 = String(row['Image 2'] || '');
   return (
-    <>
-      <tr style={{ borderTop: '1.5px solid var(--cream-warm)', background: even ? 'var(--cream)' : 'var(--paper)' }}>
-        <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
-          {row['Card #'] ? `#${row['Card #']}` : '—'}
-        </td>
-        <td style={{ padding: '10px 16px' }}>
-          <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>{String(row['Player'] || row['Description'] || '—')}</span>
-        </td>
-        <td className="eyebrow" style={{ padding: '10px 16px', fontSize: 9, color: 'var(--orange)' }}>
-          {[gradingCo, grade].filter(Boolean).join(' · ') || '—'}
-        </td>
-        <td style={{ padding: '10px 16px' }}>
-          {owned && (
-            <span style={{ background: 'var(--teal)', color: 'var(--cream)', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100 }}>OWNED</span>
+    <tr style={{ borderTop: '1.5px solid var(--cream-warm)', background: even ? 'var(--cream)' : 'var(--paper)' }}>
+      <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
+        {row['Card #'] ? `#${row['Card #']}` : '—'}
+      </td>
+      <td style={{ padding: '10px 16px' }}>
+        <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>{String(row['Player'] || row['Description'] || '—')}</span>
+      </td>
+      <td className="eyebrow" style={{ padding: '10px 16px', fontSize: 9, color: 'var(--orange)' }}>
+        {[gradingCo, grade].filter(Boolean).join(' · ') || '—'}
+      </td>
+      <td style={{ padding: '10px 16px' }}>
+        {owned && (
+          <span style={{ background: 'var(--teal)', color: 'var(--cream)', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100 }}>OWNED</span>
+        )}
+      </td>
+      <td style={{ padding: '10px 16px' }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {img1 && (
+            <img loading="lazy" decoding="async" src={img1} alt="Front" onClick={() => onImageClick('Front')}
+              style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
-        </td>
-        <td style={{ padding: '10px 16px' }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {img1 && (
-              <img loading="lazy" decoding="async" src={img1} alt="Front" onClick={() => setLightboxUrl(img1)}
-                style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
-            )}
-            {img2 && (
-              <img loading="lazy" decoding="async" src={img2} alt="Back" onClick={() => setLightboxUrl(img2)}
-                style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
-            )}
-          </div>
-        </td>
-      </tr>
-      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl('')} />}
-    </>
+          {img2 && (
+            <img loading="lazy" decoding="async" src={img2} alt="Back" onClick={() => onImageClick('Back')}
+              style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+          )}
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -157,6 +202,7 @@ export default function SharePage() {
   const [showOwnedOnly, setShowOwnedOnly] = useState(false);
   const [listView, setListView] = useState(false);
   const [search, setSearch] = useState('');
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -216,6 +262,33 @@ export default function SharePage() {
     }
     return true;
   });
+
+  // Flat image list across every currently-displayed card so the
+  // lightbox can scroll the whole filtered set without re-opening per
+  // card. Re-derived whenever the filter/search changes so the navigation
+  // stays in sync with what the visitor actually sees in the grid.
+  const lightboxItems: FlatImage[] = useMemo(() => {
+    const items: FlatImage[] = [];
+    for (const row of displayed) {
+      const cardNum = row['Card #'] ? String(row['Card #']) : '';
+      const player = String(row['Player'] || row['Description'] || '');
+      const img1 = String(row['Image 1'] || '');
+      const img2 = String(row['Image 2'] || '');
+      if (img1) items.push({ url: img1, cardNum, player, side: 'Front' });
+      if (img2) items.push({ url: img2, cardNum, player, side: 'Back' });
+    }
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayed]);
+
+  function openLightbox(rowIdx: number, side: 'Front' | 'Back') {
+    const row = displayed[rowIdx];
+    if (!row) return;
+    const targetUrl = String(row[side === 'Front' ? 'Image 1' : 'Image 2'] || '');
+    if (!targetUrl) return;
+    const flat = lightboxItems.findIndex(it => it.url === targetUrl && it.side === side);
+    setLightboxIdx(flat >= 0 ? flat : 0);
+  }
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -334,17 +407,30 @@ export default function SharePage() {
               </thead>
               <tbody>
                 {displayed.map((row, i) => (
-                  <ListRow key={i} row={row} even={i % 2 === 0} />
+                  <ListRow key={i} row={row} even={i % 2 === 0}
+                    onImageClick={(side) => openLightbox(i, side)} />
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
-            {displayed.map((row, i) => <CardTile key={i} row={row} />)}
+            {displayed.map((row, i) => (
+              <CardTile key={i} row={row}
+                onImageClick={(side) => openLightbox(i, side)} />
+            ))}
           </div>
         )}
       </div>
+
+      {lightboxIdx != null && lightboxItems.length > 0 && (
+        <ImageLightbox
+          items={lightboxItems}
+          idx={Math.min(lightboxIdx, lightboxItems.length - 1)}
+          setIdx={setLightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
 
       <footer style={{
         borderTop: '3px solid var(--plum)', padding: '24px 28px',
