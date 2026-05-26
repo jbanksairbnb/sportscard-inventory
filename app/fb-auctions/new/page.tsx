@@ -123,7 +123,7 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     const fw = frontSrc.width, fh = frontSrc.height;
     const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
     const gap = backSrc ? 60 : 0;
-    const outer = gap * 2 || 120;
+    const outer = 60;
     const innerW = fw + (backSrc ? bw + gap : 0);
     const innerH = Math.max(fh, bh);
     const w = innerW + outer * 2;
