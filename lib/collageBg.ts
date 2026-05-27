@@ -76,6 +76,7 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
   }
 
   let head = 0;
+  let filledCount = 0;
   while (head < queue.length) {
     const idx = queue[head++];
     if (filled[idx]) continue;
@@ -85,6 +86,7 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
     const db = data[i + 2] - bgB;
     if (dr * dr + dg * dg + db * db > tolSq) continue;
     filled[idx] = 1;
+    filledCount++;
     data[i] = target.r;
     data[i + 1] = target.g;
     data[i + 2] = target.b;
@@ -95,6 +97,16 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
     if (y > 0 && !filled[idx - w]) queue.push(idx - w);
     if (y < h - 1 && !filled[idx + w]) queue.push(idx + w);
   }
+
+  // If the flood ran past the scan padding and into the card body, the
+  // card's own border is the same color as the scan bg (1971 Topps black
+  // borders on a black scan mat is the canonical case). Re-painting in
+  // that situation would erase the card's border, so bail out and leave
+  // the image untouched — the scan padding survives but so does the
+  // card. `data` was mutated in-place but we never putImageData'd, so
+  // `original` is still the pristine scan.
+  if (filledCount > 0.6 * w * h) return original;
+
   ctx.putImageData(imgData, 0, 0);
 
   let minX = w, minY = h, maxX = -1, maxY = -1;
