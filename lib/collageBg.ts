@@ -100,12 +100,51 @@ export function replaceImageBg(img: HTMLImageElement, targetHex: string): HTMLCa
 
   // If the flood ran past the scan padding and into the card body, the
   // card's own border is the same color as the scan bg (1971 Topps black
-  // borders on a black scan mat is the canonical case). Re-painting in
-  // that situation would erase the card's border, so bail out and leave
-  // the image untouched — the scan padding survives but so does the
-  // card. `data` was mutated in-place but we never putImageData'd, so
-  // `original` is still the pristine scan.
-  if (filledCount > 0.6 * w * h) return original;
+  // borders on a black scan mat is the canonical case). Re-painting would
+  // erase the card border, so don't recolor — but we DO still want to crop
+  // the scan padding away. Compute the bbox of un-filled pixels (the card
+  // interior, which the flood couldn't reach) and expand outward by ~8% to
+  // recover the card's own outer border that flooded along with the mat.
+  // The card and its border survive intact; the scan mat padding outside
+  // the card gets dropped. `data` was mutated but we never putImageData'd,
+  // so `original` is still pristine for the final crop.
+  if (filledCount > 0.6 * w * h) {
+    let bMinX = w, bMinY = h, bMaxX = -1, bMaxY = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        if (!filled[row + x]) {
+          if (x < bMinX) bMinX = x;
+          if (x > bMaxX) bMaxX = x;
+          if (y < bMinY) bMinY = y;
+          if (y > bMaxY) bMaxY = y;
+        }
+      }
+    }
+    if (bMaxX < 0) return original;
+    // 8% buffer outward from card content. For a Topps card the printed
+    // border is ~4-6% of card width, so 8% reliably keeps it AND a sliver
+    // of the surrounding mat (which is bg-colored and looks like part of
+    // the card frame anyway).
+    const innerW = bMaxX - bMinX + 1;
+    const innerH = bMaxY - bMinY + 1;
+    const bufX = Math.round(innerW * 0.08);
+    const bufY = Math.round(innerH * 0.08);
+    bMinX = Math.max(0, bMinX - bufX);
+    bMinY = Math.max(0, bMinY - bufY);
+    bMaxX = Math.min(w - 1, bMaxX + bufX);
+    bMaxY = Math.min(h - 1, bMaxY + bufY);
+    const bcw = bMaxX - bMinX + 1;
+    const bch = bMaxY - bMinY + 1;
+    if (bcw === w && bch === h) return original;
+    const bailCropped = document.createElement('canvas');
+    bailCropped.width = bcw;
+    bailCropped.height = bch;
+    const bcctx = bailCropped.getContext('2d');
+    if (!bcctx) return original;
+    bcctx.drawImage(original, bMinX, bMinY, bcw, bch, 0, 0, bcw, bch);
+    return bailCropped;
+  }
 
   ctx.putImageData(imgData, 0, 0);
 
