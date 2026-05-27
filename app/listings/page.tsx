@@ -7,6 +7,7 @@ import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
+import { cropScanPadding } from '@/lib/scanAutoCrop';
 import SCLogo from '@/components/SCLogo';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 import MarketResearchModal from '@/components/MarketResearchModal';
@@ -508,9 +509,12 @@ function ListingsPageContent() {
     if (!editing?.id || !userId) { alert('Save the listing before adding photos.'); return; }
     if ((editing.photos?.length || 0) >= MAX_PHOTOS) { alert(`Max ${MAX_PHOTOS} photos.`); return; }
     const supabase = createClient();
-    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-        const path = `${userId}/listings/${editing.id}/${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
+    // Auto-trim scanner overscan before upload. The helper returns the
+    // original file unchanged when no uniform mat is detectable.
+    const trimmed = await cropScanPadding(file);
+    const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${userId}/listings/${editing.id}/${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed);
     if (upErr) { alert('Upload failed: ' + upErr.message); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(path);
     const url = data.publicUrl;
