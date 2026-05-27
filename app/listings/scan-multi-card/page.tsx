@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { isSeller } from '@/lib/sellerGuard';
 import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
+import { cropScanPadding } from '@/lib/scanAutoCrop';
 import SCLogo from '@/components/SCLogo';
 import MultiCardSplitter, { SplitResult } from '@/components/MultiCardSplitter';
 import AIGradeBadge from '@/components/AIGradeBadge';
@@ -189,10 +190,16 @@ export default function ScanMultiCardPage() {
         ? backSplit.blobs[backIdx] || null
         : null;
       try {
+        // The 2×3 splitter produces tight sub-card blobs already, but if the
+        // user overscanned the whole sheet there's still a uniform mat on
+        // each sub-card. Wrap into File so cropScanPadding can trim it; the
+        // helper is a no-op when no mat is detected.
+        const frontFile = new File([frontBlob], 'front.png', { type: 'image/png' });
+        const trimmedFront = await cropScanPadding(frontFile);
         const frontPath = `${userId}/${currentSet.slug}/${origIndex}/img1.png`;
         const { error: fErr } = await supabase.storage
           .from('card-images')
-          .upload(frontPath, frontBlob, { upsert: true, contentType: 'image/png' });
+          .upload(frontPath, trimmedFront, { upsert: true, contentType: trimmedFront.type || 'image/png' });
         if (fErr) throw new Error(`Front #${origIndex}: ${fErr.message}`);
         const { data: fPub } = supabase.storage.from('card-images').getPublicUrl(frontPath);
         updatedRows[origIndex] = {
@@ -200,10 +207,12 @@ export default function ScanMultiCardPage() {
           'Image 1': `${fPub.publicUrl}?t=${Date.now()}`,
         };
         if (backBlob) {
+          const backFile = new File([backBlob], 'back.png', { type: 'image/png' });
+          const trimmedBack = await cropScanPadding(backFile);
           const backPath = `${userId}/${currentSet.slug}/${origIndex}/img2.png`;
           const { error: bErr } = await supabase.storage
             .from('card-images')
-            .upload(backPath, backBlob, { upsert: true, contentType: 'image/png' });
+            .upload(backPath, trimmedBack, { upsert: true, contentType: trimmedBack.type || 'image/png' });
           if (bErr) throw new Error(`Back #${origIndex}: ${bErr.message}`);
           const { data: bPub } = supabase.storage.from('card-images').getPublicUrl(backPath);
           updatedRows[origIndex] = {

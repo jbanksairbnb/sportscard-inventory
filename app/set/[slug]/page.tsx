@@ -13,6 +13,7 @@ import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { thumbUrl } from "@/lib/image-transform";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
+import { cropScanPadding } from "@/lib/scanAutoCrop";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -759,9 +760,10 @@ export default function SetEditorPage() {
 async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   if (!userId || !slug || slug === "new") return;
   const supabase = createClient();
-  const ext = file.name.split(".").pop() || "jpg";
+  const trimmed = await cropScanPadding(file);
+  const ext = trimmed.name.split(".").pop() || "jpg";
   const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
-  const { error } = await supabase.storage.from("card-images").upload(path, file, { upsert: true });
+  const { error } = await supabase.storage.from("card-images").upload(path, trimmed, { upsert: true });
   if (error) { alert("Image upload failed: " + error.message); return; }
   const { data } = supabase.storage.from("card-images").getPublicUrl(path);
   const field = slot === 1 ? "Image 1" : "Image 2";
@@ -1999,11 +2001,12 @@ function ListCompleteSetModal({
     if (file.size > 8 * 1024 * 1024) { setPhotoError('Image must be under 8 MB.'); return; }
     setPhotoUploading(true);
     const supabase = createClient();
-    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const trimmed = await cropScanPadding(file);
+    const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
     // Store under the user's namespace; one folder per set-listing slug.
     // We overwrite on subsequent uploads so we don't accumulate orphans.
     const path = `${userId}/set-listings/${setSlug}/hero-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
+    const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed);
     if (upErr) { setPhotoUploading(false); setPhotoError(upErr.message); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(path);
     setHeroPhoto(data.publicUrl);

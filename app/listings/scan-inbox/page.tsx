@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
+import { cropScanPadding } from '@/lib/scanAutoCrop';
 
 type PairMode = 'fronts-only' | 'fronts-then-backs' | 'interleaved';
 type ConditionType = 'raw' | 'graded';
@@ -240,9 +241,10 @@ export default function ScanInboxPage() {
     const photoUrls: string[] = [];
     try {
       async function up(file: File, suffix: string) {
-        const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const trimmed = await cropScanPadding(file);
+        const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
         const path = `${userId}/listings/${ins!.id}/${ts}-${suffix}.${ext}`;
-        const { error: upErr } = await supabase.storage.from('card-images').upload(path, file);
+        const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed);
         if (upErr) throw new Error(upErr.message);
         const { data } = supabase.storage.from('card-images').getPublicUrl(path);
         return data.publicUrl;
