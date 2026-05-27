@@ -124,11 +124,11 @@ async function buildSideBySide(frontUrl: string, backUrl: string | null, bgColor
     const bw = backSrc?.width || 0, bh = backSrc?.height || 0;
     const gap = backSrc ? 60 : 0;
     // Cards are taller than they are wide, so equal horizontal/vertical
-    // padding visually reads as a tall frame. Keep the side padding the
-    // same as the inter-card gap and trim the top/bottom to half so the
+    // padding visually reads as a tall frame. Side padding stays smaller
+    // than the inter-card gap, top/bottom is trimmed further so the
     // cards fill more of the canvas vertically.
-    const outerX = 60;
-    const outerY = 30;
+    const outerX = 34;
+    const outerY = 17;
     const innerW = fw + (backSrc ? bw + gap : 0);
     const innerH = Math.max(fh, bh);
     const w = innerW + outerX * 2;
