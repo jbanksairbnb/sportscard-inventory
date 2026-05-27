@@ -582,14 +582,32 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Priority-seller hits: skip the condition filter for raw wants (the user
-  // wants to see anything from these trusted sellers). For Graded wants,
-  // still require that the listing title mentions a grading company —
-  // otherwise raw priority listings sneak into graded searches.
+  // Priority-seller hits: apply the same condition filter as the regular
+  // search path for RAW wants. An earlier version of this loop skipped
+  // matchesCondition() for raw priority listings on the theory that "the
+  // user trusts these sellers enough to see everything they list" — but
+  // that let LOW GRADE / VG-VGEX cards leak into EX/NM searches even when
+  // the set's default target said otherwise. The user trusts these sellers
+  // enough to scan their whole inventory, NOT enough to ignore the grade
+  // they put right in their own title. Anything matchesCondition() rejects
+  // — including titles with no recognizable grade token (detected=null) —
+  // gets dropped here too, since serving a card whose grade we can't read
+  // is worse than not serving it.
+  //
+  // GRADED wants keep the existing company-token-only check (no grade-
+  // range filter) so we don't shrink the graded results the user reports
+  // as working well. If we ever want graded priority listings to obey the
+  // grade range, add `&& matchesCondition(detected, want)` to the
+  // `targetType === 'Graded'` branch — but flag it as a behavior change
+  // for graded searches.
   for (const { item, want } of prioritySellerListings) {
     if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
-    if (want.targetType === 'Graded' && !GRADED_COMPANY_REGEX.test(item.title)) continue
     const detected = detectListingCondition(item.title, mappings)
+    if (want.targetType === 'Graded') {
+      if (!GRADED_COMPANY_REGEX.test(item.title)) continue
+    } else {
+      if (!matchesCondition(detected, want)) continue
+    }
     allHits.push({
       ...item,
       matched_set_slug: want.setSlug,
