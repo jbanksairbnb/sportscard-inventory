@@ -10,6 +10,7 @@ import AIGradeBadge from '@/components/AIGradeBadge';
 import AIGradeToggle, { loadAIGradePreference, saveAIGradePreference } from '@/components/AIGradeToggle';
 import { useAIGrade, type AIGradeItem } from '@/lib/ai/use-ai-grade';
 import { buildListingTitle } from '@/lib/listingTitle';
+import { cropScanPadding } from '@/lib/scanAutoCrop';
 
 type Listing = {
   id: string;
@@ -272,17 +273,19 @@ export default function ScanBatchToListingsPage() {
 
         const slots: { url: string; idx: 0 | 1 }[] = [];
         if (pair.front) {
-          const ext = (pair.front.name.split('.').pop() || 'jpg').toLowerCase();
+          const trimmed = await cropScanPadding(pair.front);
+          const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
           const path = `${userId}/listings/${listingId}/${ts}-front.${ext}`;
-          const { error: upErr } = await supabase.storage.from('card-images').upload(path, pair.front, { upsert: true });
+          const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Front upload failed (${listingLabel(listing)}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
           slots.push({ url: `${data.publicUrl}?t=${ts}`, idx: 0 });
         }
         if (pair.back) {
-          const ext = (pair.back.name.split('.').pop() || 'jpg').toLowerCase();
+          const trimmed = await cropScanPadding(pair.back);
+          const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
           const path = `${userId}/listings/${listingId}/${ts}-back.${ext}`;
-          const { error: upErr } = await supabase.storage.from('card-images').upload(path, pair.back, { upsert: true });
+          const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Back upload failed (${listingLabel(listing)}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
           slots.push({ url: `${data.publicUrl}?t=${ts}`, idx: 1 });
