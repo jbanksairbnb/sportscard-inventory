@@ -295,8 +295,10 @@ export default function SetEditorPage() {
             }
           }
 
-          const cardNum = Number(String(norm["Card #"]).trim());
-          if (Number.isNaN(cardNum)) norm["Card #"] = "";
+          // Card # is alphanumeric — Topps T-series (T1, T15), variant
+          // suffixes (234A, 234B), etc. Trim only; never wipe a
+          // non-numeric value, that loses the user's data.
+          norm["Card #"] = String(norm["Card #"] ?? "").trim();
           if (!String(norm["Description"]).trim()) norm["Description"] = "";
 
           return norm;

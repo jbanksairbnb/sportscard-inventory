@@ -277,8 +277,10 @@ export default function NewSetPage() {
           });
           const d = String(norm['Date Purchased']).trim();
           if (d) { const digits = d.replace(/[^0-9]/g, ''); if (digits.length === 8) norm['Date Purchased'] = `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4)}`; }
-          const cardNum = Number(String(norm['Card #']).trim());
-          if (Number.isNaN(cardNum)) norm['Card #'] = '';
+          // Card # is alphanumeric — Topps T-series (T1, T15), variant
+          // suffixes (234A, 234B), insert codes etc. Trim only; never
+          // wipe a non-numeric value, that loses the user's data.
+          norm['Card #'] = String(norm['Card #'] ?? '').trim();
           return norm;
         });
         setRows(cleaned);

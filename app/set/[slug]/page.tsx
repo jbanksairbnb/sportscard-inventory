@@ -1196,6 +1196,18 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
         if (an === null && bn === null) return 0;
         return (an! < bn! ? -1 : an! > bn! ? 1 : 0) * dir;
       }
+      // Card # is alphanumeric (e.g. "T1", "234A"). Use localeCompare
+      // in numeric mode so "5" < "11" < "234" < "234A" < "T1" < "T15"
+      // — the same comparator sortRowsByCardNumber uses for add/dupe
+      // ordering. Blanks sink to the bottom in both sort directions.
+      if (sortKey === "Card #") {
+        const ca = String(a.row["Card #"] ?? "").trim();
+        const cb = String(b.row["Card #"] ?? "").trim();
+        if (!ca && !cb) return 0;
+        if (!ca) return 1;
+        if (!cb) return -1;
+        return ca.localeCompare(cb, undefined, { numeric: true }) * dir;
+      }
       const an = asNumberForSort(sortKey, a.row), bn = asNumberForSort(sortKey, b.row);
       if (an !== null || bn !== null) {
         if (an === null) return 1; if (bn === null) return -1;
