@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { rawGradeToPsa, targetGradeToPsa } from '@/lib/gradeEquivalence'
 
 const RAW_GRADE_RANKS: Record<string, number> = {
   'P': 0, 'PR': 0, 'POOR': 0,
@@ -103,6 +104,13 @@ type WantRow = {
   targetConditionLow: string
   targetConditionHigh: string
   targetGradingCompanies: string[]
+  // Set-level toggles (from sets.default_target). When on, the match
+  // logic widens — see matchesCondition below for the rules.
+  includeEquivalentGrades: boolean
+  // For "show upgrades" rows: the user already owns this card and only
+  // wants listings strictly better than their owned grade. Null when
+  // the row isn't an upgrade-target (the typical unowned-want case).
+  ownedConditionPsa: number | null
 }
 
 type EbayItem = {
@@ -215,9 +223,79 @@ function detectListingCondition(title: string, mappings: RawGradeMapping[]): Con
   return null
 }
 
+// RAW_GRADE_RANKS uses uppercase aliases (NRMT, EXMINT, etc.). To
+// look up a PSA-equivalent we need the canonical label the
+// gradeEquivalence table uses (NM, EXMT, etc.). This table translates.
+const RANKED_ALIAS_TO_CANON: Record<string, string> = {
+  'P': 'P', 'PR': 'P', 'POOR': 'P',
+  'G': 'G', 'GOOD': 'G',
+  'VG': 'VG', 'VERY GOOD': 'VG',
+  'VG-EX': 'VG-EX', 'VGEX': 'VG-EX', 'VG-EXCELLENT': 'VG-EX',
+  'EX': 'EX', 'EXCELLENT': 'EX',
+  'EX+': 'EX+', 'EX-PLUS': 'EX+',
+  'EXMT': 'EXMT', 'EX-MT': 'EXMT', 'EX-MINT': 'EXMT', 'EXMINT': 'EXMT', 'EXCELLENT-MINT': 'EXMT',
+  'NM': 'NM', 'NEAR MINT': 'NM', 'NR-MINT': 'NM', 'NR MINT': 'NM', 'NRMT': 'NM', 'NR-MT': 'NM', 'NR MT': 'NM',
+  'NM+': 'NM+',
+  'NM-MT': 'NM-MT', 'NMMT': 'NM-MT', 'NEAR MINT-MINT': 'NM-MT', 'NR-MINT+': 'NM-MT',
+  'MINT': 'Mint', 'MT': 'Mint',
+  'GEM MINT': 'Gem Mint', 'GEMMINT': 'Gem Mint', 'GEM-MINT': 'Gem Mint', 'GM': 'Gem Mint', 'GEM': 'Gem Mint',
+}
+
+// Translate a detected listing condition into a single PSA-equivalent
+// number. Raw listings may detect to multiple ranks (a title saying
+// "VG-EX" matches both VG and EX in RAW_TOKEN_REGEX); use the high end
+// so we don't drop a listing whose true grade could still satisfy the
+// target. Graded listings already carry one number.
+function detectedToPsa(detected: ConditionDetection): number | null {
+  if (!detected) return null
+  if (detected.type === 'graded') return detected.grade
+  let best: number | null = null
+  for (const rank of detected.rawRanks) {
+    const aliasEntry = Object.entries(RAW_GRADE_RANKS).find(([, r]) => r === rank)
+    if (!aliasEntry) continue
+    const canon = RANKED_ALIAS_TO_CANON[aliasEntry[0]] || aliasEntry[0]
+    const psa = rawGradeToPsa(canon)
+    if (psa !== null && (best === null || psa > best)) best = psa
+  }
+  return best
+}
+
 function matchesCondition(detected: ConditionDetection, want: WantRow): boolean {
   if (!detected) return false
 
+  // Graded company whitelist always applies (raw listings carry no
+  // company so the filter never excludes them).
+  if (detected.type === 'graded' && want.targetGradingCompanies.length > 0 &&
+    detected.company && !want.targetGradingCompanies.includes(detected.company)) return false
+
+  // Upgrade-on-owned: when the row is an upgrade target (the user owns
+  // the card at a lower grade), require the listing to be strictly
+  // better than the owned grade. The target range below still applies
+  // on top — we don't want to surface gem-mint listings on a row whose
+  // target tops out at NM.
+  if (want.ownedConditionPsa !== null) {
+    const detectedPsa = detectedToPsa(detected)
+    if (detectedPsa === null) return false
+    if (detectedPsa <= want.ownedConditionPsa) return false
+  }
+
+  if (want.includeEquivalentGrades) {
+    // Cross-type matching: both raw and graded listings compete on the
+    // same PSA-equivalent scale, so a Raw EX target accepts a PSA 5
+    // listing and vice versa. The company whitelist above is the only
+    // type-aware filter that survives.
+    const detectedPsa = detectedToPsa(detected)
+    if (detectedPsa === null) return false
+    const lowPsa = want.targetConditionLow
+      ? targetGradeToPsa(want.targetType, want.targetConditionLow) ?? 1
+      : 1
+    const highPsa = want.targetConditionHigh
+      ? targetGradeToPsa(want.targetType, want.targetConditionHigh) ?? 10
+      : 10
+    return detectedPsa >= lowPsa && detectedPsa <= highPsa
+  }
+
+  // Strict (legacy) matching: type must match.
   const targetType = want.targetType === 'Raw' ? 'raw' : want.targetType === 'Graded' ? 'graded' : null
   if (targetType && detected.type !== targetType) return false
 
@@ -234,8 +312,6 @@ function matchesCondition(detected: ConditionDetection, want: WantRow): boolean 
   }
 
   if (detected.type === 'graded') {
-    if (want.targetGradingCompanies.length > 0 && detected.company &&
-      !want.targetGradingCompanies.includes(detected.company)) return false
     const low = want.targetConditionLow ? parseFloat(want.targetConditionLow) : 1
     const high = want.targetConditionHigh ? parseFloat(want.targetConditionHigh) : 10
     if (Number.isNaN(low) || Number.isNaN(high)) return true
@@ -402,9 +478,17 @@ export async function POST(req: NextRequest) {
 
   const wants: WantRow[] = []
   for (const s of (setsData || [])) {
-    const setDefault = (s.default_target || {}) as { type?: string; low?: string; high?: string; companies?: string }
+    const setDefault = (s.default_target || {}) as {
+      type?: string; low?: string; high?: string; companies?: string;
+      // Set-level toggles persisted on default_target. JSONB extends
+      // freely so no migration was needed.
+      include_equivalent_grades?: boolean;
+      include_upgrades?: boolean;
+    }
+    const includeEquivalent = !!setDefault.include_equivalent_grades
+    const includeUpgrades = !!setDefault.include_upgrades
     for (const row of (s.rows || []) as Record<string, unknown>[]) {
-      if (String(row['Owned'] || '') === 'Yes') continue
+      const isOwned = String(row['Owned'] || '') === 'Yes'
       const player = String(row['Player'] || row['Description'] || '').trim()
       const cardNumber = String(row['Card #'] || '').trim()
       if (!player || !cardNumber) continue
@@ -425,6 +509,33 @@ export async function POST(req: NextRequest) {
       const targetHigh = explicitHigh || (setDefault.high || '').trim()
       const targetCompaniesRaw = explicitCompaniesRaw || (setDefault.companies || '').trim()
 
+      let ownedConditionPsa: number | null = null
+      if (isOwned) {
+        // Without the upgrade flag, owned rows are skipped entirely
+        // (legacy behavior). With it, surface the row but require the
+        // detected listing grade to beat the owned grade in
+        // matchesCondition.
+        if (!includeUpgrades) continue
+        const gradingCo = String(row['Grading Company'] || '').trim()
+        const gradeStr = String(row['Grade'] || '').trim()
+        const rawGrade = String(row['Raw Grade'] || '').trim()
+        if (gradingCo && gradeStr) {
+          const g = parseFloat(gradeStr)
+          if (Number.isFinite(g)) ownedConditionPsa = g
+        } else if (rawGrade) {
+          ownedConditionPsa = rawGradeToPsa(rawGrade)
+        }
+        // If we can't read the owned grade we can't tell whether a
+        // listing is an upgrade — skip the row rather than spam the
+        // feed with every listing for cards the user already has.
+        if (ownedConditionPsa === null) continue
+        // Skip rows whose owned grade already meets/beats the target —
+        // no upgrade to find. Translates raw EX → PSA 5 etc. via the
+        // shared mapping.
+        const targetHighPsa = targetHigh ? targetGradeToPsa(targetType, targetHigh) : null
+        if (targetHighPsa !== null && ownedConditionPsa >= targetHighPsa) continue
+      }
+
       wants.push({
         setSlug: s.slug,
         setTitle: s.title || `${s.year} ${s.brand}`,
@@ -439,6 +550,8 @@ export async function POST(req: NextRequest) {
         targetGradingCompanies: targetCompaniesRaw
           ? targetCompaniesRaw.split(',').map(c => c.trim().toUpperCase()).filter(Boolean)
           : [],
+        includeEquivalentGrades: includeEquivalent,
+        ownedConditionPsa,
       })
     }
   }

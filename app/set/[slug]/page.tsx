@@ -292,11 +292,17 @@ function summarizeTarget(row: Record<string, any>): { text: string; isSet: boole
   return { text: `${range}`, isSet: true };
 }
 
-function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
+function TargetEditorModal({ row, cardLabel, onClose, onSave, isDefault, initialFlags }: {
   row: Record<string, any>;
   cardLabel: string;
   onClose: () => void;
-  onSave: (patch: { type: string; low: string; high: string; companies: string }) => void;
+  // Two callback shapes — per-row saves the four core fields, default
+  // saves those plus the two set-level matching toggles.
+  onSave: (patch: { type: string; low: string; high: string; companies: string; include_equivalent_grades: boolean; include_upgrades: boolean }) => void;
+  // True when this modal is editing the set's default target. Drives
+  // whether the two matching-toggle checkboxes are shown.
+  isDefault?: boolean;
+  initialFlags?: { include_equivalent_grades: boolean; include_upgrades: boolean };
 }) {
   const initialType = (() => {
     const t = String(row['Target Type'] || '').trim();
@@ -312,6 +318,8 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
   const [high, setHigh] = useState(stripCompanyPrefix(String(row['Target Condition - High'] || '')));
   const initialCompanies = String(row['Target Grading Companies'] || '').split(',').map(s => s.trim()).filter(Boolean);
   const [companies, setCompanies] = useState<string[]>(initialCompanies);
+  const [includeEquivalentGrades, setIncludeEquivalentGrades] = useState(!!initialFlags?.include_equivalent_grades);
+  const [includeUpgrades, setIncludeUpgrades] = useState(!!initialFlags?.include_upgrades);
 
   function toggleCompany(c: string) {
     setCompanies(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
@@ -330,11 +338,13 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
       low,
       high,
       companies: type === 'Graded' ? companies.join(',') : '',
+      include_equivalent_grades: includeEquivalentGrades,
+      include_upgrades: includeUpgrades,
     });
   }
 
   function handleClear() {
-    onSave({ type: '', low: '', high: '', companies: '' });
+    onSave({ type: '', low: '', high: '', companies: '', include_equivalent_grades: false, include_upgrades: false });
   }
 
   const gradeOptions = type === 'Raw' ? RAW_TARGET_GRADES : TARGET_GRADES_NUMERIC;
@@ -421,6 +431,36 @@ function TargetEditorModal({ row, cardLabel, onClose, onSave }: {
               : 'Low = lowest grade, High = highest grade. Leave both blank for "any grade".'}
           </div>
         </div>
+
+        {isDefault && (
+          <div style={{ marginBottom: 18, paddingTop: 14, borderTop: '1px dashed var(--rule)' }}>
+            <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 8 }}>
+              MATCHING (eBay & Want-List Hits)
+            </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+              <input type="checkbox" checked={includeEquivalentGrades}
+                onChange={(e) => setIncludeEquivalentGrades(e.target.checked)}
+                style={{ marginTop: 3, cursor: 'pointer' }} />
+              <div style={{ fontSize: 12.5, color: 'var(--plum)', lineHeight: 1.4 }}>
+                <strong>Include equivalent grades across raw & graded</strong>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 2 }}>
+                  Raw EX ≈ PSA 5, NM ≈ PSA 7, etc. With this on, a Raw target also surfaces graded listings in the same grade range (and vice-versa). Company whitelist still applies to graded listings.
+                </div>
+              </div>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={includeUpgrades}
+                onChange={(e) => setIncludeUpgrades(e.target.checked)}
+                style={{ marginTop: 3, cursor: 'pointer' }} />
+              <div style={{ fontSize: 12.5, color: 'var(--plum)', lineHeight: 1.4 }}>
+                <strong>Show upgrades for cards I already own at a lower grade</strong>
+                <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 2 }}>
+                  Owned rows whose grade is below the target still appear as wants; listings must be strictly better than the owned grade.
+                </div>
+              </div>
+            </label>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="button" onClick={handleSave} className="btn btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
@@ -642,7 +682,15 @@ export default function SetEditorPage() {
       }
     } catch {}
   }, []);
-  const [defaultTarget, setDefaultTarget] = useState<{ type: string; low: string; high: string; companies: string }>({ type: '', low: '', high: '', companies: '' });
+  // Set-level default target. The two boolean flags below are stored
+  // inside the same default_target JSONB column (no schema migration —
+  // JSONB extends freely). They drive the cross-type and upgrade
+  // logic in /api/feed/ebay-hits — see the wants loop there.
+  const [defaultTarget, setDefaultTarget] = useState<{
+    type: string; low: string; high: string; companies: string;
+    include_equivalent_grades: boolean;
+    include_upgrades: boolean;
+  }>({ type: '', low: '', high: '', companies: '', include_equivalent_grades: false, include_upgrades: false });
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const [infoEditOpen, setInfoEditOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -720,13 +768,19 @@ export default function SetEditorPage() {
           }
           setShareToken(data.share_token ?? null);
           setIsShared(!!data.share_token);
-          const dt = data.default_target as { type?: string; low?: string; high?: string; companies?: string } | null;
+          const dt = data.default_target as {
+            type?: string; low?: string; high?: string; companies?: string;
+            include_equivalent_grades?: boolean;
+            include_upgrades?: boolean;
+          } | null;
           if (dt) {
             setDefaultTarget({
               type: dt.type || '',
               low: dt.low || '',
               high: dt.high || '',
               companies: dt.companies || '',
+              include_equivalent_grades: !!dt.include_equivalent_grades,
+              include_upgrades: !!dt.include_upgrades,
             });
           }
         }
@@ -772,7 +826,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   setRows(nextRows);
   scheduleAutoSave(nextRows);
 }
-   async function saveDefaultTarget(patch: { type: string; low: string; high: string; companies: string }) {
+   async function saveDefaultTarget(patch: {
+    type: string; low: string; high: string; companies: string;
+    include_equivalent_grades: boolean;
+    include_upgrades: boolean;
+  }) {
     if (!userId || !slug || slug === 'new') return;
     const supabase = createClient();
     const nextRows = rows.map((r) => {
@@ -1748,6 +1806,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               'Target Condition - High': patch.high,
               'Target Grading Companies': patch.companies,
             };
+            // Per-row save discards the matching-toggle fields — those
+            // are set-level only, edited via the Default Target modal.
             setRows(copy);
             scheduleAutoSave(copy);
             setTargetEditIndex(null);
@@ -1757,6 +1817,11 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
 
       {defaultTargetOpen && (
         <TargetEditorModal
+          isDefault
+          initialFlags={{
+            include_equivalent_grades: defaultTarget.include_equivalent_grades,
+            include_upgrades: defaultTarget.include_upgrades,
+          }}
           row={{
             'Target Type': defaultTarget.type,
             'Target Condition - Low': defaultTarget.low,
