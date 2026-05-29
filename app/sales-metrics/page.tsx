@@ -18,11 +18,23 @@ type SaleEvent = {
   cost: number;       // 0 if unknown (per the agreed rule: missing cost => 0 profit contribution)
   buyerKey: string | null;
   buyerName: string | null;
+  itemLabel: string | null; // what was purchased, when we can resolve it
 };
 
 type BidEvent = {
   date: string;
   bidderKey: string | null;
+};
+
+// One recorded auction bid — sourced from the bid-event log (plus imported
+// historical bids). Powers the "Unique bidders" drill-down: everyone who bid in
+// the auctions, not just winners.
+type BidderRecord = {
+  date: string;
+  key: string;
+  name: string;
+  handle: string | null;
+  lotKey: string; // distinct lots-bid-on counter
 };
 
 type DateRange = 'month' | '3month' | '6month' | 'year' | 'all';
@@ -40,6 +52,9 @@ function fmtMoney(n: number): string {
 function fmtMoneyLong(n: number): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
 function monthKey(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -49,13 +64,40 @@ function monthLabel(key: string): string {
   const d = new Date(Number(y), Number(m) - 1, 1);
   return d.toLocaleString(undefined, { month: 'short', year: '2-digit' });
 }
+function sourceLabel(s: SaleEvent['source']): string {
+  return s === 'auction' ? 'Auction' : s === 'claim' ? 'Claim sale' : 'Marketplace';
+}
+// Build a short "2019 Topps #50 Mike Trout" style label from a listing join.
+function shortItemLabel(l: { year?: number | null; brand?: string | null; card_number?: string | null; player?: string | null; title?: string | null } | null | undefined): string | null {
+  if (!l) return null;
+  const parts = [
+    l.year ? String(l.year) : '',
+    l.brand || '',
+    l.card_number ? `#${l.card_number}` : '',
+    l.player || '',
+  ].filter(Boolean);
+  const label = parts.join(' ').trim();
+  return label || l.title || null;
+}
+// Same grouping key the buyer rollups use, with a name fallback for un-linked rows.
+function buyerKeyOf(e: SaleEvent): string {
+  return e.buyerKey || `__nameless__${e.buyerName || 'Unknown'}`;
+}
+
+// What the details overlay is currently showing.
+type Drill =
+  | { kind: 'sales'; title: string; events: SaleEvent[]; showProfit: boolean }
+  | { kind: 'buyers'; title: string }
+  | { kind: 'bidders'; title: string };
 
 export default function SalesMetricsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<SaleEvent[]>([]);
   const [bidEvents, setBidEvents] = useState<BidEvent[]>([]);
+  const [bidderRecords, setBidderRecords] = useState<BidderRecord[]>([]);
   const [range, setRange] = useState<DateRange>('6month');
+  const [drill, setDrill] = useState<Drill | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -63,29 +105,33 @@ export default function SalesMetricsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
-      const [aucsRes, lotsRes, salesRes, itemsRes, marketRes, historicalRes] = await Promise.all([
+      const [aucsRes, lotsRes, salesRes, itemsRes, marketRes, historicalRes, bidEventsRes] = await Promise.all([
         supabase.from('fb_auctions').select('id, created_at').eq('user_id', user.id),
         supabase.from('fb_auction_lots')
-          .select('auction_id, current_bid, status, bidder_id, bidder_name, listing:listings(cost)')
+          .select('auction_id, current_bid, status, bidder_id, bidder_name, listing:listings(cost, year, brand, card_number, player, title)')
           .eq('user_id', user.id),
         supabase.from('fb_claim_sales').select('id, created_at').eq('user_id', user.id),
         supabase.from('fb_claim_sale_items')
-          .select('lot_id, price, claim_status, claim_buyer_id, claim_buyer_name, listing:listings(cost)')
+          .select('lot_id, price, claim_status, claim_buyer_id, claim_buyer_name, listing:listings(cost, year, brand, card_number, player, title)')
           .eq('user_id', user.id),
         supabase.from('listings')
-          .select('sold_at, sold_price, cost, status')
+          .select('sold_at, sold_price, cost, status, year, brand, card_number, player, title')
           .eq('user_id', user.id)
           .eq('status', 'sold'),
         supabase.from('historical_transactions')
           .select('occurred_at, created_at, amount, cost, channel, engagement_type, bidder_id, bidder_name')
           .eq('user_id', user.id),
+        supabase.from('fb_auction_bid_events')
+          .select('lot_id, bidder_id, bidder_name, bidder_fb_handle, created_at')
+          .eq('user_id', user.id),
       ]);
 
       type AucRow = { id: string; created_at: string };
-      type LotJoin = { auction_id: string; current_bid: number | null; status: string; bidder_id: string | null; bidder_name: string | null; listing: { cost: number | null } | null };
+      type ListingJoin = { cost: number | null; year: number | null; brand: string | null; card_number: string | null; player: string | null; title: string | null };
+      type LotJoin = { auction_id: string; current_bid: number | null; status: string; bidder_id: string | null; bidder_name: string | null; listing: ListingJoin | null };
       type SaleRow = { id: string; created_at: string };
       type ClaimLotRow = { id: string; sale_id: string };
-      type ItemJoin = { lot_id: string; price: number | null; claim_status: string; claim_buyer_id: string | null; claim_buyer_name: string | null; listing: { cost: number | null } | null };
+      type ItemJoin = { lot_id: string; price: number | null; claim_status: string; claim_buyer_id: string | null; claim_buyer_name: string | null; listing: ListingJoin | null };
 
       const aucsById = new Map<string, AucRow>();
       for (const a of (aucsRes.data || []) as AucRow[]) aucsById.set(a.id, a);
@@ -103,6 +149,7 @@ export default function SalesMetricsPage() {
 
       const evs: SaleEvent[] = [];
       const bids: BidEvent[] = [];
+      const bidderRecs: BidderRecord[] = [];
 
       for (const l of lotRows) {
         const auc = aucsById.get(l.auction_id);
@@ -120,6 +167,7 @@ export default function SalesMetricsPage() {
             cost: l.listing?.cost ?? 0,
             buyerKey,
             buyerName: l.bidder_name,
+            itemLabel: shortItemLabel(l.listing),
           });
         }
       }
@@ -138,10 +186,11 @@ export default function SalesMetricsPage() {
             cost: it.listing?.cost ?? 0,
             buyerKey,
             buyerName: it.claim_buyer_name,
+            itemLabel: shortItemLabel(it.listing),
           });
         }
       }
-      type MarketRow = { sold_at: string | null; sold_price: number | null; cost: number | null; status: string };
+      type MarketRow = ListingJoin & { sold_at: string | null; sold_price: number | null; status: string };
       for (const row of (marketRes.data || []) as MarketRow[]) {
         if (!row.sold_price) continue;
         evs.push({
@@ -151,11 +200,13 @@ export default function SalesMetricsPage() {
           cost: row.cost ?? 0,
           buyerKey: null,
           buyerName: null,
+          itemLabel: shortItemLabel(row),
         });
       }
       // Imported historical transactions feed both revenue (won only) and the
       // bidder-activity charts (any engagement counts).
       type HistRow = { occurred_at: string | null; created_at: string; amount: number | null; cost: number | null; channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request'; bidder_id: string | null; bidder_name: string | null };
+      let histSeq = 0;
       for (const h of (historicalRes.data || []) as HistRow[]) {
         const date = h.occurred_at ? `${h.occurred_at}T00:00:00Z` : h.created_at;
         const buyerKey = h.bidder_id ? `id:${h.bidder_id}`
@@ -168,30 +219,54 @@ export default function SalesMetricsPage() {
             cost: h.cost ?? 0,
             buyerKey,
             buyerName: h.bidder_name,
+            itemLabel: null,
           });
         }
         if (buyerKey) bids.push({ date, bidderKey: buyerKey });
+        // Historical auction engagements count toward "all bidders who bid".
+        if (buyerKey && (h.engagement_type === 'bid' || h.engagement_type === 'won')
+          && (h.channel === 'fb_auction' || h.channel === 'fb_claim')) {
+          bidderRecs.push({ date, key: buyerKey, name: h.bidder_name || '(unnamed)', handle: null, lotKey: `hist:${histSeq++}` });
+        }
       }
+
+      // The authoritative bid log: every recorded bid, named where known.
+      type BidEventRow = { lot_id: string; bidder_id: string | null; bidder_name: string | null; bidder_fb_handle: string | null; created_at: string };
+      for (const ev of (bidEventsRes.data || []) as BidEventRow[]) {
+        const key = ev.bidder_id ? `id:${ev.bidder_id}`
+          : (ev.bidder_name ? `name:${ev.bidder_name.trim().toLowerCase()}` : null);
+        if (!key) continue;
+        bidderRecs.push({ date: ev.created_at, key, name: ev.bidder_name || '(unnamed)', handle: ev.bidder_fb_handle || null, lotKey: ev.lot_id });
+      }
+
       setEvents(evs);
       setBidEvents(bids);
+      setBidderRecords(bidderRecs);
       setLoading(false);
     }
     load();
   }, [router]);
 
-  const filteredEvents = useMemo(() => {
+  const cutoffTs = useMemo(() => {
     const cfg = RANGES.find(r => r.key === range);
-    if (!cfg || cfg.months === null) return events;
-    const cutoff = Date.now() - cfg.months * 30 * 24 * 60 * 60 * 1000;
-    return events.filter(e => new Date(e.date).getTime() >= cutoff);
-  }, [events, range]);
+    if (!cfg || cfg.months === null) return null;
+    return Date.now() - cfg.months * 30 * 24 * 60 * 60 * 1000;
+  }, [range]);
+
+  const filteredEvents = useMemo(() => {
+    if (cutoffTs === null) return events;
+    return events.filter(e => new Date(e.date).getTime() >= cutoffTs);
+  }, [events, cutoffTs]);
 
   const filteredBids = useMemo(() => {
-    const cfg = RANGES.find(r => r.key === range);
-    if (!cfg || cfg.months === null) return bidEvents;
-    const cutoff = Date.now() - cfg.months * 30 * 24 * 60 * 60 * 1000;
-    return bidEvents.filter(b => new Date(b.date).getTime() >= cutoff);
-  }, [bidEvents, range]);
+    if (cutoffTs === null) return bidEvents;
+    return bidEvents.filter(b => new Date(b.date).getTime() >= cutoffTs);
+  }, [bidEvents, cutoffTs]);
+
+  const filteredBidderRecords = useMemo(() => {
+    if (cutoffTs === null) return bidderRecords;
+    return bidderRecords.filter(b => new Date(b.date).getTime() >= cutoffTs);
+  }, [bidderRecords, cutoffTs]);
 
   // KPI rollups
   const kpis = useMemo(() => {
@@ -247,19 +322,41 @@ export default function SalesMetricsPage() {
     return { rev, profit, lastKey: last.key, prevKey: prev.key };
   }, [monthly]);
 
-  // Top buyers (by total spend in range)
-  const topBuyers = useMemo(() => {
-    const map = new Map<string, { name: string; spend: number; count: number; auction: number; claim: number }>();
+  // Buyers (by total spend in range). Full list backs the "Unique buyers"
+  // drill-down; the first 10 are shown in the Top buyers table.
+  const buyersAgg = useMemo(() => {
+    const map = new Map<string, { key: string; name: string; spend: number; count: number; auction: number; claim: number }>();
     for (const e of filteredEvents) {
-      const key = e.buyerKey || `__nameless__${e.buyerName || 'Unknown'}`;
-      const r = map.get(key) || { name: e.buyerName || 'Unknown', spend: 0, count: 0, auction: 0, claim: 0 };
+      const key = buyerKeyOf(e);
+      const r = map.get(key) || { key, name: e.buyerName || 'Unknown', spend: 0, count: 0, auction: 0, claim: 0 };
       r.spend += e.revenue;
       r.count += 1;
-      if (e.source === 'auction') r.auction += 1; else r.claim += 1;
+      if (e.source === 'auction') r.auction += 1; else if (e.source === 'claim') r.claim += 1;
       map.set(key, r);
     }
-    return Array.from(map.values()).sort((a, b) => b.spend - a.spend).slice(0, 10);
+    return Array.from(map.values()).sort((a, b) => b.spend - a.spend);
   }, [filteredEvents]);
+  const topBuyers = useMemo(() => buyersAgg.slice(0, 10), [buyersAgg]);
+
+  // Unique bidders across the auctions (everyone who bid, not just winners).
+  const uniqueBidders = useMemo(() => {
+    const map = new Map<string, { name: string; handle: string | null; bids: number; lots: Set<string> }>();
+    for (const b of filteredBidderRecords) {
+      const r = map.get(b.key) || { name: b.name, handle: b.handle, bids: 0, lots: new Set<string>() };
+      r.bids += 1;
+      r.lots.add(b.lotKey);
+      if ((!r.name || r.name === '(unnamed)') && b.name && b.name !== '(unnamed)') r.name = b.name;
+      if (!r.handle && b.handle) r.handle = b.handle;
+      map.set(b.key, r);
+    }
+    return Array.from(map.values())
+      .map(r => ({ name: r.name, handle: r.handle, bids: r.bids, lots: r.lots.size }))
+      .sort((a, b) => b.bids - a.bids || a.name.localeCompare(b.name));
+  }, [filteredBidderRecords]);
+
+  function openBuyerDrill(key: string, name: string) {
+    setDrill({ kind: 'sales', title: `${name} — purchases`, events: filteredEvents.filter(e => buyerKeyOf(e) === key), showProfit: false });
+  }
 
   if (loading) {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
@@ -301,20 +398,31 @@ export default function SalesMetricsPage() {
             style={{ padding: '6px 14px', fontSize: 13, fontWeight: 700, border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)', cursor: 'pointer' }}>
             {RANGES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
           </select>
+          <button type="button" onClick={() => setDrill({ kind: 'bidders', title: 'Unique bidders' })}
+            className="btn btn-primary btn-sm" title="See everyone who bid in your auctions">
+            👤 Unique bidders ({uniqueBidders.length})
+          </button>
           <span style={{ fontSize: 12, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
             Profit assumes $0 cost when a listing&apos;s cost is missing.
           </span>
         </div>
 
-        {/* KPI cards */}
+        {/* KPI cards — click any card to drill into the underlying transactions */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 22 }}>
-          <Kpi label="Revenue" value={fmtMoneyLong(kpis.revenue)} accent />
-          <Kpi label="Profit" value={fmtMoneyLong(kpis.profit)} sub={kpis.cost > 0 ? `${fmtMoney(kpis.cost)} cost` : 'no cost data'} />
-          <Kpi label="Auction $" value={fmtMoney(kpis.auctionRev)} />
-          <Kpi label="Claim sale $" value={fmtMoney(kpis.claimRev)} />
-          <Kpi label="Marketplace $" value={fmtMoney(kpis.marketRev)} />
-          <Kpi label="Sales (count)" value={String(kpis.sales)} />
-          <Kpi label="Unique buyers" value={String(kpis.uniqueBuyers)} />
+          <Kpi label="Revenue" value={fmtMoneyLong(kpis.revenue)} accent
+            onClick={() => setDrill({ kind: 'sales', title: 'Revenue — all transactions', events: filteredEvents, showProfit: false })} />
+          <Kpi label="Profit" value={fmtMoneyLong(kpis.profit)} sub={kpis.cost > 0 ? `${fmtMoney(kpis.cost)} cost` : 'no cost data'}
+            onClick={() => setDrill({ kind: 'sales', title: 'Profit — all transactions', events: filteredEvents, showProfit: true })} />
+          <Kpi label="Auction $" value={fmtMoney(kpis.auctionRev)}
+            onClick={() => setDrill({ kind: 'sales', title: 'Auction transactions', events: filteredEvents.filter(e => e.source === 'auction'), showProfit: false })} />
+          <Kpi label="Claim sale $" value={fmtMoney(kpis.claimRev)}
+            onClick={() => setDrill({ kind: 'sales', title: 'Claim sale transactions', events: filteredEvents.filter(e => e.source === 'claim'), showProfit: false })} />
+          <Kpi label="Marketplace $" value={fmtMoney(kpis.marketRev)}
+            onClick={() => setDrill({ kind: 'sales', title: 'Marketplace transactions', events: filteredEvents.filter(e => e.source === 'marketplace'), showProfit: false })} />
+          <Kpi label="Sales (count)" value={String(kpis.sales)}
+            onClick={() => setDrill({ kind: 'sales', title: 'All sales', events: filteredEvents, showProfit: false })} />
+          <Kpi label="Unique buyers" value={String(kpis.uniqueBuyers)}
+            onClick={() => setDrill({ kind: 'buyers', title: 'Unique buyers' })} />
         </div>
 
         {/* Monthly revenue / profit chart */}
@@ -369,7 +477,11 @@ export default function SalesMetricsPage() {
 
         {/* Bidder activity chart */}
         <section className="panel-bordered" style={{ padding: '20px 22px', marginBottom: 18 }}>
-          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Bidder activity</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <div className="display" style={{ fontSize: 18, color: 'var(--plum)', flex: 1 }}>Bidder activity</div>
+            <button type="button" onClick={() => setDrill({ kind: 'bidders', title: 'Unique bidders' })}
+              className="btn btn-ghost btn-sm">View bidders →</button>
+          </div>
           {monthly.length === 0 ? (
             <EmptyState text="No bid activity in this range yet." />
           ) : (
@@ -382,7 +494,10 @@ export default function SalesMetricsPage() {
 
         {/* Top buyers */}
         <section className="panel-bordered" style={{ padding: '20px 22px', marginBottom: 18 }}>
-          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Top buyers</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12 }}>
+            <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>Top buyers</div>
+            <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>click a buyer to see what they purchased</span>
+          </div>
           {topBuyers.length === 0 ? (
             <EmptyState text="No paid sales in this range yet." />
           ) : (
@@ -398,8 +513,10 @@ export default function SalesMetricsPage() {
               </thead>
               <tbody>
                 {topBuyers.map((b, i) => (
-                  <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
-                    <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--plum)', fontWeight: 600 }}>{b.name}</td>
+                  <tr key={i} onClick={() => openBuyerDrill(b.key, b.name)}
+                    style={{ borderTop: '1px solid var(--rule)', cursor: 'pointer' }}
+                    title={`See ${b.name}'s purchases`}>
+                    <td style={{ padding: '8px 12px', fontSize: 13, color: 'var(--teal)', fontWeight: 700, textDecoration: 'underline' }}>{b.name}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 12, color: 'var(--plum)' }}>{b.count}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 12, color: 'var(--ink-soft)' }}>{b.auction}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', fontSize: 12, color: 'var(--ink-soft)' }}>{b.claim}</td>
@@ -411,17 +528,35 @@ export default function SalesMetricsPage() {
           )}
         </section>
       </div>
+
+      {drill && (
+        <DrillOverlay
+          drill={drill}
+          buyers={buyersAgg}
+          bidders={uniqueBidders}
+          onClose={() => setDrill(null)}
+          onSelectBuyer={openBuyerDrill}
+        />
+      )}
     </div>
   );
 }
 
-function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
+function Kpi({ label, value, sub, accent, onClick }: { label: string; value: string; sub?: string; accent?: boolean; onClick?: () => void }) {
   return (
-    <div className="panel-bordered" style={{ padding: '12px 16px' }}>
+    <button type="button" onClick={onClick} disabled={!onClick}
+      className="panel-bordered"
+      title={onClick ? 'Click for details' : undefined}
+      style={{
+        padding: '12px 16px', textAlign: 'left', font: 'inherit', width: '100%',
+        background: 'var(--paper)', cursor: onClick ? 'pointer' : 'default',
+        position: 'relative',
+      }}>
       <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 4 }}>{label}</div>
       <div className="display" style={{ fontSize: 22, color: accent ? 'var(--orange)' : 'var(--plum)', fontWeight: 700 }}>{value}</div>
       {sub && <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginTop: 2 }}>{sub}</div>}
-    </div>
+      {onClick && <div style={{ position: 'absolute', top: 8, right: 10, fontSize: 11, color: 'var(--ink-mute)' }}>›</div>}
+    </button>
   );
 }
 
@@ -449,5 +584,134 @@ function Mini({ chart, rows, max, color }: { chart: string; rows: { key: string;
         })}
       </div>
     </div>
+  );
+}
+
+type BuyerAgg = { key: string; name: string; spend: number; count: number; auction: number; claim: number };
+type BidderAgg = { name: string; handle: string | null; bids: number; lots: number };
+
+function DrillOverlay({ drill, buyers, bidders, onClose, onSelectBuyer }: {
+  drill: Drill;
+  buyers: BuyerAgg[];
+  bidders: BidderAgg[];
+  onClose: () => void;
+  onSelectBuyer: (key: string, name: string) => void;
+}) {
+  return (
+    <div onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(63, 27, 56, 0.55)', zIndex: 100, display: 'grid', placeItems: 'center', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} className="panel-bordered"
+        style={{ background: 'var(--cream)', maxWidth: 720, width: '100%', maxHeight: '82vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '14px 18px', borderBottom: '2px solid var(--plum)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="display" style={{ fontSize: 17, color: 'var(--plum)', flex: 1 }}>{drill.title}</div>
+          <button onClick={onClose} className="btn btn-ghost btn-sm">✕ Close</button>
+        </div>
+        <div style={{ overflowY: 'auto' }}>
+          {drill.kind === 'sales' && <SalesTable events={drill.events} showProfit={drill.showProfit} />}
+          {drill.kind === 'buyers' && <BuyersTable buyers={buyers} onSelectBuyer={onSelectBuyer} />}
+          {drill.kind === 'bidders' && <BiddersTable bidders={bidders} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SalesTable({ events, showProfit }: { events: SaleEvent[]; showProfit: boolean }) {
+  if (events.length === 0) return <EmptyState text="No transactions in this view." />;
+  const rows = [...events].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const totalRev = rows.reduce((s, e) => s + e.revenue, 0);
+  const totalProfit = rows.reduce((s, e) => s + (e.revenue - e.cost), 0);
+  const th: React.CSSProperties = { padding: '8px 14px', textAlign: 'left', position: 'sticky', top: 0 };
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <tr>
+          <th style={th}>Date</th>
+          <th style={th}>Source</th>
+          <th style={th}>Item</th>
+          <th style={th}>Buyer</th>
+          <th style={{ ...th, textAlign: 'right' }}>Revenue</th>
+          {showProfit && <th style={{ ...th, textAlign: 'right' }}>Profit</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((e, i) => (
+          <tr key={i} style={{ borderTop: '1px solid var(--rule)', fontSize: 12.5, color: 'var(--plum)' }}>
+            <td className="mono" style={{ padding: '7px 14px', whiteSpace: 'nowrap' }}>{fmtDate(e.date)}</td>
+            <td style={{ padding: '7px 14px' }}>{sourceLabel(e.source)}</td>
+            <td style={{ padding: '7px 14px' }}>{e.itemLabel || <span style={{ color: 'var(--ink-mute)' }}>—</span>}</td>
+            <td style={{ padding: '7px 14px' }}>{e.buyerName || <span style={{ color: 'var(--ink-mute)' }}>—</span>}</td>
+            <td className="mono" style={{ padding: '7px 14px', textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>{fmtMoneyLong(e.revenue)}</td>
+            {showProfit && (
+              <td className="mono" style={{ padding: '7px 14px', textAlign: 'right', fontWeight: 700, color: (e.revenue - e.cost) >= 0 ? 'var(--teal)' : 'var(--rust)' }}>
+                {e.cost > 0 ? fmtMoneyLong(e.revenue - e.cost) : <span title="No cost recorded — profit assumes $0 cost" style={{ color: 'var(--ink-mute)' }}>{fmtMoneyLong(e.revenue)}*</span>}
+              </td>
+            )}
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr style={{ borderTop: '2px solid var(--plum)', background: 'var(--paper)' }}>
+          <td colSpan={4} style={{ padding: '9px 14px', fontWeight: 700, fontSize: 12, color: 'var(--plum)' }}>{rows.length} transaction{rows.length === 1 ? '' : 's'}</td>
+          <td className="mono" style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--orange)' }}>{fmtMoneyLong(totalRev)}</td>
+          {showProfit && <td className="mono" style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--teal)' }}>{fmtMoneyLong(totalProfit)}</td>}
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+function BuyersTable({ buyers, onSelectBuyer }: { buyers: BuyerAgg[]; onSelectBuyer: (key: string, name: string) => void }) {
+  if (buyers.length === 0) return <EmptyState text="No buyers in this range yet." />;
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <tr>
+          <th style={{ padding: '8px 14px', textAlign: 'left' }}>Buyer</th>
+          <th style={{ padding: '8px 14px', textAlign: 'right' }}>Sales</th>
+          <th style={{ padding: '8px 14px', textAlign: 'right' }}>Auction</th>
+          <th style={{ padding: '8px 14px', textAlign: 'right' }}>Claim</th>
+          <th style={{ padding: '8px 14px', textAlign: 'right' }}>Spend</th>
+        </tr>
+      </thead>
+      <tbody>
+        {buyers.map((b, i) => (
+          <tr key={i} onClick={() => onSelectBuyer(b.key, b.name)}
+            style={{ borderTop: '1px solid var(--rule)', cursor: 'pointer' }} title={`See ${b.name}'s purchases`}>
+            <td style={{ padding: '7px 14px', fontSize: 13, color: 'var(--teal)', fontWeight: 700, textDecoration: 'underline' }}>{b.name}</td>
+            <td style={{ padding: '7px 14px', textAlign: 'right', fontSize: 12, color: 'var(--plum)' }}>{b.count}</td>
+            <td style={{ padding: '7px 14px', textAlign: 'right', fontSize: 12, color: 'var(--ink-soft)' }}>{b.auction}</td>
+            <td style={{ padding: '7px 14px', textAlign: 'right', fontSize: 12, color: 'var(--ink-soft)' }}>{b.claim}</td>
+            <td className="mono" style={{ padding: '7px 14px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>{fmtMoneyLong(b.spend)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function BiddersTable({ bidders }: { bidders: BidderAgg[] }) {
+  if (bidders.length === 0) return <EmptyState text="No recorded bids in this range yet." />;
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <tr>
+          <th style={{ padding: '8px 14px', textAlign: 'left' }}>Bidder</th>
+          <th style={{ padding: '8px 14px', textAlign: 'left' }}>FB handle</th>
+          <th style={{ padding: '8px 14px', textAlign: 'right' }} title="Recorded bids placed">Bids</th>
+          <th style={{ padding: '8px 14px', textAlign: 'right' }} title="Distinct lots bid on">Lots</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bidders.map((b, i) => (
+          <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
+            <td style={{ padding: '7px 14px', fontSize: 13, color: 'var(--plum)', fontWeight: 600 }}>{b.name}</td>
+            <td className="mono" style={{ padding: '7px 14px', fontSize: 12, color: 'var(--teal)' }}>{b.handle ? `@${b.handle}` : <span style={{ color: 'var(--ink-mute)' }}>—</span>}</td>
+            <td className="mono" style={{ padding: '7px 14px', textAlign: 'right', fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>{b.bids}</td>
+            <td className="mono" style={{ padding: '7px 14px', textAlign: 'right', fontSize: 13, color: 'var(--ink-soft)' }}>{b.lots}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
