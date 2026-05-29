@@ -85,6 +85,15 @@ function fmtMoney(n: number | null | undefined): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
 
+// Stable identity for a bidder: prefer the linked profile id, fall back to a
+// normalized name. Returns null when there's nothing to key on. Shared by the
+// snapshot's unique/winning bidder counts so both lenses dedupe the same way.
+function bidderKey(bidderId: string | null | undefined, bidderName: string | null | undefined): string | null {
+  if (bidderId) return `id:${bidderId}`;
+  const n = (bidderName || '').trim().toLowerCase();
+  return n ? `name:${n}` : null;
+}
+
 function shortLotLabel(lot: LotRow): string {
   const l = lot.listing;
   if (!l) return `Lot #${lot.lot_number}`;
@@ -108,7 +117,10 @@ export default function FbAuctionsPage() {
   const [loading, setLoading] = useState(true);
   const [auctions, setAuctions] = useState<AuctionRow[]>([]);
   const [filter, setFilter] = useState<StatusFilter>('live');
-  const [dateRange, setDateRange] = useState<DateRange>('all');
+  // The Live tab defaults to "Past week" so the Sales $ snapshot focuses on
+  // recent activity; other tabs default to all time. Switching tabs resets the
+  // window to that tab's default (the seller can still override it).
+  const [dateRange, setDateRange] = useState<DateRange>('week');
 
   const [selectedDrafts, setSelectedDrafts] = useState<Set<string>>(new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
@@ -117,6 +129,10 @@ export default function FbAuctionsPage() {
   const [savingLots, setSavingLots] = useState<Set<string>>(new Set());
   const [savingPostUrls, setSavingPostUrls] = useState<Set<string>>(new Set());
   const [lotStats, setLotStats] = useState<Map<string, LotBidStats>>(new Map());
+  // lot_id → set of identity keys for every bidder ever recorded on that lot
+  // (from the bid-event log). Drives the "Unique bidders" snapshot, which counts
+  // everyone who bid — not just the current/winning high bidder.
+  const [bidderKeysByLot, setBidderKeysByLot] = useState<Map<string, Set<string>>>(new Map());
   const [userId, setUserId] = useState<string | null>(null);
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
@@ -195,6 +211,21 @@ export default function FbAuctionsPage() {
       const allLotIds = aucData.flatMap(a => a.fb_auction_lots.map(l => l.id));
       const stats = await fetchLotBidStats(supabase, allLotIds);
       setLotStats(stats);
+      // Every recorded bid (not just current high bids) so the snapshot can count
+      // all unique bidders per lot. Skip silently if the table isn't there yet.
+      const { data: eventRows } = await supabase
+        .from('fb_auction_bid_events')
+        .select('lot_id, bidder_id, bidder_name')
+        .eq('user_id', user.id);
+      const keysByLot = new Map<string, Set<string>>();
+      for (const e of (eventRows || []) as { lot_id: string; bidder_id: string | null; bidder_name: string | null }[]) {
+        const key = bidderKey(e.bidder_id, e.bidder_name);
+        if (!key) continue;
+        const set = keysByLot.get(e.lot_id) || new Set<string>();
+        set.add(key);
+        keysByLot.set(e.lot_id, set);
+      }
+      setBidderKeysByLot(keysByLot);
       // Imported historical FB auction sales (won) — fold into Sales $.
       const { data: histRows } = await supabase
         .from('historical_transactions')
@@ -293,26 +324,42 @@ export default function FbAuctionsPage() {
 
   // Quick-glance metrics across whatever's currently filtered. Each $ figure
   // answers a different question for the seller:
-  //   activeBids = $ in flight on still-open lots
-  //   outstanding = $ owed by buyers whose lots ended without payment
-  //   sales = $ that has actually been collected (paid lots)
+  //   activeBids  = $ in flight on still-open (LIVE) lots
+  //   outstanding = $ owed by buyers whose lots ENDED without payment yet
+  //   sales       = total $ that has sold: ENDED (won, awaiting payment) + SOLD
+  //                 (paid). This matches the detail page's "Gross" figure so a
+  //                 lot counts as a sale the moment it closes with a winner.
+  // Bidder counts come in two lenses so accounting is unambiguous:
+  //   uniqueBidders  = everyone who placed a bid on the filtered lots (active +
+  //                    closed), from the bid-event log — not just high bidders.
+  //   winningBidders = distinct high/winning bidders on ENDED + SOLD lots.
   const metrics = useMemo(() => {
     let totalLots = 0;
     let activeBids = 0;
-    let outstanding = 0;
-    let sales = 0;
-    const bidderKeys = new Set<string>();
+    let outstanding = 0;   // ENDED, awaiting payment (lot status 'sold')
+    let collected = 0;     // SOLD, payment received (lot status 'paid')
+    const allBidderKeys = new Set<string>();      // every bidder, active + closed
+    const winningBidderKeys = new Set<string>();  // winning bidder on ended + sold
     for (const a of filtered) {
       totalLots += a.fb_auction_lots.length;
       for (const l of a.fb_auction_lots) {
         const v = l.current_bid || 0;
         if (l.status === 'open') activeBids += v;
         if (l.status === 'sold') outstanding += v;
-        if (l.status === 'paid') sales += v;
-        if (l.bidder_id) bidderKeys.add(`id:${l.bidder_id}`);
-        else if (l.bidder_name && l.bidder_name.trim()) bidderKeys.add(`name:${l.bidder_name.trim().toLowerCase()}`);
+        if (l.status === 'paid') collected += v;
+        // Everyone recorded on this lot from the bid-event log…
+        const recorded = bidderKeysByLot.get(l.id);
+        if (recorded) for (const k of recorded) allBidderKeys.add(k);
+        // …plus the current high/winning bidder, in case events weren't logged.
+        const leadKey = bidderKey(l.bidder_id, l.bidder_name);
+        if (leadKey) {
+          allBidderKeys.add(leadKey);
+          if (l.status === 'sold' || l.status === 'paid') winningBidderKeys.add(leadKey);
+        }
       }
     }
+    // Total sales = ended (won) + sold (paid).
+    let sales = outstanding + collected;
     // Fold imported historical FB auction sales into Sales $ within the same date window.
     const cutoff = dateRangeMs(dateRange);
     const since = cutoff ? Date.now() - cutoff : null;
@@ -323,8 +370,12 @@ export default function FbAuctionsPage() {
       }
       sales += h.amount;
     }
-    return { totalLots, activeBids, outstanding, sales, uniqueBidders: bidderKeys.size };
-  }, [filtered, historicalSales, dateRange]);
+    return {
+      totalLots, activeBids, outstanding, sales,
+      uniqueBidders: allBidderKeys.size,
+      winningBidders: winningBidderKeys.size,
+    };
+  }, [filtered, historicalSales, dateRange, bidderKeysByLot]);
 
   function toggleDraftSelect(id: string) {
     setSelectedDrafts(prev => {
@@ -437,6 +488,18 @@ export default function FbAuctionsPage() {
           const fresh = await fetchLotBidStats(supabase, [lotId]);
           const stat = fresh.get(lotId);
           if (stat) setLotStats(prev => { const next = new Map(prev); next.set(lotId, stat); return next; });
+          // Record this bidder against the lot so the "Unique bidders" snapshot
+          // reflects the new bid without a full reload.
+          const recordedKey = bidderKey(bidderId, newName);
+          if (recordedKey) {
+            setBidderKeysByLot(prev => {
+              const next = new Map(prev);
+              const set = new Set(next.get(lotId) || []);
+              set.add(recordedKey);
+              next.set(lotId, set);
+              return next;
+            });
+          }
         }
       }
     }
@@ -582,12 +645,16 @@ export default function FbAuctionsPage() {
           {(filter === 'all' || filter === 'live' || filter === 'settled') && (
             <MetricCard label="Sales $" value={fmtMoney(metrics.sales)} accent={filter !== 'ended'} />
           )}
-          <MetricCard label="Unique bidders" value={String(metrics.uniqueBidders)} />
+          {filter === 'settled' ? (
+            <MetricCard label="Unique / Winning bidders" value={`${metrics.uniqueBidders} / ${metrics.winningBidders}`} />
+          ) : (
+            <MetricCard label="Unique bidders" value={String(metrics.uniqueBidders)} />
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
           {STATUS_FILTERS.map(f => (
-            <button key={f} onClick={() => { setFilter(f); setSelectedDrafts(new Set()); }}
+            <button key={f} onClick={() => { setFilter(f); setDateRange(f === 'live' ? 'week' : 'all'); setSelectedDrafts(new Set()); }}
               className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-ghost'}`}>
               {f === 'all' ? 'All' : statusLabel(f)}
               <span style={{ marginLeft: 6, opacity: 0.8 }}>
