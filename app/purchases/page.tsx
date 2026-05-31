@@ -233,8 +233,16 @@ export default function PurchasesPage() {
                       </div>
                       <div className="mono" style={{ fontSize: 9.5, color: 'var(--ink-mute)' }}>{p.shipping_label}</div>
                     </div>
-                    <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)' }}>
-                      View Details →
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                      {p.order_id && (
+                        <Link href={`/orders/${p.order_id}`} onClick={(e) => e.stopPropagation()}
+                          className="eyebrow" style={{ fontSize: 9, color: 'var(--teal)', textDecoration: 'none' }}>
+                          🧾 View Invoice →
+                        </Link>
+                      )}
+                      <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)' }}>
+                        View Details →
+                      </div>
                     </div>
                   </div>
                 </div>
