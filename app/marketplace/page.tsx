@@ -4,7 +4,9 @@ import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import SCLogo from '@/components/SCLogo';
+import Pagination from '@/components/Pagination';
 import { thumbUrl } from '@/lib/image-transform';
 import { RAW_GRADES } from '@/lib/listingTitle';
 
@@ -160,6 +162,9 @@ function MarketplacePageInner() {
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [view, setView] = useState<'grid' | 'list'>('grid');
+  // Display pagination — defaults to 100 per page, expandable to 500.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [buyTarget, setBuyTarget] = useState<MarketplaceListing | null>(null);
@@ -286,13 +291,16 @@ function MarketplacePageInner() {
       if (!user) { router.push('/login'); return; }
       setCurrentUserId(user.id);
 
-      const [{ data: rows }, { data: setRows }] = await Promise.all([
-        supabase
+      // Page past PostgREST's default 1000-row cap so every active listing is
+      // searchable — not just the most recent 1000.
+      const [rows, { data: setRows }] = await Promise.all([
+        fetchAll((from, to) => supabase
           .from('listings')
           .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at, listing_type, set_slug')
           .eq('status', 'active')
           .gt('asking_price', 0)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .range(from, to)),
         supabase
           .from('sets')
           .select('year, brand, rows')
@@ -408,6 +416,16 @@ function MarketplacePageInner() {
     return filteredArr;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listings, currentUserId, conditionFilter, rawMin, rawMax, gradedMin, gradedMax, minPrice, maxPrice, search, wantListOnly, wantListKeys]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Any filter change resets to page 1; clamp if filtering shrinks the result
+  // set below the current page.
+  useEffect(() => { setPage(1); }, [search, conditionFilter, rawMin, rawMax, gradedMin, gradedMax, minPrice, maxPrice, wantListOnly]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
 
   const wantListMatchCount = useMemo(
     () => listings.filter(l => l.user_id !== currentUserId && isOnWantList(l)).length,
@@ -541,6 +559,12 @@ function MarketplacePageInner() {
           </div>
         </div>
 
+        <Pagination
+          total={filtered.length} page={page} pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={s => { setPageSize(s); setPage(1); }}
+        />
+
         {filtered.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No listings match</div>
@@ -551,7 +575,7 @@ function MarketplacePageInner() {
             display: 'grid', gap: 16,
             gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
           }}>
-            {filtered.map(l => (
+            {paged.map(l => (
               <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                                 <div
                   onClick={() => l.photos && l.photos.length > 0 && setLightboxPhotos(l.photos)}
@@ -614,7 +638,7 @@ function MarketplacePageInner() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {filtered.map(l => (
+            {paged.map(l => (
               <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', alignItems: 'stretch' }}>
                                 <div
                   onClick={() => l.photos && l.photos.length > 0 && setLightboxPhotos(l.photos)}
@@ -681,6 +705,12 @@ function MarketplacePageInner() {
             ))}
                                   </div>
         )}
+
+        <Pagination
+          total={filtered.length} page={page} pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={s => { setPageSize(s); setPage(1); }}
+        />
       </div>
 
       {/* Sticky cart bar — only shows when at least one item is in the cart. */}
