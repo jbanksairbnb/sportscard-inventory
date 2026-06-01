@@ -6,9 +6,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
 import SCLogo from '@/components/SCLogo';
+import Pagination from '@/components/Pagination';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 import MarketResearchModal from '@/components/MarketResearchModal';
 import PhotoEditor from '@/components/PhotoEditor';
@@ -266,6 +268,9 @@ function ListingsPageContent() {
   // listing is hidden behind the wrong status. Cleared after 3s.
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Display pagination — defaults to 100 per page, expandable to 500.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
   const [editing, setEditing] = useState<Partial<Listing> | null>(null);
   const [saving, setSaving] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
@@ -297,13 +302,17 @@ function ListingsPageContent() {
         .maybeSingle();
       const defaults = (profile?.default_shipping_options as ShippingOption[] | null) || [];
       setDefaultShipping(defaults);
-        const { data } = await supabase
+      // Fetch the full inventory, not just PostgREST's default first 1000 rows —
+      // otherwise the oldest cards (by created_at) fall off the end and vanish
+      // from the tab counts and the client-side search.
+      const data = await fetchAll<Listing>((from, to) => supabase
         .from('listings')
         .select('*')
         .eq('user_id', user.id)
         .neq('status', 'removed')
-        .order('created_at', { ascending: false });
-      setListings((data || []) as Listing[]);
+        .order('created_at', { ascending: false })
+        .range(from, to));
+      setListings(data as Listing[]);
 
       const { data: purchaseRows } = await supabase
         .from('purchases')
@@ -452,6 +461,16 @@ function ListingsPageContent() {
     });
     return arr;
   }, [listings, filter, searchQuery, purchasesByListing]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Changing tab or search resets to the first page; if the active page no
+  // longer exists after filtering, snap back to the last valid one.
+  useEffect(() => { setPage(1); }, [filter, searchQuery]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
 
   function openNew() {
     setFormError('');
@@ -959,7 +978,12 @@ function ListingsPageContent() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                       {filtered.map(l => {
+            <Pagination
+              total={filtered.length} page={page} pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={s => { setPageSize(s); setPage(1); }}
+            />
+            {paged.map(l => {
               const profit = l.status === 'sold' && l.sold_price !== null && l.cost !== null ? l.sold_price - l.cost : null;
               const statusBg = l.status === 'active' ? 'var(--teal)' : l.status === 'sold' ? 'var(--plum)' : 'var(--mustard)';
               const statusFg = l.status === 'draft' ? 'var(--plum)' : 'var(--cream)';
@@ -1119,6 +1143,11 @@ function ListingsPageContent() {
                 </div>
               );
             })}
+            <Pagination
+              total={filtered.length} page={page} pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={s => { setPageSize(s); setPage(1); }}
+            />
           </div>
         )}
       </div>
