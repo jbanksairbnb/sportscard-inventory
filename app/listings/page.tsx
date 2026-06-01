@@ -17,6 +17,19 @@ import { thumbUrl } from '@/lib/image-transform';
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
 
+// Sold listings are split into sub-buckets by the linked order's payment stage:
+//   Claimed = buyer committed but hasn't paid (purchase 'unpaid')
+//   Sold    = paid, not yet shipped         (purchase 'paid')
+//   Shipped = shipped or received           (purchase 'shipped'|'completed')
+type FilterTab = 'active' | 'draft' | 'claimed' | 'sold' | 'shipped' | 'all';
+type SoldBucket = 'claimed' | 'sold' | 'shipped';
+function soldBucketOf(p?: { status: string } | null): SoldBucket {
+  const s = p?.status;
+  if (s === 'paid') return 'sold';
+  if (s === 'shipped' || s === 'completed') return 'shipped';
+  return 'claimed';
+}
+
 // `cost` is the price for the first card. `additional_cost` is added per
 // additional card when multiple listings ship together (default 0). `cap`
 // caps the total combined-shipping charge for that label (null/undefined =
@@ -247,7 +260,7 @@ function ListingsPageContent() {
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
-  const [filter, setFilter] = useState<'draft' | 'active' | 'sold' | 'all'>('active');
+  const [filter, setFilter] = useState<FilterTab>('active');
   // ?focus=<listing-id> from a 🔗 View listing link on /set/[slug].
   // Highlights the card briefly + auto-switches the filter tab if the
   // listing is hidden behind the wrong status. Cleared after 3s.
@@ -326,8 +339,15 @@ function ListingsPageContent() {
     if (!focusId || loading || listings.length === 0) return;
     const target = listings.find(l => l.id === focusId);
     if (!target) return;
-    if (filter !== 'all' && target.status !== filter) {
-      setFilter(target.status === 'removed' ? 'all' : (target.status as 'draft' | 'active' | 'sold'));
+    if (filter !== 'all') {
+      // Sold listings live in a sub-bucket (Claimed/Sold/Shipped) keyed off the
+      // linked order, so resolve to that rather than the raw 'sold' status.
+      const targetTab: FilterTab = target.status === 'removed'
+        ? 'all'
+        : target.status === 'sold'
+          ? soldBucketOf(purchasesByListing[target.id])
+          : (target.status as FilterTab);
+      if (filter !== targetTab) setFilter(targetTab);
     }
     setFocusedId(focusId);
     // Wait a tick for the (possibly filter-switched) DOM to render before
@@ -384,11 +404,15 @@ function ListingsPageContent() {
     router.replace('/listings');
   }, [userId, searchParams, router, defaultShipping]);
 
-  const counts = {
-    draft: listings.filter(l => l.status === 'draft').length,
-    active: listings.filter(l => l.status === 'active').length,
-    sold: listings.filter(l => l.status === 'sold').length,
-  };
+  const counts = useMemo(() => {
+    const c = { draft: 0, active: 0, claimed: 0, sold: 0, shipped: 0 };
+    for (const l of listings) {
+      if (l.status === 'draft') c.draft++;
+      else if (l.status === 'active') c.active++;
+      else if (l.status === 'sold') c[soldBucketOf(purchasesByListing[l.id])]++;
+    }
+    return c;
+  }, [listings, purchasesByListing]);
   const metrics = useMemo(() => {
     let activeTotal = 0;
     let soldTotal = 0;
@@ -399,7 +423,10 @@ function ListingsPageContent() {
     return { activeTotal, soldTotal };
   }, [listings]);
   const filtered = useMemo(() => {
-    let arr = filter === 'all' ? listings : listings.filter(l => l.status === filter);
+    let arr: Listing[];
+    if (filter === 'all') arr = listings;
+    else if (filter === 'active' || filter === 'draft') arr = listings.filter(l => l.status === filter);
+    else arr = listings.filter(l => l.status === 'sold' && soldBucketOf(purchasesByListing[l.id]) === filter);
     const q = searchQuery.trim();
     if (q) {
       const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -424,7 +451,7 @@ function ListingsPageContent() {
       return (a.player || '').localeCompare(b.player || '');
     });
     return arr;
-  }, [listings, filter, searchQuery]);
+  }, [listings, filter, searchQuery, purchasesByListing]);
 
   function openNew() {
     setFormError('');
@@ -839,7 +866,7 @@ function ListingsPageContent() {
           <ListingsMetricCard label="Sold total" value={fmtMoney(metrics.soldTotal)} accent />
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 24 }}>
-          {(['active', 'draft', 'sold', 'all'] as const).map(f => (
+          {(['active', 'draft', 'claimed', 'sold', 'shipped', 'all'] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -1038,10 +1065,17 @@ function ListingsPageContent() {
                               purchase.buyer_name
                             )}
                           </span>
-                          <button type="button" onClick={() => setOpenPurchaseId(purchase.id)}
-                            className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
-                            View Details →
-                          </button>
+                          {purchase.order_id ? (
+                            <Link href={`/orders/${purchase.order_id}`}
+                              className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                              View Invoice →
+                            </Link>
+                          ) : (
+                            <button type="button" onClick={() => setOpenPurchaseId(purchase.id)}
+                              className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}>
+                              View Details →
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

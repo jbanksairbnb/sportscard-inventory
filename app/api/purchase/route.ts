@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { ensureOrderForPurchases } from '@/lib/orders'
 
 const PLUM = '#3d1f4a'
 const ORANGE = '#e8742c'
@@ -155,6 +156,10 @@ export async function POST(req: NextRequest) {
   if (user.id !== purchase.buyer_id && user.id !== purchase.seller_id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // Group this card under an order so it appears on a shared invoice, even when
+  // it's a single-card purchase (a 1-line order).
+  await ensureOrderForPurchases(admin, [purchaseId])
 
   const { data: profiles } = await admin
     .from('user_profiles')

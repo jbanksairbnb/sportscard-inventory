@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { ensureOrderForPurchases } from '@/lib/orders'
 
 // Brand colors (kept in sync with /api/purchase/route.ts)
 const PLUM = '#3d1f4a'
@@ -192,6 +193,9 @@ export async function POST(req: NextRequest) {
   if (user.id !== buyerId && user.id !== sellerId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // Tie every card in the cart together under one order / invoice.
+  await ensureOrderForPurchases(admin, purchaseIds as string[])
 
   const { data: profiles } = await admin
     .from('user_profiles')

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 
 export type PurchaseDetail = {
   id: string;
+  order_id: string | null;
   listing_id: string;
   buyer_id: string;
   seller_id: string;
