@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { replaceImageBg } from '@/lib/collageBg';
-import { setListingsStatus } from '@/lib/listingStatusSync';
+import { syncClaimListing } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
 type Status = 'draft' | 'live' | 'closed' | 'settled';
@@ -400,27 +400,28 @@ export default function ManageClaimSalePage() {
     const idSet = new Set(ids);
     setItems(prev => prev.map(i => idSet.has(i.id) ? { ...i, claim_status } : i));
     if (userId) {
-      const lockIds = buyerItems
-        .filter(i => i.claim_status === 'open' && claim_status !== 'open' && i.listing?.id)
-        .map(i => i.listing!.id);
-      const unlockIds = buyerItems
-        .filter(i => i.claim_status !== 'open' && claim_status === 'open' && i.listing?.id)
-        .map(i => i.listing!.id);
-      if (lockIds.length > 0) await setListingsStatus(supabase, userId, lockIds, 'sold', ['draft', 'active']);
-      if (unlockIds.length > 0) await setListingsStatus(supabase, userId, unlockIds, 'active', 'sold');
+      for (const i of buyerItems) {
+        if (!i.listing?.id || i.claim_status === claim_status) continue;
+        await syncClaimListing(supabase, userId, {
+          listing_id: i.listing.id,
+          claim_status,
+          price: i.price,
+        });
+      }
     }
     await syncSaleStatusAfter(ids.map(id => ({ id, claim_status })));
   }
 
-  // Lock or unlock the listing in My Listings based on claim transitions.
+  // Mirror the claim transition onto the listing in My Listings: status, sale
+  // channel (claim), claimed/sold state, and selling price.
   async function syncItemListing(supabase: ReturnType<typeof createClient>, item: Item, nextStatus: ClaimStatus) {
     if (!userId || !item.listing?.id) return;
     if (item.claim_status === nextStatus) return;
-    if (item.claim_status === 'open' && nextStatus !== 'open') {
-      await setListingsStatus(supabase, userId, [item.listing.id], 'sold', ['draft', 'active']);
-    } else if (item.claim_status !== 'open' && nextStatus === 'open') {
-      await setListingsStatus(supabase, userId, [item.listing.id], 'active', 'sold');
-    }
+    await syncClaimListing(supabase, userId, {
+      listing_id: item.listing.id,
+      claim_status: nextStatus,
+      price: item.price,
+    });
   }
 
   // Apply pending item-status updates to an in-memory copy of items, then
