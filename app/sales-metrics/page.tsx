@@ -115,7 +115,7 @@ export default function SalesMetricsPage() {
           .select('lot_id, price, claim_status, claim_buyer_id, claim_buyer_name, listing:listings(cost, year, brand, card_number, player, title)')
           .eq('user_id', user.id),
         supabase.from('listings')
-          .select('sold_at, sold_price, cost, status, year, brand, card_number, player, title')
+          .select('sold_at, sold_price, cost, status, sold_channel, year, brand, card_number, player, title')
           .eq('user_id', user.id)
           .eq('status', 'sold'),
         supabase.from('historical_transactions')
@@ -190,9 +190,13 @@ export default function SalesMetricsPage() {
           });
         }
       }
-      type MarketRow = ListingJoin & { sold_at: string | null; sold_price: number | null; status: string };
+      type MarketRow = ListingJoin & { sold_at: string | null; sold_price: number | null; status: string; sold_channel: string | null };
       for (const row of (marketRes.data || []) as MarketRow[]) {
         if (!row.sold_price) continue;
+        // FB auction/claim sales are counted from their own tables above; only
+        // genuine marketplace sales (or legacy rows with no channel) count here,
+        // so a mirrored FB price isn't double-counted as marketplace revenue.
+        if (row.sold_channel && row.sold_channel !== 'marketplace') continue;
         evs.push({
           source: 'marketplace',
           date: row.sold_at || new Date().toISOString(),

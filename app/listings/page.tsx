@@ -17,16 +17,29 @@ import { thumbUrl } from '@/lib/image-transform';
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
 
-// Sold listings are split into sub-buckets by the linked order's payment stage:
+// Sold listings are split into sub-buckets by payment stage. For a marketplace
+// sale the stage comes from the linked order/purchase:
 //   Claimed = buyer committed but hasn't paid (purchase 'unpaid')
 //   Sold    = paid, not yet shipped         (purchase 'paid')
 //   Shipped = shipped or received           (purchase 'shipped'|'completed')
+// FB sales (auction/claim) have no purchase, so the stage comes from the
+// listing's mirrored `sold_state`: 'claimed' → Claimed, 'sold' → Sold. FB
+// fulfilment isn't tracked here, so FB cards never land in Shipped.
 type FilterTab = 'active' | 'draft' | 'claimed' | 'sold' | 'shipped' | 'all';
 type SoldBucket = 'claimed' | 'sold' | 'shipped';
-function soldBucketOf(p?: { status: string } | null): SoldBucket {
-  const s = p?.status;
-  if (s === 'paid') return 'sold';
-  if (s === 'shipped' || s === 'completed') return 'shipped';
+function soldBucketOf(
+  l: { sold_channel?: string | null; sold_state?: string | null },
+  p?: { status: string } | null,
+): SoldBucket {
+  // Marketplace: the purchase/order drives the bucket.
+  if (p) {
+    const s = p.status;
+    if (s === 'paid') return 'sold';
+    if (s === 'shipped' || s === 'completed') return 'shipped';
+    return 'claimed';
+  }
+  // FB sale mirrored onto the listing.
+  if (l.sold_state === 'sold') return 'sold';
   return 'claimed';
 }
 
@@ -59,6 +72,8 @@ type Listing = {
   status: Status;
   sold_at: string | null;
   sold_price: number | null;
+  sold_channel: 'marketplace' | 'auction' | 'claim' | null;
+  sold_state: 'claimed' | 'sold' | null;
   source_set_slug: string | null;
   source_card_number: string | null;
   source_row_id: string | null;
@@ -345,7 +360,7 @@ function ListingsPageContent() {
       const targetTab: FilterTab = target.status === 'removed'
         ? 'all'
         : target.status === 'sold'
-          ? soldBucketOf(purchasesByListing[target.id])
+          ? soldBucketOf(target, purchasesByListing[target.id])
           : (target.status as FilterTab);
       if (filter !== targetTab) setFilter(targetTab);
     }
@@ -409,7 +424,7 @@ function ListingsPageContent() {
     for (const l of listings) {
       if (l.status === 'draft') c.draft++;
       else if (l.status === 'active') c.active++;
-      else if (l.status === 'sold') c[soldBucketOf(purchasesByListing[l.id])]++;
+      else if (l.status === 'sold') c[soldBucketOf(l, purchasesByListing[l.id])]++;
     }
     return c;
   }, [listings, purchasesByListing]);
@@ -426,7 +441,7 @@ function ListingsPageContent() {
     let arr: Listing[];
     if (filter === 'all') arr = listings;
     else if (filter === 'active' || filter === 'draft') arr = listings.filter(l => l.status === filter);
-    else arr = listings.filter(l => l.status === 'sold' && soldBucketOf(purchasesByListing[l.id]) === filter);
+    else arr = listings.filter(l => l.status === 'sold' && soldBucketOf(l, purchasesByListing[l.id]) === filter);
     const q = searchQuery.trim();
     if (q) {
       const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -993,6 +1008,16 @@ function ListingsPageContent() {
                         }}>
                           {l.status.toUpperCase()}
                         </span>
+                        {l.status === 'sold' && l.sold_channel && (
+                          <span title="Where this card sold"
+                            style={{
+                              fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', padding: '2px 8px', borderRadius: 100,
+                              background: l.sold_channel === 'auction' ? 'var(--teal)' : l.sold_channel === 'claim' ? 'var(--orange)' : 'var(--plum)',
+                              color: 'var(--cream)',
+                            }}>
+                            {l.sold_channel === 'auction' ? 'AUCTION' : l.sold_channel === 'claim' ? 'CLAIM SALE' : 'MARKETPLACE'}
+                          </span>
+                        )}
                         {l.status === 'active' && (!l.asking_price || l.asking_price <= 0) && (
                           <span title="Hidden from the marketplace until a price is set"
                             style={{

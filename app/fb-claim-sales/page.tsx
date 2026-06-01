@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
-import { setListingsStatus } from '@/lib/listingStatusSync';
+import { syncClaimListing } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
 type SaleStatus = 'draft' | 'live' | 'closed' | 'settled';
@@ -313,15 +313,16 @@ export default function ClaimSalesPage() {
     } else alert(error.message);
   }
 
-  // Lock or unlock the listing in My Listings based on this item's claim transition.
+  // Mirror this item's claim transition onto the listing in My Listings:
+  // status, sale channel (claim), claimed/sold state, and selling price.
   async function syncListingForItem(supabase: ReturnType<typeof createClient>, item: ItemRow, nextStatus: ClaimStatus) {
     if (!userId || !item.listing_id) return;
     if (item.claim_status === nextStatus) return;
-    if (item.claim_status === 'open' && nextStatus !== 'open') {
-      await setListingsStatus(supabase, userId, [item.listing_id], 'sold', ['draft', 'active']);
-    } else if (item.claim_status !== 'open' && nextStatus === 'open') {
-      await setListingsStatus(supabase, userId, [item.listing_id], 'active', 'sold');
-    }
+    await syncClaimListing(supabase, userId, {
+      listing_id: item.listing_id,
+      claim_status: nextStatus,
+      price: item.price,
+    });
   }
 
   async function syncSaleStatus(lotId: string, changedItemId: string, nextItemStatus: ClaimStatus) {
