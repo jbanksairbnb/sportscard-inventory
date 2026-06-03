@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Card Collage Builder</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #273449;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .drop {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    background: var(--panel);
+  }
+  .drop.dragover { border-color: var(--accent); background: var(--panel-2); }
+  .drop strong { color: var(--accent); }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 24px;
+    align-items: flex-end;
+    margin: 20px 0;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .field input[type="number"], .field select {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    min-width: 110px;
+  }
+  .field input[type="color"] {
+    width: 48px; height: 38px; padding: 2px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .field.check { flex-direction: row; align-items: center; gap: 8px; }
+  .field.check label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+  button {
+    background: var(--accent);
+    color: #04293a;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+  .thumb {
+    position: relative;
+    width: 84px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .thumb img { display: block; width: 100%; height: 84px; object-fit: contain; background: #000; }
+  .thumb .name { font-size: 10px; color: var(--muted); padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thumb .tag { position: absolute; top: 2px; left: 2px; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px; }
+  .thumb .tag.front { background: #22c55e; color: #052e16; }
+  .thumb .tag.back { background: #f59e0b; color: #3a2606; }
+  .sheets { margin-top: 24px; display: flex; flex-direction: column; gap: 24px; }
+  .sheet { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .sheet h3 { margin: 0 0 12px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .sheet canvas { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .hint { color: var(--muted); font-size: 13px; }
+  code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Card Collage Builder</h1>
+  <p>Combine individual card scans into grid sheets — fronts on top, backs on the bottom.</p>
+</header>
+<main>
+  <div class="drop" id="drop">
+    <p><strong>Click to choose images</strong> or drag &amp; drop them here.</p>
+    <p class="hint">Files are sorted by name. With <em>interleaved</em> ordering, upload them as
+      front, back, front, back, … (<code>0019, 0020, 0021, 0022, …</code>).</p>
+    <input type="file" id="file" accept="image/*" multiple hidden />
+  </div>
+
+  <div class="controls">
+    <div class="field">
+      <label for="cols">Cards per row</label>
+      <input type="number" id="cols" min="1" max="12" value="4" />
+    </div>
+    <div class="field">
+      <label for="order">Input order</label>
+      <select id="order">
+        <option value="interleaved" selected>Interleaved (F,B,F,B…)</option>
+        <option value="frontsThenBacks">All fronts, then all backs</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="cellw">Cell width (px)</label>
+      <input type="number" id="cellw" min="200" max="2400" step="50" value="700" />
+    </div>
+    <div class="field">
+      <label for="gap">Gap (px)</label>
+      <input type="number" id="gap" min="0" max="200" value="24" />
+    </div>
+    <div class="field">
+      <label for="bg">Background</label>
+      <input type="color" id="bg" value="#ffffff" />
+    </div>
+    <div class="field check">
+      <input type="checkbox" id="transparent" />
+      <label for="transparent">Transparent</label>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button id="build" disabled>Build sheets</button>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <button class="secondary" id="clear" disabled>Clear</button>
+    </div>
+  </div>
+
+  <div class="thumbs" id="thumbs"></div>
+  <div class="sheets" id="sheets"></div>
+</main>
+
+<script>
+(() => {
+  const dropEl = document.getElementById('drop');
+  const fileEl = document.getElementById('file');
+  const thumbsEl = document.getElementById('thumbs');
+  const sheetsEl = document.getElementById('sheets');
+  const buildBtn = document.getElementById('build');
+  const clearBtn = document.getElementById('clear');
+
+  /** @type {{name:string, img:HTMLImageElement}[]} */
+  let items = [];
+
+  function naturalSort(a, b) {
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => { URL.revokeObjectURL(url); resolve({ name: file.name, img }); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load ' + file.name)); };
+      img.src = url;
+    });
+  }
+
+  async function addFiles(fileList) {
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    if (!files.length) return;
+    const loaded = await Promise.all(files.map(loadImage));
+    items = items.concat(loaded).sort(naturalSort);
+    renderThumbs();
+  }
+
+  function isFrontIndex(i) {
+    // Reflects current ordering choice so the thumbnail tags match the build.
+    return document.getElementById('order').value === 'interleaved'
+      ? i % 2 === 0
+      : i < Math.ceil(items.length / 2);
+  }
+
+  function renderThumbs() {
+    thumbsEl.innerHTML = '';
+    items.forEach((it, i) => {
+      const front = isFrontIndex(i);
+      const el = document.createElement('div');
+      el.className = 'thumb';
+      el.innerHTML =
+        `<span class="tag ${front ? 'front' : 'back'}">${front ? 'F' : 'B'}</span>` +
+        `<img src="${it.img.src}" alt="" />` +
+        `<div class="name">${it.name}</div>`;
+      thumbsEl.appendChild(el);
+    });
+    const has = items.length > 0;
+    buildBtn.disabled = !has;
+    clearBtn.disabled = !has;
+  }
+
+  // Split the loaded images into [front, back] pairs based on the chosen order.
+  function pairUp() {
+    const order = document.getElementById('order').value;
+    const pairs = [];
+    if (order === 'interleaved') {
+      for (let i = 0; i < items.length; i += 2) {
+        pairs.push({ front: items[i]?.img || null, back: items[i + 1]?.img || null });
+      }
+    } else {
+      const half = Math.ceil(items.length / 2);
+      const fronts = items.slice(0, half);
+      const backs = items.slice(half);
+      for (let i = 0; i < half; i++) {
+        pairs.push({ front: fronts[i]?.img || null, back: backs[i]?.img || null });
+      }
+    }
+    return pairs;
+  }
+
+  // Draw a single image into a cell, preserving aspect ratio, centered.
+  function drawContain(ctx, img, x, y, cw, ch) {
+    if (!img) return;
+    const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
+    const w = img.naturalWidth * scale;
+    const h = img.naturalHeight * scale;
+    ctx.drawImage(img, x + (cw - w) / 2, y + (ch - h) / 2, w, h);
+  }
+
+  function buildSheets() {
+    const cols = Math.max(1, parseInt(document.getElementById('cols').value, 10) || 4);
+    const cellW = Math.max(50, parseInt(document.getElementById('cellw').value, 10) || 700);
+    const gap = Math.max(0, parseInt(document.getElementById('gap').value, 10) || 0);
+    const transparent = document.getElementById('transparent').checked;
+    const bg = document.getElementById('bg').value;
+
+    const pairs = pairUp();
+    // Uniform cell height from the tallest card aspect ratio across all images.
+    let maxRatio = 1.4; // height/width fallback (typical card)
+    items.forEach(it => {
+      const r = it.img.naturalHeight / it.img.naturalWidth;
+      if (r > maxRatio) maxRatio = r;
+    });
+    const cellH = Math.round(cellW * maxRatio);
+
+    sheetsEl.innerHTML = '';
+    // One sheet per `cols` cards: top row fronts, bottom row backs.
+    for (let s = 0; s < pairs.length; s += cols) {
+      const group = pairs.slice(s, s + cols);
+      const n = group.length;
+      const width = n * cellW + (n + 1) * gap;
+      const height = 2 * cellH + 3 * gap;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      if (!transparent) { ctx.fillStyle = bg; ctx.fillRect(0, 0, width, height); }
+
+      group.forEach((pair, c) => {
+        const x = gap + c * (cellW + gap);
+        drawContain(ctx, pair.front, x, gap, cellW, cellH);                 // top row
+        drawContain(ctx, pair.back, x, gap * 2 + cellH, cellW, cellH);      // bottom row
+      });
+
+      const sheetNo = Math.floor(s / cols) + 1;
+      const wrap = document.createElement('div');
+      wrap.className = 'sheet';
+      const head = document.createElement('h3');
+      head.innerHTML = `<span>Sheet ${sheetNo} — ${n} card${n === 1 ? '' : 's'} (${width}×${height})</span>`;
+      const dl = document.createElement('button');
+      dl.textContent = 'Download PNG';
+      dl.onclick = () => {
+        const a = document.createElement('a');
+        a.download = `card-collage-sheet-${String(sheetNo).padStart(2, '0')}.png`;
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+      };
+      head.appendChild(dl);
+      wrap.appendChild(head);
+      wrap.appendChild(canvas);
+      sheetsEl.appendChild(wrap);
+    }
+  }
+
+  // Wiring
+  dropEl.addEventListener('click', () => fileEl.click());
+  fileEl.addEventListener('change', e => addFiles(e.target.files));
+  ['dragenter', 'dragover'].forEach(ev =>
+    dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach(ev =>
+    dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.remove('dragover'); }));
+  dropEl.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+  document.getElementById('order').addEventListener('change', renderThumbs);
+  buildBtn.addEventListener('click', buildSheets);
+  clearBtn.addEventListener('click', () => {
+    items = []; thumbsEl.innerHTML = ''; sheetsEl.innerHTML = '';
+    buildBtn.disabled = true; clearBtn.disabled = true; fileEl.value = '';
+  });
+})();
+</script>
+</body>
+</html>
