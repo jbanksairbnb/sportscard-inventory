@@ -220,6 +220,41 @@ export default function SharePage() {
     load();
   }, [token]);
 
+  // Derive the filtered rows + flat image list on EVERY render, before any
+  // early return. These must sit above the loading/notFound guards: while the
+  // set is loading the component returns early, so a hook placed below would be
+  // skipped on the first render and then run once data arrives — React throws
+  // "Rendered more hooks than during the previous render," which crashed the
+  // page and broke every shared-set link.
+  const displayed = (setData?.rows || []).filter((row) => {
+    if (showOwnedOnly && String(row['Owned'] || '') !== 'Yes') return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return (
+        String(row['Card #'] || '').toLowerCase().includes(q) ||
+        String(row['Player'] || row['Description'] || '').toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  // Flat image list across every currently-displayed card so the lightbox can
+  // scroll the whole filtered set without re-opening per card. Re-derived
+  // whenever the filter/search changes so navigation stays in sync with the grid.
+  const lightboxItems: FlatImage[] = useMemo(() => {
+    const items: FlatImage[] = [];
+    for (const row of displayed) {
+      const cardNum = row['Card #'] ? String(row['Card #']) : '';
+      const player = String(row['Player'] || row['Description'] || '');
+      const img1 = String(row['Image 1'] || '');
+      const img2 = String(row['Image 2'] || '');
+      if (img1) items.push({ url: img1, cardNum, player, side: 'Front' });
+      if (img2) items.push({ url: img2, cardNum, player, side: 'Back' });
+    }
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayed]);
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -248,38 +283,8 @@ export default function SharePage() {
     );
   }
 
-  const { title, year, brand, owner_email, row_count, owned_count, owned_pct, rows } = setData;
+  const { title, year, brand, owner_email, row_count, owned_count, owned_pct } = setData;
   const pct = owned_pct || 0;
-
-  const displayed = (rows || []).filter((row) => {
-    if (showOwnedOnly && String(row['Owned'] || '') !== 'Yes') return false;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      return (
-        String(row['Card #'] || '').toLowerCase().includes(q) ||
-        String(row['Player'] || row['Description'] || '').toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
-
-  // Flat image list across every currently-displayed card so the
-  // lightbox can scroll the whole filtered set without re-opening per
-  // card. Re-derived whenever the filter/search changes so the navigation
-  // stays in sync with what the visitor actually sees in the grid.
-  const lightboxItems: FlatImage[] = useMemo(() => {
-    const items: FlatImage[] = [];
-    for (const row of displayed) {
-      const cardNum = row['Card #'] ? String(row['Card #']) : '';
-      const player = String(row['Player'] || row['Description'] || '');
-      const img1 = String(row['Image 1'] || '');
-      const img2 = String(row['Image 2'] || '');
-      if (img1) items.push({ url: img1, cardNum, player, side: 'Front' });
-      if (img2) items.push({ url: img2, cardNum, player, side: 'Back' });
-    }
-    return items;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayed]);
 
   function openLightbox(rowIdx: number, side: 'Front' | 'Back') {
     const row = displayed[rowIdx];
