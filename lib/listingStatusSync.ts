@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // the FB auction/claim state onto the listing so My Listings can show the sale
 // channel and bucket the card as Claimed (committed, unpaid) vs Sold (paid)
 // without re-querying the FB tables.
-export type SoldChannel = 'marketplace' | 'auction' | 'claim';
+export type SoldChannel = 'marketplace' | 'auction' | 'claim' | 'ebay';
 export type SoldState = 'claimed' | 'sold';
 
 // Mark listings sold and mirror the FB sale onto them: channel (auction/claim),
