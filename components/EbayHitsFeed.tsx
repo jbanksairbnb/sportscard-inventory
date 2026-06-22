@@ -25,7 +25,11 @@ type EbayHit = {
   detected_grade?: { type: 'raw' | 'graded'; rank?: number; grade?: number; company?: string };
 };
 
-type SetOption = { slug: string; title: string; unownedCount: number };
+type SetOption = { slug: string; title: string; unownedCount: number; year: number; brand: string };
+// A consolidated option that scans every set sharing a year+brand at once.
+// value encodes as `group:<year>|<brand>` so the dropdown can mix them with
+// per-set options (`set:<slug>`).
+type GroupOption = { key: string; year: number; brand: string; title: string; unownedCount: number; setCount: number };
 
 type SortKey = 'gmcards' | 'priceAsc' | 'priceDesc' | 'ending';
 
@@ -64,8 +68,10 @@ function fmtTimeLeft(iso: string | undefined): string | null {
 
 export default function EbayHitsFeed() {
   const [setOptions, setSetOptions] = useState<SetOption[]>([]);
+  const [groupOptions, setGroupOptions] = useState<GroupOption[]>([]);
   const [setsLoading, setSetsLoading] = useState(true);
-  const [selectedSlug, setSelectedSlug] = useState('');
+  // Encoded selection: '' | `set:<slug>` | `group:<year>|<brand>`.
+  const [selected, setSelected] = useState('');
   const [auctionsOnly, setAuctionsOnly] = useState(false);
   const [sortBy, setSortBy] = useState<SortKey>('gmcards');
   const [searching, setSearching] = useState(false);
@@ -93,24 +99,60 @@ export default function EbayHitsFeed() {
           slug: s.slug,
           title: s.title || `${s.year} ${s.brand}`,
           unownedCount: unowned,
+          year: Number(s.year) || 0,
+          brand: String(s.brand || ''),
         });
       }
       opts.sort((a, b) => a.title.localeCompare(b.title));
+
+      // Build a consolidated "all sets" option per year+brand that has more
+      // than one set with unowned cards — so a user building several 1970
+      // Topps sets can scan them in one search.
+      const byGroup = new Map<string, SetOption[]>();
+      for (const o of opts) {
+        if (!o.year || !o.brand) continue;
+        const key = `${o.year}|${o.brand}`;
+        const arr = byGroup.get(key);
+        if (arr) arr.push(o); else byGroup.set(key, [o]);
+      }
+      const groups: GroupOption[] = [];
+      for (const [key, members] of byGroup) {
+        if (members.length < 2) continue;
+        groups.push({
+          key,
+          year: members[0].year,
+          brand: members[0].brand,
+          title: `All ${members[0].year} ${members[0].brand} sets`,
+          unownedCount: members.reduce((n, m) => n + m.unownedCount, 0),
+          setCount: members.length,
+        });
+      }
+      groups.sort((a, b) => a.title.localeCompare(b.title));
+
       setSetOptions(opts);
+      setGroupOptions(groups);
       setSetsLoading(false);
     }
     loadSets();
   }, []);
 
   async function runSearch(forceRefresh = false) {
-    if (!selectedSlug) return;
+    if (!selected) return;
     setError('');
     setSearching(true);
     try {
+      const body: Record<string, unknown> = { forceRefresh, auctionsOnly };
+      if (selected.startsWith('group:')) {
+        const [year, brand] = selected.slice('group:'.length).split('|');
+        body.year = Number(year);
+        body.brand = brand;
+      } else {
+        body.setSlug = selected.slice('set:'.length);
+      }
       const res = await fetch('/api/feed/ebay-hits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ setSlug: selectedSlug, forceRefresh, auctionsOnly }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load eBay hits');
@@ -152,7 +194,9 @@ export default function EbayHitsFeed() {
     }).catch(() => {});
   }
 
-  const selectedSet = setOptions.find(s => s.slug === selectedSlug);
+  const selectedLabel = selected.startsWith('group:')
+    ? (groupOptions.find(g => `group:${g.key}` === selected)?.title || 'these sets')
+    : (setOptions.find(s => `set:${s.slug}` === selected)?.title || 'this set');
 
   const sortedHits = useMemo(() => {
     const arr = [...hits];
@@ -182,8 +226,8 @@ export default function EbayHitsFeed() {
           Search a set
         </label>
         <select
-          value={selectedSlug}
-          onChange={e => { setSelectedSlug(e.target.value); setHits([]); setHasSearched(false); setError(''); }}
+          value={selected}
+          onChange={e => { setSelected(e.target.value); setHits([]); setHasSearched(false); setError(''); }}
           disabled={setsLoading || searching}
           style={{
             flex: 1, minWidth: 220, padding: '8px 10px', fontSize: 13,
@@ -192,9 +236,18 @@ export default function EbayHitsFeed() {
           }}
         >
           <option value="">{setsLoading ? 'Loading sets…' : setOptions.length === 0 ? 'No sets with unowned cards' : 'Select a set…'}</option>
-          {setOptions.map(s => (
-            <option key={s.slug} value={s.slug}>{s.title} ({s.unownedCount} unowned)</option>
-          ))}
+          {groupOptions.length > 0 && (
+            <optgroup label="All sets (same year + brand)">
+              {groupOptions.map(g => (
+                <option key={g.key} value={`group:${g.key}`}>{g.title} ({g.setCount} sets · {g.unownedCount} unowned)</option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Single set">
+            {setOptions.map(s => (
+              <option key={s.slug} value={`set:${s.slug}`}>{s.title} ({s.unownedCount} unowned)</option>
+            ))}
+          </optgroup>
         </select>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--plum)', fontWeight: 600, cursor: 'pointer' }}>
           <input
@@ -224,12 +277,12 @@ export default function EbayHitsFeed() {
         </select>
         <button
           onClick={() => runSearch(false)}
-          disabled={!selectedSlug || searching}
+          disabled={!selected || searching}
           className="btn btn-primary btn-sm"
         >
           {searching ? 'Searching…' : 'Search eBay'}
         </button>
-        {hasSearched && selectedSlug && (
+        {hasSearched && selected && (
           <button
             onClick={() => runSearch(true)}
             disabled={searching}
@@ -259,7 +312,7 @@ export default function EbayHitsFeed() {
       {hasSearched && !error && hits.length === 0 && (
         <div className="panel" style={{ padding: 28, textAlign: 'center' }}>
           <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-            Scanned {wantCount} unowned card{wantCount === 1 ? '' : 's'} from {selectedSet?.title || 'this set'} — no eBay matches{auctionsOnly ? ' from auctions' : ''} right now.
+            Scanned {wantCount} unowned card{wantCount === 1 ? '' : 's'} from {selectedLabel} — no eBay matches{auctionsOnly ? ' from auctions' : ''} right now.
             Click <strong>Refresh</strong> to bypass the cache.
           </p>
         </div>
@@ -280,7 +333,7 @@ export default function EbayHitsFeed() {
       {hasSearched && hits.length > 0 && (
         <>
           <div className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 14 }}>
-            {hits.length} eBay match{hits.length === 1 ? '' : 'es'}{auctionsOnly ? ' (auctions only)' : ''} from {wantCount} unowned card{wantCount === 1 ? '' : 's'} in {selectedSet?.title || 'this set'}.
+            {hits.length} eBay match{hits.length === 1 ? '' : 'es'}{auctionsOnly ? ' (auctions only)' : ''} from {wantCount} unowned card{wantCount === 1 ? '' : 's'} in {selectedLabel}.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {sortedHits.map(h => (

@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { applyOwnedTransition, ensureRowIds } from '@/lib/inventory';
+import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import SCLogo from '@/components/SCLogo';
 import WantListHitsFeed from '@/components/WantListHitsFeed';
 import EbayHitsFeed from '@/components/EbayHitsFeed';
@@ -412,7 +414,6 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   );
 }
 
-type WantCard = { year: number; brand: string; cardNumber: string; description: string; targetType: string; targetCondition: string; targetPrice: string };
 type StatItem = { label: string; value: string; sub: string; onClick?: () => void };
 
 function StatsStrip({ stats }: { stats: StatItem[] }) {
@@ -440,72 +441,160 @@ function StatsStrip({ stats }: { stats: StatItem[] }) {
   );
 }
 
+// ===== Consolidated Want List =====
+// Aggregates every unowned card across all of the user's sets, grouped by
+// year + brand so multiple sets of the same year/brand can be worked as one
+// list. Targets resolve as row-override → set default_target (the set's
+// default is never modified here). Edits write back to the specific source
+// set's row; "✓ Bought" flips Owned on that one row. Each card carries its
+// source set so the same card # living in two sets stays independently
+// tracked and editable.
+
+type TargetDefault = { type: string; low: string; high: string; companies: string };
+type EditableSet = {
+  slug: string;
+  title: string;
+  year: number;
+  brand: string;
+  rows: Array<Record<string, any>>;
+  defaultTarget: TargetDefault;
+};
+type WantRowView = {
+  slug: string;
+  rowId: string;
+  setTitle: string;
+  cardNumber: string;
+  player: string;
+  row: Record<string, any>;
+  def: TargetDefault;
+};
+
+const WL_TYPE_OPTIONS = ['', 'Raw', 'Graded'] as const;
+const WL_NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
+
+function wlGroupKey(year: number, brand: string) { return `${year}|${brand}`; }
+// Value the row stores for a target field, or '' when it's inheriting the
+// set default. The default is shown as the input placeholder, never written
+// onto the row unless the user picks it.
+function wlRowVal(row: Record<string, any>, key: string): string {
+  if (key === 'Target Condition - Low') return String(row[key] ?? row['Target Condition'] ?? '').trim();
+  return String(row[key] ?? '').trim();
+}
+
 function WantListModal({ onClose }: { onClose: () => void }) {
-  const [cards, setCards] = useState<WantCard[]>([]);
+  const [sets, setSets] = useState<EditableSet[]>([]);
+  const [userId, setUserId] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [saveState, setSaveState] = useState<Record<string, 'saving' | 'saved'>>({});
+  const setsRef = useRef<EditableSet[]>([]);
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  useEffect(() => { setsRef.current = sets; }, [sets]);
 
   useEffect(() => {
     const supabase = createClient();
     async function load() {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: setsData } = await supabase.from('sets').select('year, brand, rows, default_target').eq('user_id', user.id);
+      if (!user) { setLoading(false); return; }
+      setUserId(user.id);
+      const { data: setsData } = await supabase
+        .from('sets')
+        .select('slug, title, year, brand, rows, default_target')
+        .eq('user_id', user.id);
       if (!setsData) { setLoading(false); return; }
-      const unowned: WantCard[] = [];
-      for (const s of setsData) {
+      const editable: EditableSet[] = setsData.map((s: any) => {
         const dt = (s.default_target || {}) as { type?: string; low?: string; high?: string; companies?: string };
-        const defaultType = String(dt.type || '');
-        const defaultLow = String(dt.low || '');
-        const defaultHigh = String(dt.high || '');
-        const defaultCompanies = String(dt.companies || '');
-        for (const row of (s.rows || [])) {
-          if (String(row['Owned'] || '') !== 'Yes') {
-            const rowType = String(row['Target Type'] || '').trim();
-            const rowLow = String(row['Target Condition - Low'] || row['Target Condition'] || '').trim();
-            const rowHigh = String(row['Target Condition - High'] || '').trim();
-            const rowCompanies = String(row['Target Grading Companies'] || '').trim();
-            const type = rowType || defaultType;
-            const low = rowLow || defaultLow;
-            const high = rowHigh || defaultHigh;
-            const companies = rowCompanies || defaultCompanies;
-            const range = low && high ? (low === high ? low : `${low}-${high}`) : (low || high || '');
-            let typeLabel = '';
-            if (type === 'Graded') typeLabel = companies ? `Graded · ${companies.replace(/,\s*/g, ', ')}` : 'Graded';
-            else if (type === 'Raw') typeLabel = 'Raw';
-            else typeLabel = type;
-            unowned.push({
-              year: s.year || 0,
-              brand: s.brand || '',
-              cardNumber: String(row['Card #'] || ''),
-              description: String(row['Player'] || row['Description'] || ''),
-              targetType: typeLabel,
-              targetCondition: range,
-              targetPrice: String(row['Target Price'] || ''),
-            });
-          }
-        }
-      }
-      setCards(unowned);
+        return {
+          slug: s.slug,
+          title: s.title || `${s.year || ''} ${s.brand || ''}`.trim(),
+          year: Number(s.year) || 0,
+          brand: String(s.brand || ''),
+          // ensureRowIds so each want maps back to a stable row even when
+          // the set's never been opened in the set editor before.
+          rows: ensureRowIds((s.rows || []) as Array<Record<string, any>>),
+          defaultTarget: {
+            type: String(dt.type || ''), low: String(dt.low || ''),
+            high: String(dt.high || ''), companies: String(dt.companies || ''),
+          },
+        };
+      });
+      setSets(editable);
       setLoading(false);
     }
     load();
+    return () => { Object.values(saveTimers.current).forEach(clearTimeout); };
   }, []);
 
-  const filtered = search.trim()
-    ? cards.filter((c) => {
-        const q = search.toLowerCase();
-        return (
-          String(c.year).includes(q) ||
-          c.brand.toLowerCase().includes(q) ||
-          c.cardNumber.toLowerCase().includes(q) ||
-          c.description.toLowerCase().includes(q) ||
-          c.targetType.toLowerCase().includes(q) ||
-          c.targetCondition.toLowerCase().includes(q) ||
-          c.targetPrice.toLowerCase().includes(q)
-        );
-      })
-    : cards;
+  async function persistSet(slug: string) {
+    const s = setsRef.current.find(x => x.slug === slug);
+    if (!s || !userId) return;
+    const rows = s.rows;
+    const total = rows.length;
+    const ownedCount = rows.filter(r => String(r['Owned'] || '') === 'Yes').length;
+    const ownedPct = total ? (ownedCount / total) * 100 : 0;
+    const toNum = (v: unknown) => { const n = Number(String(v ?? '').replace(/[$,]/g, '').trim()); return Number.isFinite(n) ? n : 0; };
+    const totalCost = rows.reduce((a, r) => a + toNum(r['Cost']), 0);
+    const totalValue = rows.reduce((a, r) => a + toNum(r['Value']), 0);
+    const supabase = createClient();
+    await supabase.from('sets').update({
+      rows, row_count: total, owned_count: ownedCount, owned_pct: ownedPct,
+      total_cost: totalCost, total_value: totalValue, gain_loss: totalValue - totalCost,
+      updated_at: Date.now(),
+    }).eq('user_id', userId).eq('slug', slug);
+    setSaveState(prev => ({ ...prev, [slug]: 'saved' }));
+  }
+
+  function scheduleSave(slug: string) {
+    setSaveState(prev => ({ ...prev, [slug]: 'saving' }));
+    if (saveTimers.current[slug]) clearTimeout(saveTimers.current[slug]);
+    saveTimers.current[slug] = setTimeout(() => persistSet(slug), 700);
+  }
+
+  function patchRow(slug: string, rowId: string, patch: Record<string, any>) {
+    setSets(prev => prev.map(s => s.slug !== slug ? s : {
+      ...s,
+      rows: s.rows.map(r => String(r['_id']) === rowId ? { ...r, ...patch } : r),
+    }));
+    scheduleSave(slug);
+  }
+
+  function markBought(slug: string, rowId: string) {
+    setSets(prev => prev.map(s => {
+      if (s.slug !== slug) return s;
+      const { nextRows } = applyOwnedTransition(s.rows, { rowIds: new Set([rowId]) }, true);
+      return { ...s, rows: nextRows };
+    }));
+    scheduleSave(slug);
+  }
+
+  // Derive the grouped, filtered want list from current set state.
+  const groups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const byGroup = new Map<string, { year: number; brand: string; cards: WantRowView[] }>();
+    for (const s of sets) {
+      for (const row of s.rows) {
+        if (String(row['Owned'] || '') === 'Yes') continue;
+        const player = String(row['Player'] || row['Description'] || '');
+        const cardNumber = String(row['Card #'] || '');
+        if (!player && !cardNumber) continue;
+        if (q) {
+          const hay = `${s.year} ${s.brand} ${cardNumber} ${player}`.toLowerCase();
+          if (!hay.includes(q)) continue;
+        }
+        const key = wlGroupKey(s.year, s.brand);
+        let g = byGroup.get(key);
+        if (!g) { g = { year: s.year, brand: s.brand, cards: [] }; byGroup.set(key, g); }
+        g.cards.push({ slug: s.slug, rowId: String(row['_id']), setTitle: s.title, cardNumber, player, row, def: s.defaultTarget });
+      }
+    }
+    const arr = Array.from(byGroup.values());
+    arr.sort((a, b) => (a.year - b.year) || a.brand.localeCompare(b.brand));
+    const cardNum = (c: WantRowView) => { const n = Number(c.cardNumber); return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY; };
+    for (const g of arr) g.cards.sort((a, b) => (cardNum(a) - cardNum(b)) || a.player.localeCompare(b.player));
+    return arr;
+  }, [sets, search]);
+
+  const totalCards = groups.reduce((n, g) => n + g.cards.length, 0);
 
   return (
     <div
@@ -521,15 +610,18 @@ function WantListModal({ onClose }: { onClose: () => void }) {
         style={{
           background: 'var(--cream)', border: '3px solid var(--plum)',
           borderRadius: 16, boxShadow: '0 8px 0 var(--plum)',
-          width: '100%', maxWidth: 860, padding: 28,
+          width: '100%', maxWidth: 1180, padding: 28,
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 6 }}>
           <div className="display" style={{ fontSize: 26, color: 'var(--plum)', flex: 1 }}>Want List</div>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>{filtered.length} cards</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>{totalCards} cards</span>
           <button type="button" className="btn btn-sm btn-outline" onClick={onClose}>✕ Close</button>
         </div>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--ink-mute)' }}>
+          Grouped by year + brand. Edits save to each card&apos;s own set; the set&apos;s default target is left untouched.
+        </p>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '8px 14px', border: '2px solid var(--plum)',
@@ -540,7 +632,7 @@ function WantListModal({ onClose }: { onClose: () => void }) {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by year, brand, description…"
+            placeholder="Search by year, brand, card #, player…"
             autoFocus
             style={{
               border: 'none', outline: 'none', background: 'transparent',
@@ -550,44 +642,116 @@ function WantListModal({ onClose }: { onClose: () => void }) {
         </div>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--ink-mute)' }} className="eyebrow">Loading…</div>
-        ) : filtered.length === 0 ? (
+        ) : totalCards === 0 ? (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--ink-mute)' }} className="eyebrow">No cards found</div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'var(--plum)' }}>
-                    {['Year', 'Brand', 'Card #', 'Player', 'Graded / Raw', 'Target Condition', 'Target Price'].map((h) => (
-                    <th key={h} style={{
-                      padding: '10px 14px', textAlign: 'left',
-                      fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
-                      letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--mustard)',
-                      whiteSpace: 'nowrap',
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((c, i) => (
-                  <tr key={i} style={{
-                    borderTop: '1.5px solid var(--cream-warm)',
-                    background: i % 2 === 0 ? 'var(--cream)' : 'var(--paper)',
-                  }}>
-                    <td className="mono" style={{ padding: '9px 14px', fontSize: 12, fontWeight: 700, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>{c.year || '—'}</td>
-                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.brand || '—'}</td>
-                    <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--plum)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.cardNumber ? `#${c.cardNumber}` : '—'}</td>
-                    <td className="display" style={{ padding: '9px 14px', fontSize: 13, color: 'var(--plum)' }}>{c.description || '—'}</td>
-                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetType || '—'}</td>
-                    <td className="eyebrow" style={{ padding: '9px 14px', fontSize: 10.5, color: 'var(--orange)', whiteSpace: 'nowrap' }}>{c.targetCondition || '—'}</td>
-                    <td className="mono" style={{ padding: '9px 14px', fontSize: 12, color: 'var(--teal)', fontWeight: 700, whiteSpace: 'nowrap' }}>{c.targetPrice || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
+            {groups.map((g) => {
+              const dirtySlugs = new Set(g.cards.map(c => c.slug));
+              const anySaving = Array.from(dirtySlugs).some(sl => saveState[sl] === 'saving');
+              const anySaved = !anySaving && Array.from(dirtySlugs).some(sl => saveState[sl] === 'saved');
+              return (
+              <div key={wlGroupKey(g.year, g.brand)}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
+                  <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>{g.year || '—'} {g.brand || ''}</div>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>{g.cards.length} needed</span>
+                  {anySaving && <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>Saving…</span>}
+                  {anySaved && <span className="eyebrow" style={{ fontSize: 10, color: 'var(--teal)' }}>✓ Saved</span>}
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--plum)' }}>
+                        {['Card #', 'Player', 'Set', 'Type', 'Cond. Low', 'Cond. High', 'Companies', 'Target $', 'Notes', ''].map((h) => (
+                          <th key={h} style={{
+                            padding: '9px 10px', textAlign: 'left',
+                            fontFamily: 'var(--font-body)', fontSize: 9.5, fontWeight: 700,
+                            letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--mustard)',
+                            whiteSpace: 'nowrap',
+                          }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.cards.map((c, i) => (
+                        <WantRowEditor
+                          key={`${c.slug}:${c.rowId}`}
+                          card={c}
+                          zebra={i % 2 === 0}
+                          onPatch={(patch) => patchRow(c.slug, c.rowId, patch)}
+                          onBought={() => markBought(c.slug, c.rowId)}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              );
+            })}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function WantRowEditor({ card, zebra, onPatch, onBought }: {
+  card: WantRowView;
+  zebra: boolean;
+  onPatch: (patch: Record<string, any>) => void;
+  onBought: () => void;
+}) {
+  const { row, def } = card;
+  const type = wlRowVal(row, 'Target Type') || def.type;
+  const cellTd: React.CSSProperties = { padding: '6px 8px', borderTop: '1.5px solid var(--cream-warm)', verticalAlign: 'middle' };
+  const inputStyle: React.CSSProperties = {
+    width: '100%', minWidth: 70, padding: '4px 6px', fontSize: 12,
+    border: '1.5px solid var(--rule)', borderRadius: 5, background: 'var(--cream)',
+    color: 'var(--plum)', fontFamily: 'var(--font-body)',
+  };
+  // Low/High options track the resolved type: numeric for Graded, raw
+  // labels for Raw, free-form text otherwise.
+  const condOptions = type === 'Graded' ? WL_NUMERIC_GRADES : type === 'Raw' ? (SHARED_RAW_GRADES as readonly string[]) : null;
+
+  function condCell(key: 'Target Condition - Low' | 'Target Condition - High') {
+    const val = wlRowVal(row, key);
+    const ph = key === 'Target Condition - Low' ? (def.low || '—') : (def.high || '—');
+    if (condOptions) {
+      return (
+        <select style={inputStyle} value={val} onChange={e => onPatch({ [key]: e.target.value })}>
+          <option value="">{ph === '—' ? 'Any' : `${ph} (default)`}</option>
+          {condOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    return <input style={inputStyle} value={val} placeholder={ph} onChange={e => onPatch({ [key]: e.target.value })} />;
+  }
+
+  return (
+    <tr style={{ background: zebra ? 'var(--cream)' : 'var(--paper)' }}>
+      <td className="mono" style={{ ...cellTd, fontSize: 12, fontWeight: 700, color: 'var(--plum)', whiteSpace: 'nowrap' }}>{card.cardNumber ? `#${card.cardNumber}` : '—'}</td>
+      <td className="display" style={{ ...cellTd, fontSize: 13, color: 'var(--plum)' }}>{card.player || '—'}</td>
+      <td className="eyebrow" style={{ ...cellTd, fontSize: 9.5, color: 'var(--orange)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={card.setTitle}>{card.setTitle}</td>
+      <td style={cellTd}>
+        <select style={inputStyle} value={wlRowVal(row, 'Target Type')} onChange={e => onPatch({ 'Target Type': e.target.value })}>
+          {WL_TYPE_OPTIONS.map(o => <option key={o} value={o}>{o === '' ? (def.type ? `${def.type} (default)` : 'Any') : o}</option>)}
+        </select>
+      </td>
+      <td style={cellTd}>{condCell('Target Condition - Low')}</td>
+      <td style={cellTd}>{condCell('Target Condition - High')}</td>
+      <td style={cellTd}>
+        <input style={inputStyle} value={wlRowVal(row, 'Target Grading Companies')} placeholder={def.companies || '—'} onChange={e => onPatch({ 'Target Grading Companies': e.target.value })} />
+      </td>
+      <td style={cellTd}>
+        <input style={{ ...inputStyle, minWidth: 64 }} value={String(row['Target Price'] ?? '')} placeholder="$" onChange={e => onPatch({ 'Target Price': e.target.value })} />
+      </td>
+      <td style={cellTd}>
+        <input style={{ ...inputStyle, minWidth: 120 }} value={String(row['Notes'] ?? '')} placeholder="—" onChange={e => onPatch({ 'Notes': e.target.value })} />
+      </td>
+      <td style={{ ...cellTd, whiteSpace: 'nowrap' }}>
+        <button type="button" className="btn btn-sm btn-outline" title="Mark this card owned in its set" onClick={onBought}>✓ Bought</button>
+      </td>
+    </tr>
   );
 }
 
