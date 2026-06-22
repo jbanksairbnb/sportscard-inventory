@@ -87,6 +87,10 @@ export default async function SellerStorefrontPage(props: { params: Promise<{ ha
     setHref: l.listing_type === 'set' && l.set_slug
       ? `/seller/${encodeURIComponent(seller.handle as string)}/set/${encodeURIComponent(l.set_slug)}`
       : null,
+    searchText: [
+      l.title, l.description, l.player, l.brand, l.card_number,
+      l.year, conditionLabel(l),
+    ].filter(Boolean).join(' ').toLowerCase(),
   }));
 
   const sellerName = (seller.display_name as string) || (seller.handle as string);
