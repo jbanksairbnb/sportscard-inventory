@@ -384,7 +384,12 @@ async function searchEbayPaginated(token: string, query: string, auctionsOnly: b
 
 const PRIORITY_SELLER_KEYWORDS = ['gmcards']
 
-function findWantForListing(item: EbayItem, wants: WantRow[]): WantRow | null {
+// Every want whose card this listing could be. Returns all matches (not
+// just the first) so the priority-seller path can pick the want whose
+// target condition the listing actually satisfies — important when the
+// same card is wanted with different targets across sets.
+function findWantsForListing(item: EbayItem, wants: WantRow[]): WantRow[] {
+  const matches: WantRow[] = []
   const title = item.title.toLowerCase()
   for (const want of wants) {
     if (!title.includes(String(want.year))) continue
@@ -397,9 +402,9 @@ function findWantForListing(item: EbayItem, wants: WantRow[]): WantRow | null {
       const cardRegex = new RegExp(`(^|\\s|#|no\\.?\\s*)${cardNum.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$|[^0-9])`, 'i')
       if (!cardRegex.test(item.title)) continue
     }
-    return want
+    matches.push(want)
   }
-  return null
+  return matches
 }
 
 async function parallelMap<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -442,15 +447,30 @@ export async function POST(req: NextRequest) {
   let forceRefresh = false
   let setSlug = ''
   let auctionsOnly = false
+  let groupYear: number | null = null
+  let groupBrand = ''
   try {
     const body = await req.json()
     forceRefresh = !!body?.forceRefresh
     setSlug = String(body?.setSlug || '').trim()
     auctionsOnly = !!body?.auctionsOnly
+    if (body?.year != null && String(body.year).trim() !== '') {
+      const y = Number(body.year)
+      if (Number.isFinite(y)) groupYear = y
+    }
+    groupBrand = String(body?.brand || '').trim()
   } catch {}
 
-  if (!setSlug) {
-    return NextResponse.json({ error: 'setSlug is required' }, { status: 400 })
+  // Two modes:
+  //   single-set — body.setSlug → scan one set
+  //   group      — body.year + body.brand → scan EVERY set the user owns
+  //                with that year/brand at once. This is what powers
+  //                "search all my 1970 Topps sets in one shot". setSlug
+  //                takes precedence so existing single-set callers are
+  //                untouched.
+  const groupMode = !setSlug && groupYear !== null && !!groupBrand
+  if (!setSlug && !groupMode) {
+    return NextResponse.json({ error: 'setSlug or year+brand is required' }, { status: 400 })
   }
 
   const admin = createClient(
@@ -459,9 +479,14 @@ export async function POST(req: NextRequest) {
     { auth: { autoRefreshToken: false, persistSession: false } }
   )
 
+  const setsQuery = groupMode
+    ? admin.from('sets').select('slug, title, year, brand, rows, default_target, sport')
+        .eq('user_id', user.id).eq('year', groupYear).ilike('brand', groupBrand)
+    : admin.from('sets').select('slug, title, year, brand, rows, default_target, sport')
+        .eq('user_id', user.id).eq('slug', setSlug)
+
   const [setsResult, mappingsResult, hiddenResult] = await Promise.all([
-    admin.from('sets').select('slug, title, year, brand, rows, default_target, sport')
-      .eq('user_id', user.id).eq('slug', setSlug),
+    setsQuery,
     admin.from('raw_grade_mappings').select('source_pattern, mapped_grades')
       .eq('user_id', user.id),
     admin.from('ebay_hidden_items').select('item_id').eq('user_id', user.id),
@@ -558,16 +583,25 @@ export async function POST(req: NextRequest) {
 
   if (wants.length === 0) return NextResponse.json({ hits: [], wantCount: 0 })
 
-  const uniqueWants = new Map<string, WantRow>()
+  // Group wants by their eBay query key. Within a group every want shares
+  // year/brand/card#/player/sport — so ONE eBay query serves them all — but
+  // they may carry DIFFERENT target conditions (the same card wanted raw in
+  // one set and graded in another). We keep every want in the group so each
+  // target is matched independently. An earlier version collapsed each group
+  // to its first want, which silently dropped the other sets' targets and
+  // could lose legitimate hits in group mode.
+  const queryGroups = new Map<string, WantRow[]>()
   for (const w of wants) {
     const k = cacheKey(w)
-    if (!uniqueWants.has(k)) uniqueWants.set(k, w)
+    const arr = queryGroups.get(k)
+    if (arr) arr.push(w)
+    else queryGroups.set(k, [w])
   }
 
   const MAX_QUERIES_PER_REQUEST = 200
-  const wantsToProcess = Array.from(uniqueWants.values()).slice(0, MAX_QUERIES_PER_REQUEST)
+  const groupsToProcess = Array.from(queryGroups.entries()).slice(0, MAX_QUERIES_PER_REQUEST)
 
-  const cacheKeys = wantsToProcess.map(w => cacheKey(w))
+  const cacheKeys = groupsToProcess.map(([k]) => k)
   const { data: cacheRows } = await admin
     .from('ebay_search_cache')
     .select('cache_key, results, expires_at')
@@ -586,12 +620,12 @@ export async function POST(req: NextRequest) {
 
   const cacheUpserts: Array<{ cache_key: string; query: string; results: EbayItem[]; fetched_at: string; expires_at: string }> = []
 
-  const itemsPerWant = await parallelMap(wantsToProcess, SEARCH_CONCURRENCY, async (want) => {
-    const key = cacheKey(want)
+  const itemsPerGroup = await parallelMap(groupsToProcess, SEARCH_CONCURRENCY, async ([key, groupWants]) => {
+    const rep = groupWants[0]
     const cached = cacheMap.get(key)
     const isFresh = cached && new Date(cached.expires_at).getTime() > Date.now()
     if (!forceRefresh && isFresh) {
-      return { want, items: (cached.results as EbayItem[]) || [] }
+      return { wants: groupWants, items: (cached.results as EbayItem[]) || [] }
     }
     let tok: string
     try {
@@ -599,8 +633,8 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       throw e
     }
-    const query = buildQuery(want)
-    const aspectFilter = aspectFilterForSport(want.setSport)
+    const query = buildQuery(rep)
+    const aspectFilter = aspectFilterForSport(rep.setSport)
     const items = await searchEbay(tok, query, auctionsOnly, aspectFilter)
     cacheUpserts.push({
       cache_key: key,
@@ -609,23 +643,23 @@ export async function POST(req: NextRequest) {
       fetched_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString(),
     })
-    return { want, items }
+    return { wants: groupWants, items }
   }).catch(e => {
     return { error: String(e) }
   })
 
-  if (!Array.isArray(itemsPerWant) && itemsPerWant && 'error' in itemsPerWant) {
-    return NextResponse.json({ error: itemsPerWant.error }, { status: 500 })
+  if (!Array.isArray(itemsPerGroup) && itemsPerGroup && 'error' in itemsPerGroup) {
+    return NextResponse.json({ error: itemsPerGroup.error }, { status: 500 })
   }
 
-  const allWants = Array.from(uniqueWants.values())
+  const allWants = wants
   const setYear = allWants[0]?.year || 0
   const setBrand = allWants[0]?.brand || ''
   const setSport = allWants[0]?.setSport || ''
   const setAspectFilter = aspectFilterForSport(setSport)
 
   const prioritySellerStats: Record<string, { returned: number; matched: number }> = {}
-  const prioritySellerListings: { item: EbayItem; want: WantRow }[] = []
+  const prioritySellerListings: { item: EbayItem; wants: WantRow[] }[] = []
   if (setYear && setBrand) {
     for (const sellerKw of PRIORITY_SELLER_KEYWORDS) {
       const psKey = `priority|${setYear}|${setBrand.toLowerCase()}|${sellerKw}|${auctionsOnly ? 'a' : 'all'}|${setSport || 'any'}`
@@ -656,9 +690,9 @@ export async function POST(req: NextRequest) {
       }
       prioritySellerStats[sellerKw] = { returned: psItems.length, matched: 0 }
       for (const item of psItems) {
-        const matchedWant = findWantForListing(item, allWants)
-        if (matchedWant) {
-          prioritySellerListings.push({ item, want: matchedWant })
+        const matchedWants = findWantsForListing(item, allWants)
+        if (matchedWants.length > 0) {
+          prioritySellerListings.push({ item, wants: matchedWants })
           prioritySellerStats[sellerKw].matched++
         }
       }
@@ -670,13 +704,20 @@ export async function POST(req: NextRequest) {
   }
 
   const allHits: Hit[] = []
-  for (const result of (itemsPerWant as { want: WantRow; items: EbayItem[] }[])) {
-    const { want, items } = result
+  for (const result of (itemsPerGroup as { wants: WantRow[]; items: EbayItem[] }[])) {
+    const { wants: groupWants, items } = result
     for (const item of items) {
-      if (!listingMatchesCard(item, want)) continue
       if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
+      // Every want in the group shares year/brand/player, so the card-match
+      // check is identical across them — run it once against the first want.
+      if (!listingMatchesCard(item, groupWants[0])) continue
       const detected = detectListingCondition(item.title, mappings)
-      if (!matchesCondition(detected, want)) continue
+      // Attribute the listing to the first want whose target condition it
+      // satisfies: a raw listing lands on the raw-target set, a graded
+      // listing on the graded-target set. This is how the same card wanted
+      // with different targets across sets each gets the right hits.
+      const want = groupWants.find(w => matchesCondition(detected, w))
+      if (!want) continue
       allHits.push({
         ...item,
         matched_set_slug: want.setSlug,
@@ -713,14 +754,20 @@ export async function POST(req: NextRequest) {
   // grade range, add `&& matchesCondition(detected, want)` to the
   // `targetType === 'Graded'` branch — but flag it as a behavior change
   // for graded searches.
-  for (const { item, want } of prioritySellerListings) {
+  for (const { item, wants: itemWants } of prioritySellerListings) {
     if (auctionsOnly && !(item.buyingOptions || []).includes('AUCTION')) continue
     const detected = detectListingCondition(item.title, mappings)
-    if (want.targetType === 'Graded') {
-      if (!GRADED_COMPANY_REGEX.test(item.title)) continue
-    } else {
-      if (!matchesCondition(detected, want)) continue
-    }
+    // Pick the first want this listing satisfies. Graded wants keep the
+    // looser company-token check (preserves the working graded behavior);
+    // raw / Any wants get the full condition filter. Trying each want lets
+    // a listing land on the correct set when the same card is wanted with
+    // different targets across sets.
+    const want = itemWants.find(w =>
+      w.targetType === 'Graded'
+        ? GRADED_COMPANY_REGEX.test(item.title)
+        : matchesCondition(detected, w)
+    )
+    if (!want) continue
     allHits.push({
       ...item,
       matched_set_slug: want.setSlug,
@@ -748,8 +795,9 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     hits: dedupedHits,
-    wantCount: uniqueWants.size,
-    queriedCount: wantsToProcess.length,
+    wantCount: queryGroups.size,
+    queriedCount: groupsToProcess.length,
+    setCount: (setsData || []).length,
     prioritySellerStats,
   })
 }
