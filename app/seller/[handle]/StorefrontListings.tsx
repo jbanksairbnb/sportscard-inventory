@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { thumbUrl } from '@/lib/image-transform';
 
@@ -18,6 +18,10 @@ export type StorefrontItem = {
   photos: string[];
   isSet: boolean;
   setHref: string | null;
+  // Lowercased blob of the searchable fields (title, description, player,
+  // year, brand, card #, grade) assembled server-side so the storefront
+  // search can match on more than just the rendered title.
+  searchText: string;
 };
 
 function fmtMoney(n: number | null): string {
@@ -67,6 +71,15 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
 
 export default function StorefrontListings({ items }: { items: StorefrontItem[] }) {
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
+  const [query, setQuery] = useState('');
+
+  // Match every whitespace-separated term against the item's search blob, so
+  // "1989 griffey psa" narrows to listings containing all three.
+  const filtered = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return items;
+    return items.filter(it => terms.every(t => it.searchText.includes(t)));
+  }, [items, query]);
 
   if (items.length === 0) {
     return (
@@ -79,8 +92,42 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
 
   return (
     <>
+      <div className="panel" style={{
+        padding: '10px 14px', marginBottom: 16, background: 'var(--paper)',
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      }}>
+        <span aria-hidden style={{ fontSize: 16, color: 'var(--ink-mute)' }}>🔍</span>
+        <input
+          type="search"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search this storefront — player, year, set, grade…"
+          aria-label="Search listings"
+          style={{
+            flex: 1, minWidth: 200, border: 'none', background: 'transparent',
+            fontSize: 14, color: 'var(--ink)', outline: 'none',
+          }}
+        />
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+          {query.trim()
+            ? `${filtered.length} of ${items.length}`
+            : `${items.length} ${items.length === 1 ? 'listing' : 'listings'}`}
+        </span>
+        {query && (
+          <button type="button" onClick={() => setQuery('')} className="btn btn-outline btn-sm">Clear</button>
+        )}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="panel-bordered" style={{ padding: '40px 32px', textAlign: 'center' }}>
+          <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 6 }}>No matches</div>
+          <p style={{ color: 'var(--ink-mute)', fontSize: 13 }}>
+            Nothing matches “{query.trim()}”. Try a different search.
+          </p>
+        </div>
+      ) : (
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-        {items.map(l => (
+        {filtered.map(l => (
           <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div
               onClick={() => l.photos.length > 0 && setLightboxPhotos(l.photos)}
@@ -125,6 +172,7 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
           </div>
         ))}
       </div>
+      )}
 
       {lightboxPhotos && (
         <PhotoLightbox urls={lightboxPhotos} startIdx={0} onClose={() => setLightboxPhotos(null)} />
