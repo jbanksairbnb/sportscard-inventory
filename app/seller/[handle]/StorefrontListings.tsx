@@ -19,9 +19,14 @@ export type StorefrontItem = {
   photos: string[];
   isSet: boolean;
   setHref: string | null;
-  // Lowercased blob of the searchable fields (title, description, player,
-  // year, brand, card #, grade) assembled server-side so the storefront
-  // search can match on more than just the rendered title.
+  // Structured fields powering the exact-match facet filters.
+  year: number | null;
+  brand: string | null;
+  player: string | null;
+  // Lowercased blob of the identifying fields (title, player, brand, card #,
+  // year, grade) assembled server-side so the keyword box can match on more
+  // than just the rendered title. Excludes the free-text description on
+  // purpose — see page.tsx.
   searchText: string;
 };
 
@@ -29,6 +34,12 @@ function fmtMoney(n: number | null): string {
   if (n == null) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
+
+const filterSelectStyle: React.CSSProperties = {
+  fontSize: 12.5, fontWeight: 600, color: 'var(--ink)',
+  background: 'var(--cream)', border: '1.5px solid var(--plum)',
+  borderRadius: 8, padding: '6px 10px', cursor: 'pointer', maxWidth: 200,
+};
 
 function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: number; onClose: () => void }) {
   const [idx, setIdx] = useState(startIdx);
@@ -73,20 +84,56 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
 export default function StorefrontListings({ items }: { items: StorefrontItem[] }) {
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [query, setQuery] = useState('');
+  const [yearFilter, setYearFilter] = useState('');
+  const [brandFilter, setBrandFilter] = useState('');
+  const [conditionFilter, setConditionFilter] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
 
-  // Match every whitespace-separated term against the item's search blob, so
-  // "1989 griffey psa" narrows to listings containing all three.
+  // Build the dropdown options from the listings actually on offer. Years
+  // newest-first; brands and conditions alphabetical.
+  const { years, brands, conditions } = useMemo(() => {
+    const ys = new Set<number>();
+    const bs = new Set<string>();
+    const cs = new Set<string>();
+    for (const it of items) {
+      if (it.year != null) ys.add(it.year);
+      if (it.brand) bs.add(it.brand);
+      if (it.conditionLabel) cs.add(it.conditionLabel);
+    }
+    return {
+      years: Array.from(ys).sort((a, b) => b - a),
+      brands: Array.from(bs).sort((a, b) => a.localeCompare(b)),
+      conditions: Array.from(cs).sort((a, b) => a.localeCompare(b)),
+    };
+  }, [items]);
+
+  // Facets are exact matches against the structured columns; the keyword box
+  // adds an AND over the identifying-fields blob, so "griffey" alongside a
+  // Year of 1989 and Condition of PSA 9 narrows precisely. Searching a year
+  // here only hits the real year column — never a digit buried in a blurb.
+  const hasFilters = !!(query.trim() || yearFilter || brandFilter || conditionFilter);
   const filtered = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) return items;
-    return items.filter(it => terms.every(t => it.searchText.includes(t)));
-  }, [items, query]);
+    return items.filter(it => {
+      if (yearFilter && String(it.year ?? '') !== yearFilter) return false;
+      if (brandFilter && it.brand !== brandFilter) return false;
+      if (conditionFilter && it.conditionLabel !== conditionFilter) return false;
+      if (terms.length && !terms.every(t => it.searchText.includes(t))) return false;
+      return true;
+    });
+  }, [items, query, yearFilter, brandFilter, conditionFilter]);
 
-  // A new search or page-size change should drop the viewer back to page 1 so
+  function clearAll() {
+    setQuery('');
+    setYearFilter('');
+    setBrandFilter('');
+    setConditionFilter('');
+  }
+
+  // Any filter or page-size change should drop the viewer back to page 1 so
   // they aren't stranded on a page that no longer exists.
-  useEffect(() => { setPage(1); }, [query, pageSize]);
+  useEffect(() => { setPage(1); }, [query, yearFilter, brandFilter, conditionFilter, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const curPage = Math.min(page, totalPages);
@@ -108,35 +155,66 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
     <>
       <div className="panel" style={{
         padding: '10px 14px', marginBottom: 16, background: 'var(--paper)',
-        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        display: 'flex', flexDirection: 'column', gap: 10,
       }}>
-        <span aria-hidden style={{ fontSize: 16, color: 'var(--ink-mute)' }}>🔍</span>
-        <input
-          type="search"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder="Search this storefront — player, year, set, grade…"
-          aria-label="Search listings"
-          style={{
-            flex: 1, minWidth: 200, border: 'none', background: 'transparent',
-            fontSize: 14, color: 'var(--ink)', outline: 'none',
-          }}
-        />
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-          {query.trim()
-            ? `${filtered.length} of ${items.length}`
-            : `${items.length} ${items.length === 1 ? 'listing' : 'listings'}`}
-        </span>
-        {query && (
-          <button type="button" onClick={() => setQuery('')} className="btn btn-outline btn-sm">Clear</button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span aria-hidden style={{ fontSize: 16, color: 'var(--ink-mute)' }}>🔍</span>
+          <input
+            type="search"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search this storefront — player, title, card #…"
+            aria-label="Search listings"
+            style={{
+              flex: 1, minWidth: 200, border: 'none', background: 'transparent',
+              fontSize: 14, color: 'var(--ink)', outline: 'none',
+            }}
+          />
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+            {hasFilters
+              ? `${filtered.length} of ${items.length}`
+              : `${items.length} ${items.length === 1 ? 'listing' : 'listings'}`}
+          </span>
+          {hasFilters && (
+            <button type="button" onClick={clearAll} className="btn btn-outline btn-sm">Clear</button>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderTop: '1px solid var(--rule-soft)', paddingTop: 10 }}>
+          <select
+            value={yearFilter}
+            onChange={e => setYearFilter(e.target.value)}
+            aria-label="Filter by year"
+            style={filterSelectStyle}
+          >
+            <option value="">All years</option>
+            {years.map(y => <option key={y} value={String(y)}>{y}</option>)}
+          </select>
+          <select
+            value={brandFilter}
+            onChange={e => setBrandFilter(e.target.value)}
+            aria-label="Filter by brand"
+            style={filterSelectStyle}
+          >
+            <option value="">All brands</option>
+            {brands.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <select
+            value={conditionFilter}
+            onChange={e => setConditionFilter(e.target.value)}
+            aria-label="Filter by condition"
+            style={filterSelectStyle}
+          >
+            <option value="">All conditions</option>
+            {conditions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
         <div className="panel-bordered" style={{ padding: '40px 32px', textAlign: 'center' }}>
           <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 6 }}>No matches</div>
           <p style={{ color: 'var(--ink-mute)', fontSize: 13 }}>
-            Nothing matches “{query.trim()}”. Try a different search.
+            Nothing matches your filters. Try widening your search.
           </p>
         </div>
       ) : (

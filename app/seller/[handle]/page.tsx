@@ -95,8 +95,19 @@ export default async function SellerStorefrontPage(props: { params: Promise<{ ha
     setHref: l.listing_type === 'set' && l.set_slug
       ? `/seller/${encodeURIComponent(seller.handle as string)}/set/${encodeURIComponent(l.set_slug)}`
       : null,
+    // Structured fields drive the exact-match facet filters (year/brand/
+    // condition) so a year search hits the real year column, never stray
+    // digits in a blurb.
+    year: l.year,
+    brand: l.brand,
+    player: l.player,
+    // Keyword blob deliberately EXCLUDES the free-text description: bulk
+    // listings often paste other years ("1976 price guide", etc.) into the
+    // blurb, which made a search for "1976" surface unrelated cards. Keep the
+    // keyword match to the identifying fields (title, player, brand, card #,
+    // year, grade) so it stays precise.
     searchText: [
-      l.title, l.description, l.player, l.brand, l.card_number,
+      l.title, l.player, l.brand, l.card_number,
       l.year, conditionLabel(l),
     ].filter(Boolean).join(' ').toLowerCase(),
   }));
