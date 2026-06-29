@@ -110,16 +110,24 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
 
   // Facets are exact matches against the structured columns; the keyword box
   // adds an AND over the identifying-fields blob, so "griffey" alongside a
-  // Year of 1989 and Condition of PSA 9 narrows precisely. Searching a year
-  // here only hits the real year column — never a digit buried in a blurb.
+  // Year of 1989 and Condition of PSA 9 narrows precisely.
   const hasFilters = !!(query.trim() || yearFilter || brandFilter || conditionFilter);
   const filtered = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    // A bare 4-digit term is a YEAR, matched against the real year column —
+    // never as a substring of the text blob. Without this, any listing whose
+    // title/description/etc. happens to contain "1976" (a price-guide
+    // reference, a bulk-import artifact, a set-break range) would match a
+    // search for "1976" even though its actual year is 1970. Remaining terms
+    // match the identifying-fields blob as before.
+    const yearTerms = terms.filter(t => /^\d{4}$/.test(t));
+    const textTerms = terms.filter(t => !/^\d{4}$/.test(t));
     return items.filter(it => {
       if (yearFilter && String(it.year ?? '') !== yearFilter) return false;
       if (brandFilter && it.brand !== brandFilter) return false;
       if (conditionFilter && it.conditionLabel !== conditionFilter) return false;
-      if (terms.length && !terms.every(t => it.searchText.includes(t))) return false;
+      if (yearTerms.length && !yearTerms.every(t => String(it.year ?? '') === t)) return false;
+      if (textTerms.length && !textTerms.every(t => it.searchText.includes(t))) return false;
       return true;
     });
   }, [items, query, yearFilter, brandFilter, conditionFilter]);
