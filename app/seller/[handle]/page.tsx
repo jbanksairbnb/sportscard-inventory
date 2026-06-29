@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import SCLogo from '@/components/SCLogo';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import StorefrontListings, { StorefrontItem } from './StorefrontListings';
 
 // Public, read-only storefront for a single seller. Reachable with no login
@@ -57,16 +58,23 @@ export default async function SellerStorefrontPage(props: { params: Promise<{ ha
     .maybeSingle();
   if (!seller) notFound();
 
-  const { data: rows } = await admin
-    .from('listings')
-    .select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, listing_type, set_slug')
-    .eq('user_id', seller.user_id)
-    .eq('status', 'active')
-    .gt('asking_price', 0)
-    .order('year', { ascending: true })
-    .order('brand', { ascending: true });
+  // PostgREST caps any single query at 1000 rows, so a seller with more than
+  // 1000 active listings would silently lose the rest (and the storefront's
+  // client-side search would never see them). fetchAll walks the result set in
+  // 1000-row windows so the full inventory reaches the page.
+  const rows = await fetchAll<ListingRow>((from, to) =>
+    admin
+      .from('listings')
+      .select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, listing_type, set_slug')
+      .eq('user_id', seller.user_id)
+      .eq('status', 'active')
+      .gt('asking_price', 0)
+      .order('year', { ascending: true })
+      .order('brand', { ascending: true })
+      .range(from, to)
+  );
 
-  const listings = (rows || []) as ListingRow[];
+  const listings = rows as ListingRow[];
   // year → brand → card # (numeric) so set-completion browsers see cards in order.
   listings.sort((a, b) => {
     const yd = (a.year || 0) - (b.year || 0);

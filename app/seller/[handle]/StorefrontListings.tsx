@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { thumbUrl } from '@/lib/image-transform';
+import Pagination from '@/components/Pagination';
 
 // Read-only grid for the public seller storefront. Visitors can browse photos
 // (lightbox) but cannot buy: every purchase affordance is a "Log in to buy"
@@ -72,6 +73,8 @@ function PhotoLightbox({ urls, startIdx, onClose }: { urls: string[]; startIdx: 
 export default function StorefrontListings({ items }: { items: StorefrontItem[] }) {
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
 
   // Match every whitespace-separated term against the item's search blob, so
   // "1989 griffey psa" narrows to listings containing all three.
@@ -80,6 +83,17 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
     if (terms.length === 0) return items;
     return items.filter(it => terms.every(t => it.searchText.includes(t)));
   }, [items, query]);
+
+  // A new search or page-size change should drop the viewer back to page 1 so
+  // they aren't stranded on a page that no longer exists.
+  useEffect(() => { setPage(1); }, [query, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const curPage = Math.min(page, totalPages);
+  const paged = useMemo(
+    () => filtered.slice((curPage - 1) * pageSize, curPage * pageSize),
+    [filtered, curPage, pageSize],
+  );
 
   if (items.length === 0) {
     return (
@@ -126,8 +140,16 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
           </p>
         </div>
       ) : (
+      <>
+      <Pagination
+        total={filtered.length}
+        page={curPage}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+      />
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-        {filtered.map(l => (
+        {paged.map(l => (
           <div key={l.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div
               onClick={() => l.photos.length > 0 && setLightboxPhotos(l.photos)}
@@ -172,6 +194,14 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
           </div>
         ))}
       </div>
+      <Pagination
+        total={filtered.length}
+        page={curPage}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+      />
+      </>
       )}
 
       {lightboxPhotos && (
