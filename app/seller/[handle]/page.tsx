@@ -71,10 +71,26 @@ export default async function SellerStorefrontPage(props: { params: Promise<{ ha
       .gt('asking_price', 0)
       .order('year', { ascending: true })
       .order('brand', { ascending: true })
+      // id is the final, UNIQUE tiebreaker. Without it, the year/brand sort
+      // leaves rows that share a (year, brand) — e.g. every "1970 Topps" card —
+      // in an order Postgres does not guarantee to repeat across the separate
+      // queries fetchAll issues per 1000-row window. That non-determinism makes
+      // windows overlap, so the same listing comes back in two windows: the
+      // grid then renders duplicate React keys (key={l.id}) and mis-updates the
+      // visible cards as the search/filter narrows. A unique final sort key
+      // makes the windows disjoint.
+      .order('id', { ascending: true })
       .range(from, to)
   );
 
-  const listings = rows as ListingRow[];
+  // Belt-and-suspenders: drop any duplicate ids before they can reach the grid,
+  // so a unique key is guaranteed even if a row slips through twice.
+  const seen = new Set<string>();
+  const listings = (rows as ListingRow[]).filter(l => {
+    if (seen.has(l.id)) return false;
+    seen.add(l.id);
+    return true;
+  });
   // year → brand → card # (numeric) so set-completion browsers see cards in order.
   listings.sort((a, b) => {
     const yd = (a.year || 0) - (b.year || 0);
