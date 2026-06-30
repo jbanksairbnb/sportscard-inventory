@@ -4,6 +4,7 @@ import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import { applyOwnedTransition } from '@/lib/inventory';
 import { syncAuctionListings } from '@/lib/listingStatusSync';
@@ -275,8 +276,14 @@ function NewFbAuctionPageInner() {
       if (!user) { router.push('/login'); return; }
       { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
       setUserId(user.id);
-      const [listingsRes, templatesRes, groupsRes, biddersRes, lotsRes, eventsRes, claimsRes, historicalRes] = await Promise.all([
-        supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
+      // Walk the full active inventory in 1000-row windows. A single unbounded
+      // query is silently capped at 1000 rows by PostgREST, and because the
+      // listing search/filter below runs client-side over whatever loaded here,
+      // any card past row 1000 (the oldest by created_at) would never appear in
+      // the picker. id is the unique final sort key so the paged windows are
+      // disjoint — created_at alone isn't guaranteed unique across windows.
+      const [loadedListings, templatesRes, groupsRes, biddersRes, lotsRes, eventsRes, claimsRes, historicalRes] = await Promise.all([
+        fetchAll<Listing>((from, to) => supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to)),
         supabase.from('fb_auction_templates').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id).order('name'),
@@ -297,7 +304,6 @@ function NewFbAuctionPageInner() {
           .eq('user_id', user.id)
           .not('bidder_id', 'is', null),
       ]);
-      const loadedListings = (listingsRes.data || []) as Listing[];
       setListings(loadedListings);
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
