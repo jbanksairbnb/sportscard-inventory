@@ -554,16 +554,25 @@ export default function FbAuctionsPage() {
   }
 
   function buildBidUpdate(auction: AuctionRow): string {
+    // Surface the settlement status only for finished lots. 'sold' is the
+    // ENDED-awaiting-payment state and 'paid' is fully SOLD; LIVE ('open') and
+    // NO SALE lots read the same as before.
+    const statusTag = (status: LotRow['status']): string => {
+      if (status === 'sold') return ' — ENDED';
+      if (status === 'paid') return ' — SOLD';
+      return '';
+    };
     const lines = auction.fb_auction_lots
       .sort((a, b) => a.lot_number - b.lot_number)
       .map(lot => {
         const label = shortLotLabel(lot);
         const bid = getLotValue(lot, 'current_bid');
         const bidder = getLotValue(lot, 'bidder_name');
+        const tag = statusTag(lot.status);
         if (bid !== null && bid !== undefined) {
-          return `#${lot.lot_number} ${label} — ${fmtMoney(bid)}${bidder ? ` (${bidder})` : ''}`;
+          return `#${lot.lot_number} ${label} — ${fmtMoney(bid)}${bidder ? ` (${bidder})` : ''}${tag}`;
         }
-        return `#${lot.lot_number} ${label} — no bids yet`;
+        return `#${lot.lot_number} ${label} — no bids yet${tag}`;
       });
     return [
       `🔥 ${auction.title} — Bid Update 🔥`,
