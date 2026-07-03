@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -119,6 +119,15 @@ export default function ManageFbAuctionPage() {
   const [postExpanded, setPostExpanded] = useState(true);
 
   const [bidders, setBidders] = useState<BidderRow[]>([]);
+  // Live mirror of `bidders`. Bidder resolution reads this instead of a memoized
+  // snapshot: when several lots are saved in quick succession, inserts land in
+  // the DB faster than React re-renders, and reading a stale snapshot is exactly
+  // what caused the same name to be inserted as a fresh record on every lot.
+  const biddersRef = useRef<BidderRow[]>([]);
+  useEffect(() => { biddersRef.current = bidders; }, [bidders]);
+  // Coalesces concurrent inserts of the same brand-new (name, handle) so
+  // overlapping saves share one insert rather than each creating a duplicate.
+  const pendingBidderInserts = useRef<Map<string, Promise<BidderRow | null>>>(new Map());
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
   const [members, setMembers] = useState<MemberOption[]>([]);
   const [memberPickerBidderId, setMemberPickerBidderId] = useState<string | null>(null);
@@ -186,16 +195,14 @@ export default function ManageFbAuctionPage() {
     load();
   }, [auctionId, router]);
 
-  const biddersByLowerName = useMemo(() => {
-    const map = new Map<string, BidderRow[]>();
-    for (const b of bidders) {
-      const k = b.name.toLowerCase();
-      const arr = map.get(k) || [];
-      arr.push(b);
-      map.set(k, arr);
+  function registerBidder(b: BidderRow) {
+    if (!biddersRef.current.some(x => x.id === b.id)) {
+      biddersRef.current = [...biddersRef.current, b].sort((a, c) => a.name.localeCompare(c.name));
     }
-    return map;
-  }, [bidders]);
+    setBidders(prev => prev.some(x => x.id === b.id)
+      ? prev
+      : [...prev, b].sort((a, c) => a.name.localeCompare(c.name)));
+  }
 
   async function ensureBidderForLot(lot: Lot, name: string | null, handle: string | null): Promise<string | null> {
     if (!userId) return null;
@@ -203,25 +210,55 @@ export default function ManageFbAuctionPage() {
     if (!trimmed) return null;
     const supabase = createClient();
     const lname = trimmed.toLowerCase();
-    const matches = biddersByLowerName.get(lname) || [];
-    let bidder: BidderRow | null = null;
-    if (handle && handle.trim()) {
-      bidder = matches.find(b => (b.fb_handle || '').toLowerCase() === handle.trim().toLowerCase()) || null;
-    } else if (matches.length === 1) {
-      bidder = matches[0];
-    } else if (matches.length > 1) {
-      setDupeWarnings(prev => ({ ...prev, [lot.id]: matches }));
-      bidder = matches[0];
-    }
+    const htrim = (handle || '').trim();
+    const hlower = htrim.toLowerCase();
+
+    // Resolve against the live ref, not a memoized snapshot — see biddersRef.
+    const resolveLocal = (): BidderRow | null => {
+      const matches = biddersRef.current.filter(b => b.name.toLowerCase() === lname);
+      if (htrim) return matches.find(b => (b.fb_handle || '').toLowerCase() === hlower) || null;
+      if (matches.length === 1) return matches[0];
+      if (matches.length > 1) { setDupeWarnings(prev => ({ ...prev, [lot.id]: matches })); return matches[0]; }
+      return null;
+    };
+
+    let bidder = resolveLocal();
+
     if (!bidder) {
-      const { data, error } = await supabase
-        .from('fb_bidders')
-        .insert({ user_id: userId, name: trimmed, fb_handle: handle?.trim() || null })
-        .select('id, name, fb_handle')
-        .single();
-      if (error || !data) return null;
-      bidder = data as BidderRow;
-      setBidders(prev => [...prev, bidder!].sort((a, b) => a.name.localeCompare(b.name)));
+      // Coalesce concurrent creates of the same new bidder, and re-check the DB
+      // before inserting, so a sibling save (or another tab) that already
+      // created this bidder is reused instead of duplicated.
+      const key = `${lname} ${hlower}`;
+      let pending = pendingBidderInserts.current.get(key);
+      if (!pending) {
+        pending = (async (): Promise<BidderRow | null> => {
+          const { data: existing } = await supabase
+            .from('fb_bidders')
+            .select('id, name, fb_handle, member_user_id')
+            .eq('user_id', userId)
+            .ilike('name', trimmed);
+          const rows = (existing || []) as BidderRow[];
+          const matched = htrim
+            ? rows.find(b => (b.fb_handle || '').toLowerCase() === hlower)
+            : rows[0];
+          if (matched) return matched;
+          const { data, error } = await supabase
+            .from('fb_bidders')
+            .insert({ user_id: userId, name: trimmed, fb_handle: htrim || null })
+            .select('id, name, fb_handle, member_user_id')
+            .single();
+          if (error || !data) return null;
+          return data as BidderRow;
+        })();
+        pendingBidderInserts.current.set(key, pending);
+        void pending.finally(() => {
+          if (pendingBidderInserts.current.get(key) === pending) pendingBidderInserts.current.delete(key);
+        });
+      }
+      bidder = await pending;
+      if (bidder) registerBidder(bidder);
+      else bidder = resolveLocal();
+      if (!bidder) return null;
     }
     const isWinner = lot.status === 'sold' || lot.status === 'paid';
     const isPaid = lot.status === 'paid';
