@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import { thumbUrl } from '@/lib/image-transform';
 
 type CardRow = Record<string, string | number | null>;
 
@@ -131,18 +132,22 @@ function CardTile({ row, onImageClick }: {
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           {img1 && (
             <img
-              src={img1}
+              loading="lazy"
+              decoding="async"
+              src={thumbUrl(img1, 320)}
               alt="Front"
               onClick={() => onImageClick('Front')}
-              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
+              style={{ width: 128, height: 128, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
             />
           )}
           {img2 && (
             <img
-              src={img2}
+              loading="lazy"
+              decoding="async"
+              src={thumbUrl(img2, 320)}
               alt="Back"
               onClick={() => onImageClick('Back')}
-              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
+              style={{ width: 128, height: 128, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
             />
           )}
         </div>
@@ -179,12 +184,12 @@ function ListRow({ row, even, onImageClick }: {
       <td style={{ padding: '10px 16px' }}>
         <div style={{ display: 'flex', gap: 6 }}>
           {img1 && (
-            <img loading="lazy" decoding="async" src={img1} alt="Front" onClick={() => onImageClick('Front')}
-              style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+            <img loading="lazy" decoding="async" src={thumbUrl(img1, 240)} alt="Front" onClick={() => onImageClick('Front')}
+              style={{ width: 88, height: 88, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
           {img2 && (
-            <img loading="lazy" decoding="async" src={img2} alt="Back" onClick={() => onImageClick('Back')}
-              style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+            <img loading="lazy" decoding="async" src={thumbUrl(img2, 240)} alt="Back" onClick={() => onImageClick('Back')}
+              style={{ width: 88, height: 88, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
         </div>
       </td>
@@ -419,7 +424,7 @@ export default function SharePage() {
             </table>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
             {displayed.map((row, i) => (
               <CardTile key={i} row={row}
                 onImageClick={(side) => openLightbox(i, side)} />
