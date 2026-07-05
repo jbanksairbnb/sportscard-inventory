@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import SetHeaderBanner from '@/components/SetHeaderBanner';
+import { thumbUrl } from '@/lib/image-transform';
 
 type ImageItem = {
   url: string;
@@ -45,7 +46,7 @@ function ImageLightbox({ items, startIdx, onClose }: { items: ImageItem[]; start
       onClick={onClose}
     >
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img loading="lazy" decoding="async" src={current.url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
+        <img loading="lazy" decoding="async" src={thumbUrl(current.url, 1400, 82)} alt="Card" style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
         <div style={{
           marginTop: 12, padding: '8px 14px',
           background: 'rgba(248,236,208,0.96)', border: '2px solid var(--plum)',
@@ -117,11 +118,11 @@ function CardTile({ row, year, brand, onImageClick }: {
       {(img1 || img2) && (
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           {img1 && (
-            <img loading="lazy" decoding="async" src={img1} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
+            <img loading="lazy" decoding="async" src={thumbUrl(img1, 160)} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
               style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
           )}
           {img2 && (
-            <img loading="lazy" decoding="async" src={img2} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
+            <img loading="lazy" decoding="async" src={thumbUrl(img2, 160)} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
               style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
           )}
         </div>
@@ -164,11 +165,11 @@ function CardTableRow({ row, year, brand, onImageClick }: {
       <td style={{ padding: '10px 14px' }}>
         <div style={{ display: 'flex', gap: 6 }}>
           {img1 && (
-            <img loading="lazy" decoding="async" src={img1} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
+            <img loading="lazy" decoding="async" src={thumbUrl(img1, 120)} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
               style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
           {img2 && (
-            <img loading="lazy" decoding="async" src={img2} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
+            <img loading="lazy" decoding="async" src={thumbUrl(img2, 120)} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
               style={{ width: 44, height: 44, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
         </div>
