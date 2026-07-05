@@ -46,7 +46,9 @@ function ImageLightbox({ items, startIdx, onClose }: { items: ImageItem[]; start
       onClick={onClose}
     >
       <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
-        <img loading="lazy" decoding="async" src={thumbUrl(current.url, 1400, 82)} alt="Card" style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
+        {/* Full-resolution original — the enlarged view intentionally serves the
+            untouched scan, not a resized transform, so no detail is lost. */}
+        <img loading="lazy" decoding="async" src={current.url} alt="Card" style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
         <div style={{
           marginTop: 12, padding: '8px 14px',
           background: 'rgba(248,236,208,0.96)', border: '2px solid var(--plum)',
