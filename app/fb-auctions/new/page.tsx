@@ -503,15 +503,18 @@ function NewFbAuctionPageInner() {
 
   const bidderSuggestions: BidderSuggestion[] = useMemo(() => {
     if (suggestionListings.length === 0 || activity.length === 0) return [];
-    const YEAR_TOLERANCE = 5;
+    const YEAR_TOLERANCE = 2;
     const byBidder = new Map<string, BidderSuggestion>();
+    // Match against each individual listing (year/player fields), never the
+    // free-text post title/description. For a multi-card auction this loops
+    // over every selected card. A bidder matches a listing if they previously
+    // bid on/won the same player, OR any card within +/- 2 years of this
+    // listing's year — brand-independent (interest is in the era, not the brand).
     for (const l of suggestionListings) {
       for (const a of activity) {
         const playerMatch = !!l.player && !!a.listing_player && l.player.toLowerCase() === a.listing_player.toLowerCase();
-        const sameBrand = !!l.brand && !!a.listing_brand && l.brand.toLowerCase() === a.listing_brand.toLowerCase();
         const yearWithin = l.year !== null && a.listing_year !== null && Math.abs(l.year - a.listing_year) <= YEAR_TOLERANCE;
-        const brandYearMatch = sameBrand && yearWithin;
-        if (!playerMatch && !brandYearMatch) continue;
+        if (!playerMatch && !yearWithin) continue;
         const bidder = bidders.find(b => b.id === a.bidder_id);
         if (!bidder) continue;
         let entry = byBidder.get(bidder.id);
@@ -535,11 +538,12 @@ function NewFbAuctionPageInner() {
       if (totals.auctionWins === 0 && totals.claimCount >= CLAIM_ONLY_THRESHOLD) return false;
       return true;
     });
+    // No cap — surface every matching bidder so no relevant tag is dropped.
     return filteredEntries.sort((a, b) => {
       if (b.wonCount !== a.wonCount) return b.wonCount - a.wonCount;
       if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
       return b.totalSpend - a.totalSpend;
-    }).slice(0, 12);
+    });
   }, [suggestionListings, activity, bidders, bidderTotals]);
 
   const canGenerate = type === 'single'
@@ -1181,7 +1185,7 @@ function BidderSuggestionsPanel({ suggestions }: { suggestions: BidderSuggestion
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <div className="eyebrow" style={{ fontSize: 11, color: 'var(--teal)', fontWeight: 700 }}>★ Suggested past bidders ★</div>
         <span style={{ fontSize: 11.5, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
-          Based on past bids on similar player / brand-year matches.
+          Based on past bids on the same player, or any card within ±2 years.
         </span>
         <div style={{ flex: 1 }} />
         <CopyButton text={tagAllText} label={`📋 Copy all ${suggestions.length} tag${suggestions.length === 1 ? '' : 's'}`} />

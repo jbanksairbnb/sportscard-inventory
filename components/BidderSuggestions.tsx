@@ -31,11 +31,12 @@ export type BidderSuggestion = {
   matchedListingIds: string[];
 };
 
-const YEAR_TOLERANCE = 5;
+const YEAR_TOLERANCE = 2;
 
 // Compute past bidders/buyers most likely to be interested in this set of
-// listings. Match if the bidder previously won/bid on a card with the same
-// player, OR same brand within +/- 5 years of any of the listings.
+// listings. Match each individual listing (not any post body): a bidder
+// matches if they previously won/bid on the same player, OR any card within
+// +/- 2 years of that listing's year (brand-independent — era interest).
 export function computeBidderSuggestions(
   listings: SuggestionListing[],
   activity: LiveActivity[],
@@ -49,12 +50,9 @@ export function computeBidderSuggestions(
     for (const a of activity) {
       const playerMatch = !!l.player && !!a.listing_player
         && l.player.toLowerCase() === a.listing_player.toLowerCase();
-      const sameBrand = !!l.brand && !!a.listing_brand
-        && l.brand.toLowerCase() === a.listing_brand.toLowerCase();
       const yearWithin = l.year !== null && a.listing_year !== null
         && Math.abs(l.year - a.listing_year) <= YEAR_TOLERANCE;
-      const brandYearMatch = sameBrand && yearWithin;
-      if (!playerMatch && !brandYearMatch) continue;
+      if (!playerMatch && !yearWithin) continue;
       const bidder = bidders.find(b => b.id === a.bidder_id);
       if (!bidder) continue;
       let entry = byBidder.get(bidder.id);
@@ -85,7 +83,9 @@ export function computeBidderSuggestions(
     if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
     return b.totalSpend - a.totalSpend;
   });
-  return filtered.slice(0, opts.max ?? 12);
+  // Only cap when the caller explicitly asks for a max; otherwise return every
+  // matching bidder so no relevant tag is dropped.
+  return opts.max ? filtered.slice(0, opts.max) : filtered;
 }
 
 async function copyText(t: string) { try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
@@ -105,7 +105,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 export function BidderSuggestionsPanel({
   suggestions, headline = 'Suggested past bidders',
-  hint = 'Based on past bids on similar player / brand-year matches.',
+  hint = 'Based on past bids on the same player, or any card within ±2 years.',
 }: {
   suggestions: BidderSuggestion[];
   headline?: string;
