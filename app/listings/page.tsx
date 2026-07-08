@@ -454,12 +454,25 @@ function ListingsPageContent() {
     const q = searchQuery.trim();
     if (q) {
       const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      // A bare 4-digit term is a YEAR, matched against the real year column —
+      // never as a substring of the text blob. Without this, any listing whose
+      // title/description/tag/etc. happens to contain "1971" (a price-guide
+      // reference, a bulk-import artifact, a set-break range) would match a
+      // search for "1971" even though its actual year is 1970. Remaining terms
+      // match the identifying-fields blob as before. Mirrors the storefront
+      // search fix in app/seller/[handle]/StorefrontListings.tsx.
+      const yearTerms = terms.filter(t => /^\d{4}$/.test(t));
+      const textTerms = terms.filter(t => !/^\d{4}$/.test(t));
       arr = arr.filter(l => {
-        const hay = [
-          l.title, l.player, l.brand, l.card_number, l.year ? String(l.year) : '',
-          l.description, l.raw_grade, l.grading_company, l.grade, l.tag_number,
-        ].filter(Boolean).join(' ').toLowerCase();
-        return terms.every(t => hay.includes(t));
+        if (yearTerms.length && !yearTerms.every(t => String(l.year ?? '') === t)) return false;
+        if (textTerms.length) {
+          const hay = [
+            l.title, l.player, l.brand, l.card_number,
+            l.description, l.raw_grade, l.grading_company, l.grade, l.tag_number,
+          ].filter(Boolean).join(' ').toLowerCase();
+          if (!textTerms.every(t => hay.includes(t))) return false;
+        }
+        return true;
       });
     }
     // Default order: year → brand → card # (numeric so '5' < '11') → player.
