@@ -645,7 +645,7 @@ export default function ManageFbAuctionPage() {
         </div>
       </header>
 
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px', display: 'flex', flexDirection: 'column' }}>
         <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <div className="display" style={{ fontSize: 24, color: 'var(--plum)', flex: 1, minWidth: 240 }}>{auction.title}</div>
@@ -803,7 +803,9 @@ export default function ManageFbAuctionPage() {
           </div>
         </section>
 
-        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20 }}>
+        {/* On ended auctions, Settlement is pulled in front of Lots via flex order
+            (order 1 vs 2); every other status keeps source order (both order 0). */}
+        <section className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20, order: auction.status === 'ended' ? 2 : 0 }}>
           <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 12 }}>
             Lots — track current high bids
           </div>
@@ -972,7 +974,7 @@ export default function ManageFbAuctionPage() {
         </section>
 
         {(auction.status === 'ended' || auction.status === 'settled' || lots.some(l => l.status === 'sold' || l.status === 'paid')) && (
-          <section id="settlement" className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20, scrollMarginTop: 80 }}>
+          <section id="settlement" className="panel-bordered" style={{ padding: '20px 24px', marginBottom: 20, scrollMarginTop: 80, order: auction.status === 'ended' ? 1 : 0 }}>
             <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>Settlement — Buyer Invoices</div>
             <div style={{ marginBottom: 14 }}>
               <label className="input-label">Payment Instructions (used in every invoice)</label>
