@@ -228,7 +228,7 @@ export default function ManageFbAuctionPage() {
       // Coalesce concurrent creates of the same new bidder, and re-check the DB
       // before inserting, so a sibling save (or another tab) that already
       // created this bidder is reused instead of duplicated.
-      const key = `${lname} ${hlower}`;
+      const key = `${lname} ${hlower}`;
       let pending = pendingBidderInserts.current.get(key);
       if (!pending) {
         pending = (async (): Promise<BidderRow | null> => {
@@ -721,7 +721,7 @@ export default function ManageFbAuctionPage() {
                   </div>
                 </div>
 
-                {!postDetails.isSingle && postDetails.lotComments.length > 0 && (
+                {!postDetails.isSingle && postDetails.lotComments.length > 0 && auction.status !== 'ended' && auction.status !== 'settled' && (
                   <div style={{ borderTop: '1.5px dashed var(--rule)', paddingTop: 14 }}>
                     <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', fontWeight: 700, marginBottom: 8 }}>
                       Per-lot comments — paste each as a comment under the parent post
