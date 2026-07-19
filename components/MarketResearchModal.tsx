@@ -2,6 +2,10 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import {
+  AnalysisRow, AnalysisSnapshot, ValueHistoryRow,
+  normalizeAnalysis, contentHash, trendFromRows,
+} from '@/lib/cardValueHistory';
 
 // Sources we offer in the dropdown. 'other' lets the user free-form a label.
 export const RESEARCH_SOURCES = [
@@ -156,8 +160,59 @@ function rowsFromDataPoints(dps: DataPointRow[], defaults: { company: string; gr
   return rows;
 }
 
+// Rebuild editable rows from a committed history snapshot (used by "Use this
+// analysis"). The snapshot stores prices/weights as numbers; the form wants
+// strings.
+function rowsFromSnapshot(snap: AnalysisSnapshot, defaults: { company: string; grade: string } = { company: '', grade: '' }): Row[] {
+  const rows: Row[] = (snap.rows || []).slice().sort((a, b) => a.position - b.position).map(d => ({
+    position: d.position,
+    source: (d.source as SourceValue) ?? 'other',
+    source_label: d.source_label ?? '',
+    grade_company: d.grade_company ?? '',
+    grade_value: d.grade_value ?? '',
+    sale_date: d.sale_date ?? '',
+    price: d.price !== null && d.price !== undefined ? String(d.price) : '',
+    weight_pct: d.weight_pct !== null && d.weight_pct !== undefined ? String(d.weight_pct) : '',
+    url: d.url ?? '',
+    notes: d.notes ?? '',
+  }));
+  while (rows.length < 5) rows.push(emptyRow(rows.length, defaults));
+  return rows;
+}
+
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
+}
+
+function trendArrow(dir: 'up' | 'down' | 'flat'): string {
+  return dir === 'up' ? '▲' : dir === 'down' ? '▼' : '→';
+}
+function trendColor(dir: 'up' | 'down' | 'flat'): string {
+  return dir === 'up' ? 'var(--teal)' : dir === 'down' ? 'var(--rust)' : 'var(--ink-mute)';
+}
+
+// Tiny dependency-free SVG sparkline of the value series (chronological order).
+function Sparkline({ values, width = 160, height = 34 }: { values: number[]; width?: number; height?: number }) {
+  if (values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const stepX = width / (values.length - 1);
+  const pts = values.map((v, i) => {
+    const x = i * stepX;
+    const y = height - ((v - min) / span) * (height - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const up = values[values.length - 1] >= values[0];
+  const stroke = up ? 'var(--teal)' : 'var(--rust)';
+  const last = pts[pts.length - 1].split(',');
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }} aria-hidden>
+      <polyline points={pts.join(' ')} fill="none" stroke={stroke} strokeWidth={1.5}
+        strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last[0]} cy={last[1]} r={2.5} fill={stroke} />
+    </svg>
+  );
 }
 
 function sourceDisplay(s: SourceValue, label: string | null): string {
@@ -178,7 +233,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 5 }, (_, i) => emptyRow(i, defaultsFor(card))));
   const [notes, setNotes] = useState('');
   const [latestSession, setLatestSession] = useState<{ session: SessionRow; data_points: DataPointRow[] } | null>(null);
-  const [history, setHistory] = useState<{ session: SessionRow; data_points: DataPointRow[] }[]>([]);
+  // Immutable committed-analysis log for this card (newest first) — powers the
+  // price-history list, the sparkline, and the up/down trend badge.
+  const [valueHistory, setValueHistory] = useState<ValueHistoryRow[]>([]);
+  // When the working draft was seeded from a prior history entry, remember it
+  // so the next commit records the lineage.
+  const [derivedFromId, setDerivedFromId] = useState<string | null>(null);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
 
   useEffect(() => {
@@ -235,19 +295,22 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       // surfaced as a "Use most recent analysis" link, and the full archive is
       // visible in the history panel below the form.
       setSessionId(null);
+      setDerivedFromId(null);
       setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
       setNotes('');
       setAutoSaveTick('idle');
       if (own.length > 0) {
+        // The banner up top is a shortcut to resume the most recent draft; the
+        // full archive lives in the price-history list, sourced separately from
+        // the immutable card_value_history table below.
         setLatestSession({ session: own[0], data_points: own[0].market_research_data_points || [] });
-        // History shows every past session (including the latest), so the user
-        // always has a full archive view. The banner up top is just a shortcut
-        // to load the most recent.
-        setHistory(own.map(s => ({ session: s, data_points: s.market_research_data_points || [] })));
       } else {
         setLatestSession(null);
-        setHistory([]);
       }
+
+      // Immutable committed-analysis history for this card, keyed by the same
+      // identity tuple used for sessions above.
+      setValueHistory(await fetchValueHistory(supabase));
 
       // Community sessions — show last 10 from other users on this card.
       const labeledCommunity: CommunitySession[] = others.slice(0, 10).map(s => ({
@@ -280,6 +343,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     return { totalWeight: weight, marketValue: weighted, weightOk, priceFilled, weightFilled };
   }, [rows]);
 
+  // Latest committed value vs the one before it, for the header trend badge.
+  const valueTrend = useMemo(
+    () => trendFromRows(valueHistory.map(h => ({ market_value: h.market_value, created_at: h.created_at }))),
+    [valueHistory],
+  );
+
   function updateRow(idx: number, patch: Partial<Row>) {
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
   }
@@ -293,6 +362,76 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setRows(rowsFromDataPoints(s.data_points, cardDefaults));
     setNotes(prev => prev || `(Started from another collector's research from ${new Date(s.created_at).toLocaleDateString()})`);
     setSessionId(null); // Treat as new session for the current user
+    setDerivedFromId(null);
+  }
+
+  // Load this card's committed price history (newest first). RLS scopes it to
+  // the current user; the filters mirror the session-matching tuple.
+  async function fetchValueHistory(supabase: ReturnType<typeof createClient>): Promise<ValueHistoryRow[]> {
+    let q = supabase.from('card_value_history').select('*').order('created_at', { ascending: false });
+    if (card.year !== null) q = q.eq('card_year', card.year); else q = q.is('card_year', null);
+    if (card.card_number) q = q.eq('card_number', card.card_number); else q = q.is('card_number', null);
+    if (card.brand) q = q.eq('card_brand', card.brand);
+    if (card.grade) q = q.eq('card_grade', card.grade);
+    if (card.grading_company) q = q.eq('card_grading_company', card.grading_company);
+    if (card.raw_grade) q = q.eq('card_raw_grade', card.raw_grade);
+    const { data, error } = await q;
+    if (error) { console.warn('[research] value history load error:', error.message); return []; }
+    return (data || []) as unknown as ValueHistoryRow[];
+  }
+
+  // Record an immutable snapshot of the current analysis — but only when it
+  // differs from the most recent one for this card, so re-saving an unchanged
+  // analysis (or reusing a prior one verbatim) is a no-op. Called only on
+  // explicit Save research / Use value, never on the silent autosave.
+  async function commitHistory(): Promise<void> {
+    if (!userId || !totals.weightOk) return;
+    const analysisRows: AnalysisRow[] = rows.filter(rowHasUserContent).map(r => ({
+      position: r.position,
+      source: r.source,
+      source_label: r.source === 'other' ? (r.source_label.trim() || null) : null,
+      grade_company: r.grade_company || null,
+      grade_value: r.grade_value || null,
+      sale_date: r.sale_date || null,
+      price: r.price !== '' ? Number(r.price) : null,
+      weight_pct: r.weight_pct !== '' ? Number(r.weight_pct) : null,
+      url: r.url.trim() || null,
+      notes: r.notes.trim() || null,
+    }));
+    const value = totals.marketValue;
+    const trimmedNotes = notes.trim() || null;
+    const normalized = normalizeAnalysis(analysisRows, trimmedNotes, value);
+    // No-op if this matches either the most recent commit or the specific prior
+    // analysis this draft was reused from — both mean "nothing changed".
+    const refs = [
+      valueHistory[0],
+      derivedFromId ? valueHistory.find(h => h.id === derivedFromId) : undefined,
+    ];
+    for (const ref of refs) {
+      if (!ref) continue;
+      const refNorm = normalizeAnalysis(ref.snapshot?.rows || [], ref.snapshot?.notes ?? null, ref.market_value);
+      if (refNorm === normalized) return;
+    }
+    const snapshot: AnalysisSnapshot = { notes: trimmedNotes, market_value: value, rows: analysisRows };
+    const payload = {
+      user_id: userId,
+      card_year: card.year, card_brand: card.brand, card_number: card.card_number, card_player: card.player,
+      card_grade: card.grade, card_grading_company: card.grading_company, card_raw_grade: card.raw_grade,
+      listing_id: card.listing_id ?? null, set_slug: card.set_slug ?? null, set_card_number: card.set_card_number ?? null,
+      market_value: value,
+      content_hash: contentHash(normalized),
+      snapshot,
+      source_session_id: null, // reserved for the migration backfill only
+      derived_from_id: derivedFromId,
+    };
+    const supabase = createClient();
+    const { data, error } = await supabase.from('card_value_history').insert(payload).select('*').single();
+    if (error) { console.warn('[research] history insert failed:', error.message); return; }
+    if (data) {
+      const row = data as unknown as ValueHistoryRow;
+      setValueHistory(prev => [row, ...prev]);
+      setDerivedFromId(row.id); // subsequent commits chain off this one
+    }
   }
 
   // Persist current session + data points. Returns true on success. The UI
@@ -357,7 +496,8 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       return;
     }
     setSaving(true);
-    await persistSession();
+    const ok = await persistSession();
+    if (ok) await commitHistory();
     setSaving(false);
   }
 
@@ -368,6 +508,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     }
     setSaving(true);
     const ok = await persistSession();
+    if (ok) await commitHistory();
     setSaving(false);
     if (!ok) return;
     if (onApply) onApply(totals.marketValue);
@@ -379,6 +520,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setRows(rowsFromDataPoints(latestSession.data_points, cardDefaults));
     setNotes(latestSession.session.notes || '');
     setSessionId(latestSession.session.id);
+    setDerivedFromId(null);
     setAutoSaveTick('idle');
   }
 
@@ -442,6 +584,16 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
             <div className="mono" style={{ fontSize: 10, color: totals.weightOk ? 'var(--teal)' : 'var(--rust)', fontWeight: 700 }}>
               Weights total: {totals.totalWeight.toFixed(1)}% {totals.weightOk ? '✓' : '(must = 100%)'}
             </div>
+            {valueTrend && (
+              <div className="mono" style={{ fontSize: 10, fontWeight: 700, marginTop: 3, color: trendColor(valueTrend.direction) }}
+                title={`Last commit ${fmtMoney(valueTrend.latest)} vs prior ${fmtMoney(valueTrend.previous)}`}>
+                {trendArrow(valueTrend.direction)}{' '}
+                {valueTrend.pct !== null
+                  ? `${valueTrend.pct >= 0 ? '+' : ''}${valueTrend.pct.toFixed(1)}%`
+                  : `${valueTrend.delta >= 0 ? '+' : ''}${fmtMoney(valueTrend.delta)}`}
+                {' '}vs prior
+              </div>
+            )}
           </div>
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
@@ -589,22 +741,36 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               </span>
             </div>
 
-            {/* Past research on this card (you only) */}
-            {history.length > 0 && (
+            {/* Price history for this card (you only) — immutable committed analyses */}
+            {valueHistory.length > 0 && (
               <section style={{ marginBottom: 18 }}>
-                <div className="display" style={{ fontSize: 14, color: 'var(--plum)', marginBottom: 8 }}>Your past research on this card</div>
-                <PastList items={history.map(h => ({
-                  date: h.session.created_at,
-                  marketValue: h.session.market_value,
-                  rows: h.data_points,
-                  notes: h.session.notes,
-                  applyButton: { label: 'Use this analysis', onClick: () => {
-                    setRows(rowsFromDataPoints(h.data_points, cardDefaults));
-                    setNotes(h.session.notes || '');
-                    setSessionId(h.session.id);
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <div className="display" style={{ fontSize: 14, color: 'var(--plum)' }}>Price history</div>
+                  {valueTrend && (
+                    <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: trendColor(valueTrend.direction) }}>
+                      {trendArrow(valueTrend.direction)}{' '}
+                      {valueTrend.pct !== null
+                        ? `${valueTrend.pct >= 0 ? '+' : ''}${valueTrend.pct.toFixed(1)}%`
+                        : `${valueTrend.delta >= 0 ? '+' : ''}${fmtMoney(valueTrend.delta)}`}
+                      {' '}since prior
+                    </span>
+                  )}
+                  {valueHistory.length >= 2 && (
+                    <div style={{ marginLeft: 'auto' }}>
+                      <Sparkline values={valueHistory.slice().reverse().map(h => h.market_value)} />
+                    </div>
+                  )}
+                </div>
+                <ValueHistoryList
+                  items={valueHistory}
+                  onUse={(h) => {
+                    setRows(rowsFromSnapshot(h.snapshot, cardDefaults));
+                    setNotes(h.snapshot?.notes || '');
+                    setSessionId(null);       // fork a fresh working session; don't overwrite
+                    setDerivedFromId(h.id);   // lineage recorded on the next commit
                     setAutoSaveTick('idle');
-                  } },
-                }))} showNotes />
+                  }}
+                />
               </section>
             )}
 
@@ -694,6 +860,72 @@ function PastList({ items, showNotes }: {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Immutable price-history entries (newest first). Each entry shows its comps
+// from the stored snapshot, the notes, and its change vs the chronologically
+// previous commit, plus a "Use this analysis" button to fork it into the form.
+function ValueHistoryList({ items, onUse }: {
+  items: ValueHistoryRow[];
+  onUse: (h: ValueHistoryRow) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {items.map((h, i) => {
+        // The next item in this newest-first list is the older commit.
+        const older = items[i + 1];
+        const delta = older ? h.market_value - older.market_value : null;
+        const pct = older && older.market_value !== 0 ? (delta! / older.market_value) * 100 : null;
+        const dir: 'up' | 'down' | 'flat' = delta === null ? 'flat'
+          : delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : 'flat';
+        const snapRows = (h.snapshot?.rows || []).slice().sort((a, b) => a.position - b.position);
+        return (
+          <div key={h.id} className="panel" style={{ padding: 12, background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 700 }}>
+                {new Date(h.created_at).toLocaleDateString()}
+              </span>
+              <span className="display" style={{ fontSize: 16, color: 'var(--orange)', fontWeight: 700 }}>
+                {fmtMoney(h.market_value)}
+              </span>
+              {delta !== null && (
+                <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: trendColor(dir) }}>
+                  {trendArrow(dir)}{' '}
+                  {pct !== null
+                    ? `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+                    : `${delta >= 0 ? '+' : ''}${fmtMoney(delta)}`}
+                </span>
+              )}
+              <button type="button" onClick={() => onUse(h)}
+                className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11 }}>
+                ↳ Use this analysis
+              </button>
+            </div>
+            {snapRows.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)' }}>
+                {snapRows.map((d, j) => {
+                  const gradeDisplay = `${d.grade_company || ''}${d.grade_company && d.grade_value ? ' ' : ''}${d.grade_value || ''}`.trim();
+                  return (
+                    <div key={j}>
+                      <strong style={{ color: 'var(--plum)' }}>{sourceDisplay(d.source as SourceValue, d.source_label)}</strong>
+                      {gradeDisplay ? ` · ${gradeDisplay}` : ''}
+                      {d.sale_date ? ` · ${d.sale_date}` : ''}
+                      {' · '}
+                      <span style={{ color: 'var(--orange)', fontWeight: 700 }}>{d.price !== null ? fmtMoney(d.price) : '—'}</span>
+                      {d.weight_pct !== null ? ` (${d.weight_pct}%)` : ''}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {h.snapshot?.notes && (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--ink-mute)', fontStyle: 'italic' }}>{h.snapshot.notes}</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
