@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
+import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { thumbUrl } from "@/lib/image-transform";
@@ -675,6 +676,30 @@ export default function SetEditorPage() {
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
   const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
   const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
+
+  // Per-card price trend (up/down vs the prior committed analysis), keyed by the
+  // shared card-identity tuple. Drives the ▲/▼ badge next to each Value cell.
+  const [valueTrends, setValueTrends] = useState<Record<string, Trend>>({});
+  const loadValueTrends = React.useCallback(async () => {
+    if (!userId || !slug || slug === 'new') { setValueTrends({}); return; }
+    const supabase = createClient();
+    const { data } = await supabase.from('card_value_history')
+      .select('card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
+      .eq('user_id', userId).eq('set_slug', slug);
+    const groups: Record<string, { market_value: number; created_at: string }[]> = {};
+    for (const r of (data || []) as Array<Record<string, any>>) {
+      const key = cardValueKey({
+        year: r.card_year, brand: r.card_brand, card_number: r.card_number,
+        grade: r.card_grade, grading_company: r.card_grading_company, raw_grade: r.card_raw_grade,
+      });
+      (groups[key] ||= []).push({ market_value: r.market_value, created_at: r.created_at });
+    }
+    const trends: Record<string, Trend> = {};
+    for (const k of Object.keys(groups)) { const t = trendFromRows(groups[k]); if (t) trends[k] = t; }
+    setValueTrends(trends);
+  }, [userId, slug]);
+  useEffect(() => { loadValueTrends(); }, [loadValueTrends]);
+
   useEffect(() => {
     try {
       if (typeof window !== 'undefined' && window.localStorage.getItem('sc-research-prompt-dismissed') === '1') {
@@ -1652,6 +1677,19 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                           <button type="button" title="Research market price" aria-label="Research market price"
                             onMouseDown={(e) => { e.preventDefault(); setResearchTarget({ rowIndex: origIndex, descriptor: descriptorForRow(row) }); setValueFocusPrompt(null); }}
                             style={{ background: 'transparent', border: 0, color: 'var(--teal)', cursor: 'pointer', fontSize: 14, padding: 2 }}>📈</button>
+                          {(() => {
+                            const t = valueTrends[cardValueKey(descriptorForRow(row))];
+                            if (!t) return null;
+                            const color = t.direction === 'up' ? 'var(--teal)' : t.direction === 'down' ? 'var(--rust)' : 'var(--ink-mute)';
+                            const arrow = t.direction === 'up' ? '▲' : t.direction === 'down' ? '▼' : '→';
+                            const label = t.pct !== null ? `${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(0)}%` : '';
+                            return (
+                              <span title={`Latest $${t.latest.toFixed(2)} vs prior $${t.previous.toFixed(2)}`}
+                                style={{ fontSize: 10, fontWeight: 700, color, whiteSpace: 'nowrap' }}>
+                                {arrow}{label}
+                              </span>
+                            );
+                          })()}
                         </div>
                         {valueFocusPrompt === origIndex && !researchPromptDismissed && (
                           <div style={{ position: 'absolute', top: '100%', left: 8, marginTop: 4, zIndex: 30, background: 'var(--paper)', border: '1.5px solid var(--plum)', borderRadius: 8, padding: '8px 10px', boxShadow: '0 6px 14px rgba(42,20,52,0.18)', width: 230 }}>
@@ -1895,7 +1933,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
       </footer>
       <MarketResearchModal
         open={!!researchTarget}
-        onClose={() => setResearchTarget(null)}
+        onClose={() => { setResearchTarget(null); loadValueTrends(); }}
         card={researchTarget?.descriptor || { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null }}
         onApply={(value) => {
           if (!researchTarget) return;
@@ -1903,6 +1941,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           // Write the formatted currency string in a single state update so we
           // don't lose the change to a stale-rows blur formatter on the next tick.
           onChangeCell(idx, 'Value', toCurrency(value.toFixed(2)));
+          // A commit may have just added a history point — refresh trend badges.
+          loadValueTrends();
         }}
       />
       {autoNumOpen && (() => {
