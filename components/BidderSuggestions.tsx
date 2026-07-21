@@ -103,17 +103,29 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+// Facebook allows up to 50 tags in a post body; anything beyond that has to be
+// dropped into a comment (each mention typed with a leading @). Suggestions are
+// pre-sorted by best match, split at this line.
+const POST_TAG_LIMIT = 50;
+
 export function BidderSuggestionsPanel({
   suggestions, headline = 'Suggested past bidders',
-  hint = 'Based on past bids on the same player, or any card within ±2 years.',
+  hint = 'Sorted by best match — wins first, then bids. Based on past bids on the same player, or any card within ±2 years.',
 }: {
   suggestions: BidderSuggestion[];
   headline?: string;
   hint?: string;
 }) {
   if (suggestions.length === 0) return null;
-  const tagAllText = suggestions
+  const postTags = suggestions.slice(0, POST_TAG_LIMIT);
+  const commentTags = suggestions.slice(POST_TAG_LIMIT);
+  const postTagText = postTags
     .map(s => s.bidder.fb_handle ? `@${s.bidder.fb_handle}` : s.bidder.name)
+    .join(' ');
+  // Comment mentions must be typed with a leading @ to trigger Facebook's
+  // tagger, so force the @ prefix even when we only have a display name.
+  const commentTagText = commentTags
+    .map(s => `@${s.bidder.fb_handle || s.bidder.name}`)
     .join(' ');
   return (
     <section className="panel-bordered" style={{
@@ -124,30 +136,65 @@ export function BidderSuggestionsPanel({
         <div className="eyebrow" style={{ fontSize: 11, color: 'var(--teal)', fontWeight: 700 }}>★ {headline} ★</div>
         <span style={{ fontSize: 11.5, color: 'var(--ink-soft)', fontStyle: 'italic' }}>{hint}</span>
         <div style={{ flex: 1 }} />
-        <CopyButton text={tagAllText} label={`📋 Copy all ${suggestions.length} tag${suggestions.length === 1 ? '' : 's'}`} />
+        <CopyButton
+          text={postTagText}
+          label={commentTags.length > 0
+            ? `📋 Copy first ${postTags.length} (post)`
+            : `📋 Copy all ${postTags.length} tag${postTags.length === 1 ? '' : 's'}`}
+        />
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {suggestions.map(s => {
+        {suggestions.map((s, i) => {
           const tag = s.bidder.fb_handle ? `@${s.bidder.fb_handle}` : s.bidder.name;
+          const isComment = i >= POST_TAG_LIMIT;
+          const commentTag = `@${s.bidder.fb_handle || s.bidder.name}`;
           return (
-            <div key={s.bidder.id} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '6px 10px', background: 'var(--paper)',
-              border: '1.5px solid var(--teal)', borderRadius: 100,
-              fontSize: 12, color: 'var(--plum)',
-            }}>
-              <span style={{ fontWeight: 700 }}>{s.bidder.name}</span>
-              {s.bidder.fb_handle && <span className="mono" style={{ fontSize: 10.5, color: 'var(--teal)' }}>@{s.bidder.fb_handle}</span>}
-              <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
-                {s.matchCount} match{s.matchCount === 1 ? '' : 'es'}
-                {s.wonCount > 0 ? ` · ${s.wonCount} won` : ''}
-                {s.claimCount > 0 ? ` · ${s.claimCount} claimed` : ''}
-              </span>
-              <CopyButton text={tag} label="📋" />
-            </div>
+            <React.Fragment key={s.bidder.id}>
+              {i === POST_TAG_LIMIT && (
+                <div style={{
+                  flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                  margin: '6px 0 2px', fontSize: 11, fontWeight: 700, color: 'var(--orange)',
+                }}>
+                  <span style={{ flex: 1, height: 1, background: 'var(--orange)', opacity: 0.5 }} />
+                  ⚠️ 50-tag post limit — tag the {commentTags.length} below in a comment
+                  <span style={{ flex: 1, height: 1, background: 'var(--orange)', opacity: 0.5 }} />
+                </div>
+              )}
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '6px 10px', background: 'var(--paper)',
+                border: `1.5px solid ${isComment ? 'var(--orange)' : 'var(--teal)'}`,
+                borderRadius: 100, fontSize: 12, color: 'var(--plum)',
+                opacity: isComment ? 0.9 : 1,
+              }}>
+                <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>{i + 1}</span>
+                <span style={{ fontWeight: 700 }}>{s.bidder.name}</span>
+                {s.bidder.fb_handle && <span className="mono" style={{ fontSize: 10.5, color: 'var(--teal)' }}>@{s.bidder.fb_handle}</span>}
+                <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
+                  {s.matchCount} match{s.matchCount === 1 ? '' : 'es'}
+                  {s.wonCount > 0 ? ` · ${s.wonCount} won` : ''}
+                  {s.claimCount > 0 ? ` · ${s.claimCount} claimed` : ''}
+                </span>
+                <CopyButton text={isComment ? commentTag : tag} label="📋" />
+              </div>
+            </React.Fragment>
           );
         })}
       </div>
+      {commentTags.length > 0 && (
+        <div style={{
+          marginTop: 12, padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(232,116,44,0.10)', border: '1.5px solid var(--orange)',
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 11.5, color: 'var(--plum)', flex: 1, minWidth: 220 }}>
+            <strong>Facebook caps a post at {POST_TAG_LIMIT} tags.</strong> Publish the post first, then paste
+            these {commentTags.length} as a comment — each is prefixed with <span className="mono">@</span> so
+            Facebook&apos;s tagger picks them up.
+          </span>
+          <CopyButton text={commentTagText} label={`📋 Copy ${commentTags.length} comment tag${commentTags.length === 1 ? '' : 's'}`} />
+        </div>
+      )}
     </section>
   );
 }
