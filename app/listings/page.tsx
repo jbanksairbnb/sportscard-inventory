@@ -28,6 +28,13 @@ type Status = 'draft' | 'active' | 'sold' | 'removed';
 // listing's mirrored `sold_state`: 'claimed' → Claimed, 'sold' → Sold. FB
 // fulfilment isn't tracked here, so FB cards never land in Shipped.
 type FilterTab = 'active' | 'draft' | 'claimed' | 'sold' | 'shipped' | 'all';
+type SortKey = 'default' | 'cost' | 'card_number' | 'tag_number';
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'default', label: 'Default (year, brand, card #)' },
+  { key: 'cost', label: 'Cost' },
+  { key: 'card_number', label: 'Card number' },
+  { key: 'tag_number', label: 'Tag number' },
+];
 type SoldBucket = 'claimed' | 'sold' | 'shipped';
 function soldBucketOf(
   l: { sold_channel?: string | null; sold_state?: string | null },
@@ -283,6 +290,12 @@ function ListingsPageContent() {
   // listing is hidden behind the wrong status. Cleared after 3s.
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Sort control — works on top of the status tabs and search. 'default'
+  // keeps the year → brand → card # → player order buyers see; the others
+  // let sellers reorder by cost, card number, or tag number, ascending or
+  // descending.
+  const [sortKey, setSortKey] = useState<SortKey>('default');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   // Display pagination — defaults to 100 per page, expandable to 500.
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
@@ -478,7 +491,7 @@ function ListingsPageContent() {
     // Default order: year → brand → card # (numeric so '5' < '11') → player.
     // Matches the marketplace + scan-batch sort so sellers see their listings
     // in the same order buyers do.
-    arr = [...arr].sort((a, b) => {
+    const defaultCmp = (a: Listing, b: Listing) => {
       const yearDiff = (a.year || 0) - (b.year || 0);
       if (yearDiff !== 0) return yearDiff;
       const brandCmp = (a.brand || '').localeCompare(b.brand || '');
@@ -486,14 +499,41 @@ function ListingsPageContent() {
       const cardCmp = (a.card_number || '').localeCompare(b.card_number || '', undefined, { numeric: true });
       if (cardCmp !== 0) return cardCmp;
       return (a.player || '').localeCompare(b.player || '');
+    };
+    const dir = sortDir === 'desc' ? -1 : 1;
+    // Missing values (null cost, blank card/tag number) always sort to the
+    // bottom regardless of direction so the meaningful rows stay on top, then
+    // fall back to the default order to keep ties stable.
+    arr = [...arr].sort((a, b) => {
+      if (sortKey === 'cost') {
+        const am = a.cost === null || a.cost === undefined;
+        const bm = b.cost === null || b.cost === undefined;
+        if (am && bm) return defaultCmp(a, b);
+        if (am) return 1;
+        if (bm) return -1;
+        const diff = (a.cost as number) - (b.cost as number);
+        return diff !== 0 ? diff * dir : defaultCmp(a, b);
+      }
+      if (sortKey === 'card_number' || sortKey === 'tag_number') {
+        const av = (sortKey === 'card_number' ? a.card_number : a.tag_number) || '';
+        const bv = (sortKey === 'card_number' ? b.card_number : b.tag_number) || '';
+        const am = av.trim() === '';
+        const bm = bv.trim() === '';
+        if (am && bm) return defaultCmp(a, b);
+        if (am) return 1;
+        if (bm) return -1;
+        const cmp = av.localeCompare(bv, undefined, { numeric: true });
+        return cmp !== 0 ? cmp * dir : defaultCmp(a, b);
+      }
+      return defaultCmp(a, b);
     });
     return arr;
-  }, [listings, filter, searchQuery, purchasesByListing]);
+  }, [listings, filter, searchQuery, purchasesByListing, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Changing tab or search resets to the first page; if the active page no
   // longer exists after filtering, snap back to the last valid one.
-  useEffect(() => { setPage(1); }, [filter, searchQuery]);
+  useEffect(() => { setPage(1); }, [filter, searchQuery, sortKey, sortDir]);
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
   const paged = useMemo(
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
@@ -950,6 +990,38 @@ function ListingsPageContent() {
               {filtered.length} match{filtered.length === 1 ? '' : 'es'}
             </span>
           )}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px',
+            border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
+          }}>
+            <span style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Sort</span>
+            <select
+              value={sortKey}
+              onChange={e => setSortKey(e.target.value as SortKey)}
+              style={{
+                border: 'none', outline: 'none', background: 'transparent',
+                fontFamily: 'var(--font-body)', fontSize: 12.5, color: 'var(--plum)',
+                fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              {SORT_OPTIONS.map(o => (
+                <option key={o.key} value={o.key}>{o.label}</option>
+              ))}
+            </select>
+            {sortKey !== 'default' && (
+              <button
+                type="button"
+                onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
+                title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                style={{
+                  background: 'transparent', border: 'none', color: 'var(--plum)',
+                  cursor: 'pointer', fontSize: 14, padding: 0, fontWeight: 700, lineHeight: 1,
+                }}
+              >
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </button>
+            )}
+          </div>
         </div>
 
         {selectedIds.size > 0 && (
