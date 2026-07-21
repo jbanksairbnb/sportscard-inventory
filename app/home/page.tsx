@@ -132,7 +132,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   avatar: string | null; cover: string | null;
   profile: CollectorProfile;
   onAvatarChange: (url: string) => void; onCoverChange: (url: string) => void;
-  onCoverPositionChange: (x: number, y: number, zoom: number) => void;
+  onCoverPositionChange: (x: number, y: number, zoom: number, fit: 'cover' | 'contain') => void;
   onToggleShared: () => void;
 }) {
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -144,6 +144,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   const [posX, setPosX] = useState<number>(profile.cover_position_x);
   const [posY, setPosY] = useState<number>(profile.cover_position_y);
   const [zoom, setZoom] = useState<number>(profile.cover_zoom);
+  const [fit, setFit] = useState<'cover' | 'contain'>(profile.cover_fit);
   const dragStartRef = useRef<{ x: number; y: number; startPosX: number; startPosY: number } | null>(null);
 
   // Clamp range for the zoom slider. 1.0 = fit (same as cover today).
@@ -157,18 +158,20 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
       setPosX(profile.cover_position_x);
       setPosY(profile.cover_position_y);
       setZoom(profile.cover_zoom);
+      setFit(profile.cover_fit);
     }
-  }, [profile.cover_position_x, profile.cover_position_y, profile.cover_zoom, adjustingCover]);
+  }, [profile.cover_position_x, profile.cover_position_y, profile.cover_zoom, profile.cover_fit, adjustingCover]);
 
   function startReposition() {
     setPosX(profile.cover_position_x);
     setPosY(profile.cover_position_y);
     setZoom(profile.cover_zoom);
+    setFit(profile.cover_fit);
     setAdjustingCover(true);
   }
 
   async function saveCoverPosition() {
-    onCoverPositionChange(posX, posY, zoom);
+    onCoverPositionChange(posX, posY, zoom, fit);
     setAdjustingCover(false);
     if (userId) {
       const supabase = createClient();
@@ -177,6 +180,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
         cover_position_x: posX,
         cover_position_y: posY,
         cover_zoom: zoom,
+        cover_fit: fit,
       });
     }
   }
@@ -185,6 +189,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
     setPosX(profile.cover_position_x);
     setPosY(profile.cover_position_y);
     setZoom(profile.cover_zoom);
+    setFit(profile.cover_fit);
     setAdjustingCover(false);
   }
 
@@ -268,7 +273,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
             style={{
               position: 'absolute', inset: 0,
               width: '100%', height: '100%',
-              objectFit: 'cover',
+              objectFit: fit,
               objectPosition: `${posX}% ${posY}%`,
               transform: `scale(${zoom})`,
               transformOrigin: `${posX}% ${posY}%`,
@@ -301,6 +306,29 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
         <div style={{ position: 'absolute', top: 18, right: 22, display: 'flex', gap: 8 }}>
           {adjustingCover ? (
             <>
+              {/* Fit mode pill — Cover crops to fill, Contain shows the whole
+                  image with letterbox. Lets sellers preserve full landscape
+                  banners without auto-cropping on load. */}
+              <div style={{
+                display: 'flex', alignItems: 'center',
+                padding: 3, borderRadius: 100,
+                background: 'rgba(245,233,208,0.95)', border: '1.5px solid var(--plum)',
+                gap: 2,
+              }}>
+                {(['cover', 'contain'] as const).map(m => (
+                  <button key={m} type="button" onClick={() => setFit(m)}
+                    title={m === 'cover' ? 'Crop to fill the banner' : 'Show the whole image (may letterbox)'}
+                    style={{
+                      padding: '3px 10px', borderRadius: 100, border: 'none',
+                      background: fit === m ? 'var(--plum)' : 'transparent',
+                      color: fit === m ? 'var(--cream)' : 'var(--plum)',
+                      fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 700,
+                      letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer',
+                    }}>
+                    {m === 'cover' ? 'Fill' : 'Whole image'}
+                  </button>
+                ))}
+              </div>
               {/* Zoom controls live next to Save. Slider value 0.7–3.0 → multiplied
                   onto object-fit:cover via transform:scale on the img element.
                   Round-trip clamp matches bumpZoom() so +/- buttons and slider agree. */}
@@ -1388,8 +1416,8 @@ const MOCK_ACTIVITY = [
   { id: 'a5', text: "Marcy liked your 1972 Clemente", time: "2d", dot: "#b4462b" },
 ];
 
-type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; profile_shared: boolean; cover_position_x: number; cover_position_y: number; cover_zoom: number; };
-const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, profile_shared: true, cover_position_x: 50, cover_position_y: 50, cover_zoom: 1.0 };
+type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; profile_shared: boolean; cover_position_x: number; cover_position_y: number; cover_zoom: number; cover_fit: 'cover' | 'contain'; };
+const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, profile_shared: true, cover_position_x: 50, cover_position_y: 50, cover_zoom: 1.0, cover_fit: 'cover' };
 
 function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
   const [editing, setEditing] = useState(false);
@@ -1809,7 +1837,7 @@ export default function HomePage() {
       if (!user) { router.push('/login'); return; }
       setUserId(user.id);
             const { data: profileData } = await supabase.from('user_profiles')
-        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, seller_terms_accepted_at, value_private, profile_shared, cover_position_x, cover_position_y, cover_zoom')
+        .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, is_admin, can_sell, wants_to_sell, seller_terms_accepted_at, value_private, profile_shared, cover_position_x, cover_position_y, cover_zoom, cover_fit')
         .eq('user_id', user.id).single();
       if (profileData) {
         setProfile({
@@ -1822,6 +1850,7 @@ export default function HomePage() {
           cover_position_x: profileData.cover_position_x != null ? Number(profileData.cover_position_x) : 50,
           cover_position_y: profileData.cover_position_y != null ? Number(profileData.cover_position_y) : 50,
           cover_zoom: profileData.cover_zoom != null ? Number(profileData.cover_zoom) : 1.0,
+          cover_fit: profileData.cover_fit === 'contain' ? 'contain' : 'cover',
         });
         if (profileData.avatar_url) setAvatar(profileData.avatar_url);
         if (profileData.cover_url) setCover(profileData.cover_url);
@@ -1867,7 +1896,7 @@ export default function HomePage() {
       <LogoShowcase />
             <Hero userId={userId} avatar={avatar} cover={cover} profile={profile}
         onAvatarChange={setAvatar} onCoverChange={setCover}
-        onCoverPositionChange={(x, y, z) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y, cover_zoom: z }))}
+        onCoverPositionChange={(x, y, z, f) => setProfile(p => ({ ...p, cover_position_x: x, cover_position_y: y, cover_zoom: z, cover_fit: f }))}
         onToggleShared={async () => {
           if (!userId) return;
           const next = !profile.profile_shared;

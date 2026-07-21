@@ -19,6 +19,7 @@ type Profile = {
   cover_position_x: number | null;
   cover_position_y: number | null;
   cover_zoom: number | null;
+  cover_fit: 'cover' | 'contain' | null;
   favorite_cards: (string | null)[] | null;
   profile_shared: boolean | null;
 };
@@ -63,7 +64,7 @@ export default function ProfilePage() {
     async function load() {
       const [{ data: profileData }, { data: setsData }, { data: allSets }] = await Promise.all([
         supabase.from('user_profiles')
-          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, cover_position_x, cover_position_y, cover_zoom, favorite_cards, profile_shared')
+          .select('display_name, handle, bio, city, team, favorite_players, chasing, avatar_url, cover_url, cover_position_x, cover_position_y, cover_zoom, cover_fit, favorite_cards, profile_shared')
           .eq('user_id', userId).single(),
         supabase.from('sets')
           .select('share_token, title, year, brand, row_count, owned_count, owned_pct')
@@ -174,13 +175,14 @@ export default function ProfilePage() {
             const px = profile.cover_position_x ?? 50;
             const py = profile.cover_position_y ?? 50;
             const pz = profile.cover_zoom != null ? Number(profile.cover_zoom) : 1.0;
+            const pf = profile.cover_fit === 'contain' ? 'contain' : 'cover';
             return (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img src={profile.cover_url} alt=""
                 style={{
                   position: 'absolute', inset: 0,
                   width: '100%', height: '100%',
-                  objectFit: 'cover',
+                  objectFit: pf,
                   objectPosition: `${px}% ${py}%`,
                   transform: `scale(${pz})`,
                   transformOrigin: `${px}% ${py}%`,
