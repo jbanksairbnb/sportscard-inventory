@@ -28,10 +28,11 @@ type Status = 'draft' | 'active' | 'sold' | 'removed';
 // listing's mirrored `sold_state`: 'claimed' → Claimed, 'sold' → Sold. FB
 // fulfilment isn't tracked here, so FB cards never land in Shipped.
 type FilterTab = 'active' | 'draft' | 'claimed' | 'sold' | 'shipped' | 'all';
-type SortKey = 'default' | 'cost' | 'card_number' | 'tag_number';
+type SortKey = 'default' | 'cost' | 'asking_price' | 'card_number' | 'tag_number';
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'default', label: 'Default (year, brand, card #)' },
   { key: 'cost', label: 'Cost' },
+  { key: 'asking_price', label: 'Asking price' },
   { key: 'card_number', label: 'Card number' },
   { key: 'tag_number', label: 'Tag number' },
 ];
@@ -501,17 +502,19 @@ function ListingsPageContent() {
       return (a.player || '').localeCompare(b.player || '');
     };
     const dir = sortDir === 'desc' ? -1 : 1;
-    // Missing values (null cost, blank card/tag number) always sort to the
-    // bottom regardless of direction so the meaningful rows stay on top, then
-    // fall back to the default order to keep ties stable.
+    // Missing values (null cost/asking price, blank card/tag number) always
+    // sort to the bottom regardless of direction so the meaningful rows stay
+    // on top, then fall back to the default order to keep ties stable.
     arr = [...arr].sort((a, b) => {
-      if (sortKey === 'cost') {
-        const am = a.cost === null || a.cost === undefined;
-        const bm = b.cost === null || b.cost === undefined;
+      if (sortKey === 'cost' || sortKey === 'asking_price') {
+        const av = sortKey === 'cost' ? a.cost : a.asking_price;
+        const bv = sortKey === 'cost' ? b.cost : b.asking_price;
+        const am = av === null || av === undefined;
+        const bm = bv === null || bv === undefined;
         if (am && bm) return defaultCmp(a, b);
         if (am) return 1;
         if (bm) return -1;
-        const diff = (a.cost as number) - (b.cost as number);
+        const diff = (av as number) - (bv as number);
         return diff !== 0 ? diff * dir : defaultCmp(a, b);
       }
       if (sortKey === 'card_number' || sortKey === 'tag_number') {
