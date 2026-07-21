@@ -1303,6 +1303,9 @@ function ListingsPageContent() {
           grading_company: editing?.grading_company ?? null,
           raw_grade: editing?.raw_grade ?? null,
           listing_id: editing?.id ?? null,
+          // Pass the listing's own scans into the modal so the user can
+          // eyeball the card while weighting comps.
+          image_urls: editing?.photos ?? [],
         }}
         onApply={(v) => setEditing(prev => prev ? { ...prev, asking_price: Math.round(v * 100) / 100 } : prev)}
       />
@@ -2993,6 +2996,7 @@ function InventoryListingWizard({
           grade: drafts[researchIdx].grade ?? null,
           grading_company: drafts[researchIdx].grading_company ?? null,
           raw_grade: drafts[researchIdx].raw_grade ?? null,
+          image_urls: drafts[researchIdx].photos ?? [],
         } : { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null }}
         onApply={(value) => {
           if (researchIdx !== null) updateDraft(researchIdx, { asking_price: Math.round(value * 100) / 100 });

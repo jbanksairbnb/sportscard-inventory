@@ -642,6 +642,7 @@ function LotEditor({ lot, index, isLast, listings, usedInOtherLots, onPatch, onR
       grading_company: l?.grading_company ?? null,
       raw_grade: l?.raw_grade ?? null,
       listing_id: l?.id ?? null,
+      image_urls: l?.photos ?? [],
     };
   }
   function setPriceAt(pos: number, val: string) {

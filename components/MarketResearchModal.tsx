@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createClient } from '@/lib/supabase/client';
 import {
   AnalysisRow, AnalysisSnapshot, ValueHistoryRow,
@@ -47,6 +48,9 @@ export type CardDescriptor = {
   grade: string | null;
   grading_company: string | null;
   raw_grade: string | null;
+  // Photos of *this specific card* — surfaced in the modal so the user can
+  // eyeball centering / corners / surface while weighting comps.
+  image_urls?: string[];
   // Optional FK / breadcrumbs back to the source record.
   listing_id?: string | null;
   set_slug?: string | null;
@@ -548,6 +552,27 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, notes, open, loading]);
 
+  // Photos of the card being researched — sourced from the descriptor passed
+  // by the caller (set rows pass Image 1/2; listings pass listing.photos).
+  const photoUrls = (card.image_urls || []).filter((u): u is string => !!u && typeof u === 'string');
+  const [photoIdx, setPhotoIdx] = useState<number | null>(null);
+  // Portal mount flag — the lightbox is rendered through createPortal to
+  // document.body so it escapes any parent stacking context (the modal
+  // itself uses overflow-y on its container, so a `position: fixed` child
+  // could otherwise be trapped behind it on some browsers).
+  const [portalReady, setPortalReady] = useState(false);
+  useEffect(() => { setPortalReady(true); }, []);
+  useEffect(() => {
+    if (photoIdx === null) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPhotoIdx(null);
+      else if (e.key === 'ArrowLeft') setPhotoIdx(i => (i === null ? null : (i - 1 + photoUrls.length) % photoUrls.length));
+      else if (e.key === 'ArrowRight') setPhotoIdx(i => (i === null ? null : (i + 1) % photoUrls.length));
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [photoIdx, photoUrls.length]);
+
   if (!open) return null;
 
   const cardTitle = [
@@ -576,6 +601,38 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               {cardTitle} <span style={{ color: 'var(--orange)' }}>· {conditionLabel}</span>
             </div>
           </div>
+          {photoUrls.length > 0 && (
+            // Inline thumbnail of the card's first scan, sitting right next
+            // to the Market Value tile. Click anywhere on it to open the
+            // full-screen lightbox (same component for listings + set
+            // editor, so the experience is consistent).
+            <button
+              type="button"
+              onClick={() => setPhotoIdx(0)}
+              title="View photos of this card"
+              style={{
+                position: 'relative', flexShrink: 0,
+                width: 84, height: 84,
+                padding: 0, borderRadius: 8,
+                border: '2px solid var(--plum)',
+                background: `var(--cream) center/contain no-repeat url("${photoUrls[0]}")`,
+                cursor: 'zoom-in',
+                boxShadow: '0 2px 0 var(--plum)',
+              }}
+            >
+              {photoUrls.length > 1 && (
+                <span className="mono" style={{
+                  position: 'absolute', top: -8, right: -8,
+                  background: 'var(--orange)', color: 'var(--cream)',
+                  fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                  padding: '2px 6px', borderRadius: 100,
+                  border: '2px solid var(--cream)',
+                }}>
+                  +{photoUrls.length - 1}
+                </span>
+              )}
+            </button>
+          )}
           <div className="panel-bordered" style={{ padding: '10px 16px', background: 'var(--paper)', minWidth: 180 }}>
             <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 2 }}>Market Value</div>
             <div className="display" style={{ fontSize: 28, color: totals.weightOk ? 'var(--orange)' : 'var(--ink-mute)', fontWeight: 700 }}>
@@ -597,6 +654,40 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
           </div>
           <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
         </div>
+
+        {photoIdx !== null && photoUrls.length > 0 && portalReady && createPortal(
+          <div onClick={() => setPhotoIdx(null)} style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(42,20,52,0.92)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ position: 'relative' }}>
+              <img src={photoUrls[photoIdx]} alt="Card photo"
+                style={{ maxWidth: '92vw', maxHeight: '88vh', borderRadius: 10, display: 'block' }} />
+              {photoUrls.length > 1 && (
+                <>
+                  <button type="button" onClick={() => setPhotoIdx(i => i === null ? null : (i - 1 + photoUrls.length) % photoUrls.length)}
+                    title="Previous (←)" style={lightboxArrow('left')}>‹</button>
+                  <button type="button" onClick={() => setPhotoIdx(i => i === null ? null : (i + 1) % photoUrls.length)}
+                    title="Next (→)" style={lightboxArrow('right')}>›</button>
+                  <div className="mono" style={{
+                    position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+                    padding: '4px 10px', borderRadius: 6, background: 'rgba(248,236,208,0.96)',
+                    color: 'var(--plum)', fontSize: 11, fontWeight: 700,
+                  }}>
+                    {photoIdx + 1} / {photoUrls.length}
+                  </div>
+                </>
+              )}
+              <button type="button" onClick={() => setPhotoIdx(null)} className="btn btn-sm"
+                style={{ position: 'absolute', top: 4, right: 4 }}>
+                ✕ Close
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px' }}>{INSTRUCTIONS}</p>
         {latestSession && !sessionId && (
