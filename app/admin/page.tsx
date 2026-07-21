@@ -267,13 +267,18 @@ export default function AdminPage() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {filtered.map(a => (
+            {filtered.map(a => {
+              // Prefer a human-readable name for the heading; fall back through
+              // profile name → real name → handle → email before the generic
+              // "New Applicant" so admins can identify who they're managing.
+              const applicantName = a.display_name || a.full_name || a.handle || a.email || 'New Applicant';
+              return (
               <div key={a.user_id} className="panel-bordered" style={{ padding: '20px 24px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: 260 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                       <div className="display" style={{ fontSize: 18, color: 'var(--plum)' }}>
-                        {a.display_name || a.handle || 'New Applicant'}
+                        {applicantName}
                       </div>
                       <span style={{
                         fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100,
@@ -317,11 +322,13 @@ export default function AdminPage() {
                         </span>
                       )}
                     </div>
-                    {a.applied_at && (
-                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 12 }}>
-                       Applied {new Date(a.applied_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}{a.email && <span style={{ marginLeft: 10 }}>· {a.email}</span>}{a.full_name && <span style={{ marginLeft: 10 }}>· {a.full_name}</span>}
-                      </div>
-                    )}
+                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginBottom: 12 }}>
+                      {a.email
+                        ? <span>{a.email}</span>
+                        : <span style={{ fontStyle: 'italic' }}>No email on file</span>}
+                      {a.full_name && a.full_name !== applicantName && <span style={{ marginLeft: 10 }}>· {a.full_name}</span>}
+                      {a.applied_at && <span style={{ marginLeft: 10 }}>· Applied {new Date(a.applied_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
+                    </div>
 
                     {a.collection_description && (
                       <div style={{ marginBottom: 10 }}>
@@ -425,7 +432,7 @@ export default function AdminPage() {
                       </button>
                     )}
                     <button
-                      onClick={() => handleDelete(a.user_id, a.display_name || a.handle || 'this user')}
+                      onClick={() => handleDelete(a.user_id, a.display_name || a.full_name || a.handle || a.email || 'this user')}
                       disabled={deleting === a.user_id || a.user_id === currentUserId}
                       className="btn btn-sm"
                       style={{ justifyContent: 'center', background: 'transparent', color: 'var(--ink-mute)', border: '1.5px solid var(--rule)' }}
@@ -435,7 +442,8 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
