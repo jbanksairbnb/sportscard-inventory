@@ -43,6 +43,7 @@ type MarketplaceListing = {
   set_slug?: string | null;
   seller_handle?: string | null;
   seller_display_name?: string | null;
+  tag_number?: string | null;
 };
 
 function fmtMoney(n: number | null) {
@@ -296,7 +297,7 @@ function MarketplacePageInner() {
       const [rows, { data: setRows }] = await Promise.all([
         fetchAll((from, to) => supabase
           .from('listings')
-          .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at, listing_type, set_slug')
+          .select('id, user_id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, shipping_options, created_at, listing_type, set_slug, tag_number')
           .eq('status', 'active')
           .gt('asking_price', 0)
           .order('created_at', { ascending: false })
@@ -613,6 +614,11 @@ function MarketplacePageInner() {
                       ↗ View set contents (images + condition)
                     </Link>
                   )}
+                  {l.tag_number && l.tag_number.trim() && (
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600 }}>
+                      Item #: {l.tag_number}
+                    </div>
+                  )}
                   <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
                     Seller: {l.seller_display_name || l.seller_handle || '—'}
                   </div>
@@ -676,7 +682,12 @@ function MarketplacePageInner() {
                       ↗ View set contents (images + condition)
                     </Link>
                   )}
-                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 'auto' }}>
+                  {l.tag_number && l.tag_number.trim() && (
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600, marginTop: 'auto' }}>
+                      Item #: {l.tag_number}
+                    </div>
+                  )}
+                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: l.tag_number && l.tag_number.trim() ? 0 : 'auto' }}>
                     Seller: {l.seller_display_name || l.seller_handle || '—'}
                   </div>
                 </div>

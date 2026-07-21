@@ -32,6 +32,7 @@ type ListingRow = {
   photos: string[] | null;
   listing_type: 'card' | 'set' | null;
   set_slug: string | null;
+  tag_number: string | null;
 };
 
 function conditionLabel(l: ListingRow): string {
@@ -65,7 +66,7 @@ export default async function SellerStorefrontPage(props: { params: Promise<{ ha
   const rows = await fetchAll<ListingRow>((from, to) =>
     admin
       .from('listings')
-      .select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, listing_type, set_slug')
+      .select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, listing_type, set_slug, tag_number')
       .eq('user_id', seller.user_id)
       .eq('status', 'active')
       .gt('asking_price', 0)
@@ -105,6 +106,7 @@ export default async function SellerStorefrontPage(props: { params: Promise<{ ha
     title: l.title,
     description: l.description,
     conditionLabel: conditionLabel(l),
+    tagNumber: l.tag_number,
     askingPrice: l.asking_price,
     photos: Array.isArray(l.photos) ? l.photos : [],
     isSet: l.listing_type === 'set',
