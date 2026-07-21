@@ -464,7 +464,7 @@ export default function ManageClaimSalePage() {
         .from('sets').select('rows').eq('user_id', userId).eq('slug', slug).maybeSingle();
       if (!setRow) continue;
       const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
-      const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, cards, owned);
+      const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, { cardNumbers: cards }, owned);
       if (!touched) continue;
       const ownedPct = nextRows.length > 0 ? (ownedCount / nextRows.length) * 100 : 0;
       await supabase.from('sets').update({

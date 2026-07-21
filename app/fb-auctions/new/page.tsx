@@ -241,30 +241,38 @@ function NewFbAuctionPageInner() {
     // came from a tracked set. Mirrors the logic in the auction manage page.
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      const bySet = new Map<string, Set<string>>();
-      for (const lot of generated.lots) {
-        const slug = lot.listing.source_set_slug;
-        const card = lot.listing.source_card_number;
-        if (!slug || !card) continue;
-        const set = bySet.get(slug) || new Set<string>();
-        set.add(card);
-        bySet.set(slug, set);
+      // The auction is already marked live above. If any inventory sync step
+      // fails, surface it but still navigate — never strand the seller on the
+      // "Going live…" spinner.
+      try {
+        const bySet = new Map<string, Set<string>>();
+        for (const lot of generated.lots) {
+          const slug = lot.listing.source_set_slug;
+          const card = lot.listing.source_card_number;
+          if (!slug || !card) continue;
+          const set = bySet.get(slug) || new Set<string>();
+          set.add(card);
+          bySet.set(slug, set);
+        }
+        for (const [slug, cards] of bySet.entries()) {
+          const { data: setRow } = await supabase
+            .from('sets').select('rows').eq('user_id', user.id).eq('slug', slug).maybeSingle();
+          if (!setRow) continue;
+          const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
+          const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, { cardNumbers: cards }, false);
+          if (!touched) continue;
+          const ownedPct = nextRows.length > 0 ? (ownedCount / nextRows.length) * 100 : 0;
+          await supabase.from('sets').update({
+            rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now(),
+          }).eq('user_id', user.id).eq('slug', slug);
+        }
+        // Lock the underlying listings now that the auction is live.
+        const lotsForSync = generated.lots.map(l => ({ listing_id: l.listing.id, status: 'open' as const }));
+        await syncAuctionListings(supabase, user.id, 'live', lotsForSync);
+      } catch (e) {
+        console.error('Go-live inventory sync failed:', e);
+        alert('Auction is live, but syncing inventory failed: ' + (e instanceof Error ? e.message : String(e)) + '\nYou may need to remove the cards from your inventory manually.');
       }
-      for (const [slug, cards] of bySet.entries()) {
-        const { data: setRow } = await supabase
-          .from('sets').select('rows').eq('user_id', user.id).eq('slug', slug).maybeSingle();
-        if (!setRow) continue;
-        const rows = Array.isArray(setRow.rows) ? setRow.rows as Record<string, unknown>[] : [];
-        const { nextRows, touched, ownedCount } = applyOwnedTransition(rows, cards, false);
-        if (!touched) continue;
-        const ownedPct = nextRows.length > 0 ? (ownedCount / nextRows.length) * 100 : 0;
-        await supabase.from('sets').update({
-          rows: nextRows, owned_count: ownedCount, owned_pct: ownedPct, updated_at: Date.now(),
-        }).eq('user_id', user.id).eq('slug', slug);
-      }
-      // Lock the underlying listings now that the auction is live.
-      const lotsForSync = generated.lots.map(l => ({ listing_id: l.listing.id, status: 'open' as const }));
-      await syncAuctionListings(supabase, user.id, 'live', lotsForSync);
     }
     router.push('/fb-auctions');
   }
