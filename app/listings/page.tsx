@@ -1166,6 +1166,9 @@ function ListingsPageContent() {
                       <div style={{ display: 'flex', gap: 22, fontSize: 13, marginTop: 10, flexWrap: 'wrap' }}>
                         <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Asking</span><strong>{fmtMoney(l.asking_price)}</strong></span>
                         <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Cost</span>{fmtMoney(l.cost)}</span>
+                        {l.tag_number && l.tag_number.trim() && (
+                          <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Item #</span>{l.tag_number}</span>
+                        )}
                         {l.status === 'sold' && (
                           <>
                             <span><span className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginRight: 6 }}>Sold For</span><strong>{fmtMoney(l.sold_price)}</strong></span>

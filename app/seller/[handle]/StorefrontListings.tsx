@@ -15,6 +15,9 @@ export type StorefrontItem = {
   title: string;
   description: string | null;
   conditionLabel: string;
+  // Seller's inventory tag, surfaced buyer-facing as "Item #". Omitted from the
+  // card when blank.
+  tagNumber: string | null;
   askingPrice: number | null;
   photos: string[];
   isSet: boolean;
@@ -272,6 +275,11 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
                 </Link>
               )}
               <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)' }}>{l.conditionLabel}</div>
+              {l.tagNumber && l.tagNumber.trim() && (
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600 }}>
+                  Item #: {l.tagNumber}
+                </div>
+              )}
               <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 10 }}>
                 <span className="display" style={{ fontSize: 18, color: 'var(--plum)', fontWeight: 700 }}>{fmtMoney(l.askingPrice)}</span>
                 <Link href="/login" className="btn btn-outline btn-sm" title="Log in to buy">Log in to buy →</Link>
