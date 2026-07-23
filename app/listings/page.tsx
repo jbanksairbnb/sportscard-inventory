@@ -343,6 +343,36 @@ function ListingsPageContent() {
         .range(from, to));
       setListings(data as Listing[]);
 
+      // Self-heal Claimed → Sold drift for FB sales. A card can be sold with
+      // sold_state='claimed' (won/committed) while its auction lot or claim item
+      // is already 'paid' — the paid transition didn't always mirror onto the
+      // listing (e.g. the bulk "mark sold (paid)" path). Reconcile straight from
+      // the FB tables so the My Listings bucket matches what the auction/claim
+      // section shows. Forward-only (never demotes) and bounded to the handful
+      // of sold-but-unpaid FB listings, so it's a couple of cheap queries.
+      const fbClaimed = (data as Listing[]).filter(l =>
+        l.status === 'sold'
+        && (l.sold_channel === 'auction' || l.sold_channel === 'claim')
+        && l.sold_state !== 'sold');
+      if (fbClaimed.length > 0) {
+        const ids = fbClaimed.map(l => l.id);
+        const [lotsRes, claimsRes] = await Promise.all([
+          supabase.from('fb_auction_lots').select('listing_id').in('listing_id', ids).eq('status', 'paid'),
+          supabase.from('fb_claim_sale_items').select('listing_id').in('listing_id', ids).eq('claim_status', 'paid'),
+        ]);
+        const paidIds = new Set<string>(
+          [...(lotsRes.data || []), ...(claimsRes.data || [])]
+            .map(r => (r as { listing_id: string | null }).listing_id)
+            .filter((v): v is string => !!v));
+        if (paidIds.size > 0) {
+          const toFix = Array.from(paidIds);
+          const { error: reconErr } = await supabase
+            .from('listings').update({ sold_state: 'sold' }).in('id', toFix).eq('user_id', user.id);
+          if (reconErr) console.error('[listings.reconcileSoldState] failed:', reconErr.message);
+          else setListings(prev => prev.map(l => paidIds.has(l.id) ? { ...l, sold_state: 'sold' } : l));
+        }
+      }
+
       const { data: purchaseRows } = await supabase
         .from('purchases')
         .select('*, listing:listings(title, photos)')
