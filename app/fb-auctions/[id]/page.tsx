@@ -490,6 +490,12 @@ export default function ManageFbAuctionPage() {
     const nextLots = lots.map(l => ids.includes(l.id) ? { ...l, status: 'paid' as const } : l);
     setLots(nextLots);
     await syncAuctionStatusFromLots(nextLots);
+    // Mirror the paid state onto the listings so they move from Claimed → Sold
+    // in My Listings. The single-lot path does this via applyLotStatus; this
+    // bulk path must too, or the paid lots' listings drift and stay in Claimed.
+    if (userId && auction) {
+      await syncAuctionListings(supabase, userId, auction.status, nextLots);
+    }
   }
 
   const buyerGroups = useMemo(() => {
