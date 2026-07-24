@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { applyOwnedTransition, ensureRowIds } from '@/lib/inventory';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import SCLogo from '@/components/SCLogo';
+import CartIcon from '@/components/CartIcon';
 import WantListHitsFeed from '@/components/WantListHitsFeed';
 import EbayHitsFeed from '@/components/EbayHitsFeed';
 import AuctionHitsFeed from '@/components/AuctionHitsFeed';
@@ -1717,6 +1718,7 @@ function TopNav({ isAdmin, canSell, wantsToSell, termsAccepted, onLogout }: { is
             <BellIcon size={18} />
             <span style={{ position: 'absolute', top: 5, right: 5, width: 9, height: 9, borderRadius: '50%', background: 'var(--orange)', border: '2px solid var(--cream)' }} />
           </button>
+          <CartIcon />
           <button className="btn btn-ghost btn-sm" onClick={onLogout}>Sign out</button>
         </div>
       </div>

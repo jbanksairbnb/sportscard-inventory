@@ -6,9 +6,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import SCLogo from '@/components/SCLogo';
+import CartIcon from '@/components/CartIcon';
 import Pagination from '@/components/Pagination';
 import { thumbUrl } from '@/lib/image-transform';
 import { RAW_GRADES } from '@/lib/listingTitle';
+import { fetchCartIds, addToCart, removeFromCart, clearCart } from '@/lib/cart';
 
 type ConditionType = 'raw' | 'graded';
 type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
@@ -261,13 +263,17 @@ function MarketplacePageInner() {
   function onBulkComplete(listingIds: string[]) {
     setListings(prev => prev.filter(l => !listingIds.includes(l.id)));
     setCart(new Set());
+    // The purchased cards are gone — clear the persisted cart too.
+    if (currentUserId) clearCart(createClient(), currentUserId);
     setBulkCheckoutOpen(false);
   }
   function toggleCart(l: MarketplaceListing) {
+    const uid = currentUserId;
     setCart(prev => {
       const next = new Set(prev);
       if (next.has(l.id)) {
         next.delete(l.id);
+        if (uid) removeFromCart(createClient(), uid, l.id);
         return next;
       }
       // Single-seller cart: if the cart already has another seller's card,
@@ -278,9 +284,11 @@ function MarketplacePageInner() {
         if (!confirm('Your cart has cards from another seller. Replace cart with this card?')) {
           return prev;
         }
+        if (uid) addToCart(createClient(), uid, l.id, { replaceOtherSellers: true });
         return new Set([l.id]);
       }
       next.add(l.id);
+      if (uid) addToCart(createClient(), uid, l.id);
       return next;
     });
   }
@@ -335,6 +343,15 @@ function MarketplacePageInner() {
         seller_handle: profileMap.get(r.user_id)?.handle || null,
         seller_display_name: profileMap.get(r.user_id)?.display_name || null,
       })) as MarketplaceListing[]);
+
+      // Hydrate the persisted cart. If the buyer arrived via the /cart page's
+      // "Proceed to checkout" (?checkout=1), open the bulk checkout once items
+      // are loaded.
+      const cartIds = await fetchCartIds(supabase, user.id);
+      setCart(cartIds);
+      if (cartIds.size > 0 && searchParams.get('checkout') === '1') {
+        setBulkCheckoutOpen(true);
+      }
       setLoading(false);
     }
     load();
@@ -457,10 +474,11 @@ function MarketplacePageInner() {
             </div>
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Marketplace ★</div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             <Link href="/" className="btn btn-ghost btn-sm">My Shelf</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/purchases" className="btn btn-ghost btn-sm">My Purchases</Link>
+            <CartIcon />
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
         </div>
@@ -744,7 +762,7 @@ function MarketplacePageInner() {
             <span className="display" style={{ fontSize: 16, color: 'var(--mustard)', fontWeight: 700 }}>
               {fmtMoney(cartSubtotal)}
             </span>
-            <button type="button" onClick={() => setCart(new Set())}
+            <button type="button" onClick={() => { setCart(new Set()); if (currentUserId) clearCart(createClient(), currentUserId); }}
               className="btn btn-ghost btn-sm"
               style={{ color: 'var(--cream)', fontSize: 11 }}>
               Clear
@@ -774,6 +792,7 @@ function MarketplacePageInner() {
           listings={listings.filter(l => cart.has(l.id))}
           onClose={() => setBulkCheckoutOpen(false)}
           onRemove={(id) => {
+            if (currentUserId) removeFromCart(createClient(), currentUserId, id);
             setCart(prev => {
               const next = new Set(prev); next.delete(id);
               if (next.size === 0) setBulkCheckoutOpen(false);
