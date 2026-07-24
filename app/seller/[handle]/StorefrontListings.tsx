@@ -90,6 +90,9 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
   const [yearFilter, setYearFilter] = useState('');
   const [brandFilter, setBrandFilter] = useState('');
   const [conditionFilter, setConditionFilter] = useState('');
+  // '' keeps the seller's curated year → brand → card # order (as delivered by
+  // the server). The two price options re-order the *filtered* set client-side.
+  const [sortBy, setSortBy] = useState<'' | 'price-asc' | 'price-desc'>('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
 
@@ -135,6 +138,23 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
     });
   }, [items, query, yearFilter, brandFilter, conditionFilter]);
 
+  // Apply the chosen price sort on top of the filtered set. Default ('') leaves
+  // the server's year → brand → card # order untouched. Listings with no asking
+  // price sink to the bottom of either direction so a null never outranks a real
+  // price. (page.tsx already filters to asking_price > 0, so this is defensive.)
+  const sorted = useMemo(() => {
+    if (sortBy !== 'price-asc' && sortBy !== 'price-desc') return filtered;
+    const dir = sortBy === 'price-asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const ap = a.askingPrice;
+      const bp = b.askingPrice;
+      if (ap == null && bp == null) return 0;
+      if (ap == null) return 1;
+      if (bp == null) return -1;
+      return (ap - bp) * dir;
+    });
+  }, [filtered, sortBy]);
+
   function clearAll() {
     setQuery('');
     setYearFilter('');
@@ -142,15 +162,15 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
     setConditionFilter('');
   }
 
-  // Any filter or page-size change should drop the viewer back to page 1 so
-  // they aren't stranded on a page that no longer exists.
-  useEffect(() => { setPage(1); }, [query, yearFilter, brandFilter, conditionFilter, pageSize]);
+  // Any filter, sort, or page-size change should drop the viewer back to page 1
+  // so they aren't stranded on a page that no longer exists.
+  useEffect(() => { setPage(1); }, [query, yearFilter, brandFilter, conditionFilter, sortBy, pageSize]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const curPage = Math.min(page, totalPages);
   const paged = useMemo(
-    () => filtered.slice((curPage - 1) * pageSize, curPage * pageSize),
-    [filtered, curPage, pageSize],
+    () => sorted.slice((curPage - 1) * pageSize, curPage * pageSize),
+    [sorted, curPage, pageSize],
   );
 
   if (items.length === 0) {
@@ -218,6 +238,17 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
             <option value="">All conditions</option>
             {conditions.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <div style={{ flex: 1 }} />
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as '' | 'price-asc' | 'price-desc')}
+            aria-label="Sort listings"
+            style={filterSelectStyle}
+          >
+            <option value="">Sort: Featured</option>
+            <option value="price-asc">Price: Low to High</option>
+            <option value="price-desc">Price: High to Low</option>
+          </select>
         </div>
       </div>
 
@@ -231,7 +262,7 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
       ) : (
       <>
       <Pagination
-        total={filtered.length}
+        total={sorted.length}
         page={curPage}
         pageSize={pageSize}
         onPageChange={setPage}
@@ -289,7 +320,7 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
         ))}
       </div>
       <Pagination
-        total={filtered.length}
+        total={sorted.length}
         page={curPage}
         pageSize={pageSize}
         onPageChange={setPage}
