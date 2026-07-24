@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import CartIcon from '@/components/CartIcon';
 
 type SetRow = {
   slug: string;
@@ -108,6 +109,7 @@ function TopNav({ userEmail, onLogout }: { userEmail: string; onLogout: () => vo
               {userEmail}
             </span>
           )}
+          <CartIcon />
           <button className="btn btn-ghost btn-sm" onClick={onLogout}>
             Sign out
           </button>
