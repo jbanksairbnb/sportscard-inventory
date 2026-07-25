@@ -130,7 +130,6 @@ function NewClaimSalePageInner() {
   const [research, setResearch] = useState<{ descriptor: CardDescriptor; apply: (value: number) => void } | null>(null);
   const [bidders, setBidders] = useState<BidderSuggestionRow[]>([]);
   const [activity, setActivity] = useState<LiveActivity[]>([]);
-  const [bidderTotals, setBidderTotals] = useState<Map<string, { auctionWins: number; claimCount: number }>>(new Map());
 
   // Sale-level
   const [title, setTitle] = useState('');
@@ -264,14 +263,6 @@ function NewClaimSalePageInner() {
         })),
       ];
       setActivity(liveActivity);
-      const totals = new Map<string, { auctionWins: number; claimCount: number }>();
-      for (const a of liveActivity) {
-        const e = totals.get(a.bidder_id) || { auctionWins: 0, claimCount: 0 };
-        if (a.source === 'auction' && a.is_winner) e.auctionWins += 1;
-        if (a.source === 'claim' && a.is_winner) e.claimCount += 1;
-        totals.set(a.bidder_id, e);
-      }
-      setBidderTotals(totals);
       // Pre-fill lots from ?listing_ids=... — one single-card lot per id.
       if (prefillIds.length > 0) {
         const valid = prefillIds.filter(id => loadedListings.some(l => l.id === id));
@@ -305,8 +296,8 @@ function NewClaimSalePageInner() {
     for (const lot of lots) for (const id of lot.listingIds) if (id) ids.add(id);
     const sel = listings.filter(l => ids.has(l.id))
       .map(l => ({ id: l.id, year: l.year, brand: l.brand, player: l.player }));
-    return computeBidderSuggestions(sel, activity, bidders, bidderTotals, { source: 'claim' });
-  }, [lots, listings, activity, bidders, bidderTotals]);
+    return computeBidderSuggestions(sel, activity, bidders);
+  }, [lots, listings, activity, bidders]);
 
   // Auto-fill post body when inputs change unless the user has touched it.
   useEffect(() => {
