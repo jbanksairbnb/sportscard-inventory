@@ -37,12 +37,16 @@ const YEAR_TOLERANCE = 2;
 // listings. Match each individual listing (not any post body): a bidder
 // matches if they previously won/bid on the same player, OR any card within
 // +/- 2 years of that listing's year (brand-independent — era interest).
+//
+// The recommendation is format-independent: auctions and claim sales run the
+// exact same logic. The assumption is that interest follows the items, not the
+// channel — a past claim-sale buyer of a matching card is just as worth tagging
+// on an auction as a past auction bidder, and vice-versa.
 export function computeBidderSuggestions(
   listings: SuggestionListing[],
   activity: LiveActivity[],
   bidders: BidderRow[],
-  bidderTotals: Map<string, { auctionWins: number; claimCount: number }>,
-  opts: { source: 'auction' | 'claim'; max?: number } = { source: 'auction' },
+  opts: { max?: number } = {},
 ): BidderSuggestion[] {
   if (listings.length === 0 || activity.length === 0) return [];
   const byBidder = new Map<string, BidderSuggestion>();
@@ -67,17 +71,11 @@ export function computeBidderSuggestions(
       if (!entry.matchedListingIds.includes(l.id)) entry.matchedListingIds.push(l.id);
     }
   }
-  // For auctions: filter out claim-only buyers (they don't typically bid).
-  // For claim sales: filter out auction-only bidders (they don't typically claim).
-  const CROSS_THRESHOLD = 3;
-  const filtered = Array.from(byBidder.values()).filter(entry => {
-    const totals = bidderTotals.get(entry.bidder.id);
-    if (!totals) return true;
-    if (opts.source === 'auction' && totals.auctionWins === 0 && totals.claimCount >= CROSS_THRESHOLD) return false;
-    if (opts.source === 'claim' && totals.claimCount === 0 && totals.auctionWins >= CROSS_THRESHOLD) return false;
-    return true;
-  });
-  filtered.sort((a, b) => {
+  // Rank by strongest signal first: auction wins, then claim wins, then raw
+  // match count, then dollars spent. No channel-based filtering — every bidder
+  // who engaged with a matching item is surfaced regardless of format.
+  const results = Array.from(byBidder.values());
+  results.sort((a, b) => {
     if (b.wonCount !== a.wonCount) return b.wonCount - a.wonCount;
     if (b.claimCount !== a.claimCount) return b.claimCount - a.claimCount;
     if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
@@ -85,7 +83,7 @@ export function computeBidderSuggestions(
   });
   // Only cap when the caller explicitly asks for a max; otherwise return every
   // matching bidder so no relevant tag is dropped.
-  return opts.max ? filtered.slice(0, opts.max) : filtered;
+  return opts.max ? results.slice(0, opts.max) : results;
 }
 
 async function copyText(t: string) { try { await navigator.clipboard.writeText(t); return true; } catch { return false; } }
