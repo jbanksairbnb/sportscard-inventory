@@ -396,6 +396,7 @@ export default function ClaimSalesPage() {
             <Link href="/fb-claim-sales/new" className="btn btn-primary btn-sm">+ New Claim Sale</Link>
             <Link href="/fb-auctions" className="btn btn-ghost btn-sm">Auctions</Link>
             <Link href="/fb-auctions/bidders" className="btn btn-ghost btn-sm">Buyers</Link>
+            <Link href="/fb-auctions/invoices" className="btn btn-ghost btn-sm">🧾 Invoices</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/sales-metrics" className="btn btn-ghost btn-sm">📊 Metrics</Link>
             <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>

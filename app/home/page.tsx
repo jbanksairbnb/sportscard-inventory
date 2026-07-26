@@ -1726,6 +1726,7 @@ function TopNav({ isAdmin, canSell, wantsToSell, termsAccepted, onLogout }: { is
         <FbSalesPicker
           onAuctions={() => { setFbSalesOpen(false); router.push('/fb-auctions'); }}
           onClaim={() => { setFbSalesOpen(false); router.push('/fb-claim-sales'); }}
+          onInvoices={() => { setFbSalesOpen(false); router.push('/fb-auctions/invoices'); }}
           onClose={() => setFbSalesOpen(false)}
         />
       )}
@@ -1733,8 +1734,8 @@ function TopNav({ isAdmin, canSell, wantsToSell, termsAccepted, onLogout }: { is
   );
 }
 
-function FbSalesPicker({ onAuctions, onClaim, onClose }: {
-  onAuctions: () => void; onClaim: () => void; onClose: () => void;
+function FbSalesPicker({ onAuctions, onClaim, onInvoices, onClose }: {
+  onAuctions: () => void; onClaim: () => void; onInvoices: () => void; onClose: () => void;
 }) {
   // Render via portal so the modal escapes the sticky header's stacking
   // context (the header uses backdrop-filter, which clips fixed children).
@@ -1780,6 +1781,17 @@ function FbSalesPicker({ onAuctions, onClaim, onClose }: {
               🏷 Claim Sales
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Fixed-price multi-lot posts where buyers claim in the comments.</div>
+          </button>
+          <button type="button" onClick={onInvoices}
+            className="panel-bordered"
+            style={{
+              padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
+              cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
+            }}>
+            <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
+              🧾 Invoices
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Combined invoices per buyer across every ended auction &amp; claim sale — mark paid in one click.</div>
           </button>
         </div>
       </div>
