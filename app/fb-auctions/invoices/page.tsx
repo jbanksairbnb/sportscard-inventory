@@ -68,7 +68,7 @@ type ClaimItemRow = {
 };
 
 type ClaimLotRow = { id: string; sale_id: string; lot_number: number | null };
-type SourceRef = { id: string; title: string | null };
+type SourceRef = { id: string; title: string | null; post_url: string | null };
 
 // A single billable card on an invoice.
 type InvoiceLine = {
@@ -76,6 +76,7 @@ type InvoiceLine = {
   kind: 'auction' | 'claim';
   sourceId: string;
   sourceTitle: string;
+  sourceUrl: string | null; // the sale's Facebook post URL, if saved
   label: string; // composed card description
   tag: string | null; // seller's inventory tag
   amount: number;
@@ -225,7 +226,7 @@ export default function InvoicesPage() {
 
       const [aucRes, claimLotRes, listingRes] = await Promise.all([
         auctionIds.length
-          ? supabase.from('fb_auctions').select('id, title').in('id', auctionIds)
+          ? supabase.from('fb_auctions').select('id, title, post_url').in('id', auctionIds)
           : Promise.resolve({ data: [] as SourceRef[] }),
         claimLotIds.length
           ? supabase.from('fb_claim_sale_lots').select('id, sale_id, lot_number').in('id', claimLotIds)
@@ -242,7 +243,7 @@ export default function InvoicesPage() {
       // Resolve claim-sale titles from the lots' sale_ids.
       const saleIds = Array.from(new Set(((claimLotRes.data || []) as ClaimLotRow[]).map(l => l.sale_id)));
       const { data: saleRows } = saleIds.length
-        ? await supabase.from('fb_claim_sales').select('id, title').in('id', saleIds)
+        ? await supabase.from('fb_claim_sales').select('id, title, post_url').in('id', saleIds)
         : { data: [] as SourceRef[] };
       const salesById = new Map(((saleRows || []) as SourceRef[]).map(s => [s.id, s]));
 
@@ -272,6 +273,7 @@ export default function InvoicesPage() {
           kind: 'auction',
           sourceId: l.auction_id,
           sourceTitle: auctionsById.get(l.auction_id)?.title || 'Auction',
+          sourceUrl: auctionsById.get(l.auction_id)?.post_url || null,
           label: cardSummary(listing),
           tag: listing?.tag_number || null,
           amount: l.current_bid || 0,
@@ -296,6 +298,7 @@ export default function InvoicesPage() {
           kind: 'claim',
           sourceId: lot?.sale_id || '',
           sourceTitle: sale?.title || 'Claim Sale',
+          sourceUrl: sale?.post_url || null,
           label: cardSummary(listing),
           tag: listing?.tag_number || null,
           amount: c.price || 0,
@@ -359,11 +362,10 @@ export default function InvoicesPage() {
       ? `Combined invoice for your wins on "${inv.lines[0].sourceTitle}":`
       : `Here's your combined invoice across ${groups.size} sales:`);
     blocks.push('');
-    for (const [, lines] of groups) {
-      blocks.push(`▸ ${lines[0].sourceTitle}`);
-      for (const l of lines) blocks.push(`  · ${l.label} — ${fmtMoney(l.amount)}`);
-      blocks.push('');
-    }
+    // List just the card descriptions — no per-auction header line. Lines are
+    // already sorted by source then card, so the grouping order is preserved.
+    for (const l of inv.lines) blocks.push(`· ${l.label} — ${fmtMoney(l.amount)}`);
+    blocks.push('');
     blocks.push(`Subtotal: ${fmtMoney(inv.subtotal)}`);
     blocks.push(`Shipping: ${fmtMoney(ship)}`);
     blocks.push(`Total:    ${fmtMoney(total)}`);
@@ -551,10 +553,10 @@ function InvoiceCard({
 }) {
   // Group the buyer's lines by the sale they came from.
   const groups = useMemo(() => {
-    const m = new Map<string, { title: string; kind: 'auction' | 'claim'; sourceId: string; lines: InvoiceLine[] }>();
+    const m = new Map<string, { title: string; kind: 'auction' | 'claim'; sourceId: string; sourceUrl: string | null; lines: InvoiceLine[] }>();
     for (const l of inv.lines) {
       const k = `${l.kind}:${l.sourceId}`;
-      if (!m.has(k)) m.set(k, { title: l.sourceTitle, kind: l.kind, sourceId: l.sourceId, lines: [] });
+      if (!m.has(k)) m.set(k, { title: l.sourceTitle, kind: l.kind, sourceId: l.sourceId, sourceUrl: l.sourceUrl, lines: [] });
       m.get(k)!.lines.push(l);
     }
     return Array.from(m.values()).sort((a, b) => a.title.localeCompare(b.title));
@@ -593,7 +595,18 @@ function InvoiceCard({
         {groups.map(g => (
           <div key={`${g.kind}:${g.sourceId}`} style={{ background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6, padding: '8px 10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-              {g.sourceId ? (
+              {g.sourceUrl ? (
+                // Link straight to the Facebook post — it's the fastest way to pull
+                // the buyer's details off the thread while building the invoice.
+                <a
+                  href={g.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--teal)', textDecoration: 'underline', fontSize: 12.5, fontWeight: 600 }}
+                >
+                  {g.kind === 'auction' ? '🔨' : '🎯'} {g.title} ↗
+                </a>
+              ) : g.sourceId ? (
                 <Link
                   href={g.kind === 'auction' ? `/fb-auctions/${g.sourceId}` : `/fb-claim-sales/${g.sourceId}`}
                   style={{ color: 'var(--teal)', textDecoration: 'underline', fontSize: 12.5, fontWeight: 600 }}
