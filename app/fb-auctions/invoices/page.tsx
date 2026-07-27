@@ -362,11 +362,10 @@ export default function InvoicesPage() {
       ? `Combined invoice for your wins on "${inv.lines[0].sourceTitle}":`
       : `Here's your combined invoice across ${groups.size} sales:`);
     blocks.push('');
-    for (const [, lines] of groups) {
-      blocks.push(`▸ ${lines[0].sourceTitle}`);
-      for (const l of lines) blocks.push(`  · ${l.label} — ${fmtMoney(l.amount)}`);
-      blocks.push('');
-    }
+    // List just the card descriptions — no per-auction header line. Lines are
+    // already sorted by source then card, so the grouping order is preserved.
+    for (const l of inv.lines) blocks.push(`· ${l.label} — ${fmtMoney(l.amount)}`);
+    blocks.push('');
     blocks.push(`Subtotal: ${fmtMoney(inv.subtotal)}`);
     blocks.push(`Shipping: ${fmtMoney(ship)}`);
     blocks.push(`Total:    ${fmtMoney(total)}`);
