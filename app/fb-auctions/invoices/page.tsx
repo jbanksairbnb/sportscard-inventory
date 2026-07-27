@@ -113,6 +113,34 @@ function cardSummary(r: ListingRef | null): string {
   return parts.join(' ').trim() || r.title || '(card details missing)';
 }
 
+// Numeric value of a card number for ordinal sorting: pull the first run of
+// digits so "23" < "150" and prefixed numbers like "BDC-100" still order by
+// their number. Missing/non-numeric card numbers sort last.
+function cardNumberOrdinal(cardNumber: string | null | undefined): number {
+  if (!cardNumber) return Number.POSITIVE_INFINITY;
+  const m = cardNumber.match(/\d+/);
+  return m ? Number.parseInt(m[0], 10) : Number.POSITIVE_INFINITY;
+}
+
+// Default line order within an invoice: Auction/source (alphabetical, matching
+// the group headers), then Year (ascending), then Card # as an ordinal number,
+// with the raw card number and card label as stable tie-breakers. Sorting the
+// lines once here keeps the on-screen list and the copied invoice text in sync.
+function compareInvoiceLines(a: InvoiceLine, b: InvoiceLine): number {
+  const src = a.sourceTitle.localeCompare(b.sourceTitle);
+  if (src !== 0) return src;
+  const ya = a.listing?.year ?? Number.POSITIVE_INFINITY;
+  const yb = b.listing?.year ?? Number.POSITIVE_INFINITY;
+  if (ya !== yb) return ya - yb;
+  const ca = cardNumberOrdinal(a.listing?.card_number);
+  const cb = cardNumberOrdinal(b.listing?.card_number);
+  if (ca !== cb) return ca - cb;
+  const rawa = a.listing?.card_number || '';
+  const rawb = b.listing?.card_number || '';
+  if (rawa !== rawb) return rawa.localeCompare(rawb);
+  return a.label.localeCompare(b.label);
+}
+
 // Stable identity for a buyer: prefer the linked profile id, fall back to a
 // normalized name so unlinked wins from the same person still group together.
 function bidderKeyOf(id: string | null | undefined, name: string | null | undefined): string | null {
@@ -280,6 +308,10 @@ export default function InvoicesPage() {
 
       const all: Invoice[] = [];
       for (const { paid, open } of byKey.values()) {
+        // Default line order: Auction -> Year -> Card # (ordinal). Applied once
+        // so the rendered list and the copied invoice text stay consistent.
+        open.lines.sort(compareInvoiceLines);
+        paid.lines.sort(compareInvoiceLines);
         if (open.lines.length) all.push(open);
         if (paid.lines.length) all.push(paid);
       }
