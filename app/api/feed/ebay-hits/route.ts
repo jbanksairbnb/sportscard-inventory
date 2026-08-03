@@ -334,7 +334,7 @@ function listingMatchesCard(item: EbayItem, want: WantRow): boolean {
 async function searchEbay(token: string, query: string, auctionsOnly: boolean, aspectFilter: string | null = null): Promise<EbayItem[]> {
   const url = new URL('https://api.ebay.com/buy/browse/v1/item_summary/search')
   url.searchParams.set('q', query)
-  url.searchParams.set('limit', '50')
+  url.searchParams.set('limit', '150')
   url.searchParams.set('filter', auctionsOnly ? 'buyingOptions:{AUCTION}' : 'buyingOptions:{FIXED_PRICE|AUCTION}')
   if (aspectFilter) url.searchParams.set('aspect_filter', aspectFilter)
   const res = await fetch(url.toString(), {
