@@ -12,6 +12,7 @@ import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory"
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import Thumb from "@/components/Thumb";
+import GenerateThumbnailsButton from "@/components/GenerateThumbnailsButton";
 import { uploadCardImageWithThumb } from "@/lib/upload-card-image";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
@@ -1422,6 +1423,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm btn-outline">
               Export CSV
             </button>
+            <GenerateThumbnailsButton
+              imageUrls={rows.flatMap((r) => [String(r["Image 1"] || ""), String(r["Image 2"] || "")]).filter(Boolean)}
+            />
             <button type="button" onClick={handleExportWantListPdf} disabled={!rows.length}
               className="btn btn-sm btn-outline"
               title="PDF want list with checkboxes — bring it to the card show">
