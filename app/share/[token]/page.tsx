@@ -6,6 +6,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import Thumb from '@/components/Thumb';
+import Pagination from '@/components/Pagination';
 
 type CardRow = Record<string, string | number | null>;
 
@@ -222,6 +223,11 @@ function SharePageContent() {
   const [listView, setListView] = useState(false);
   const [search, setSearch] = useState('');
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  // Paginate the grid so a 600-card set doesn't try to load ~1,200 images at
+  // once — the burst is what overwhelms image loading. 96 cards/page keeps the
+  // in-DOM image count well within the browser's limits.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(96);
 
   useEffect(() => {
     if (!token) return;
@@ -276,6 +282,10 @@ function SharePageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayed]);
 
+  // Jump back to page 1 whenever the filter or search changes the result set,
+  // so the visitor isn't stranded on an out-of-range page.
+  useEffect(() => { setPage(1); }, [ownFilter, search]);
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
@@ -306,6 +316,14 @@ function SharePageContent() {
 
   const { title, year, brand, owner_email, row_count, owned_count, owned_pct } = setData;
   const pct = owned_pct || 0;
+
+  // Slice the filtered rows to the current page. `pageStart` offsets the
+  // per-page index back to a global index so the lightbox still walks the
+  // whole filtered set, not just this page.
+  const pageCount = Math.max(1, Math.ceil(displayed.length / pageSize));
+  const curPage = Math.min(page, pageCount);
+  const pageStart = (curPage - 1) * pageSize;
+  const paged = displayed.slice(pageStart, pageStart + pageSize);
 
   function openLightbox(rowIdx: number, side: 'Front' | 'Back') {
     const row = displayed[rowIdx];
@@ -440,20 +458,31 @@ function SharePageContent() {
                 </tr>
               </thead>
               <tbody>
-                {displayed.map((row, i) => (
-                  <ListRow key={i} row={row} even={i % 2 === 0}
-                    onImageClick={(side) => openLightbox(i, side)} />
+                {paged.map((row, i) => (
+                  <ListRow key={pageStart + i} row={row} even={i % 2 === 0}
+                    onImageClick={(side) => openLightbox(pageStart + i, side)} />
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
-            {displayed.map((row, i) => (
-              <CardTile key={i} row={row}
-                onImageClick={(side) => openLightbox(i, side)} />
+            {paged.map((row, i) => (
+              <CardTile key={pageStart + i} row={row}
+                onImageClick={(side) => openLightbox(pageStart + i, side)} />
             ))}
           </div>
+        )}
+
+        {displayed.length > 0 && (
+          <Pagination
+            total={displayed.length}
+            page={curPage}
+            pageSize={pageSize}
+            pageSizeOptions={[96, 192]}
+            onPageChange={(p) => { setPage(p); window.scrollTo({ top: 0 }); }}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
         )}
       </div>
 
