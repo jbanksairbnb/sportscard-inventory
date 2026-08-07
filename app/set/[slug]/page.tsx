@@ -11,7 +11,8 @@ import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearch
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
-import { thumbUrl } from "@/lib/image-transform";
+import Thumb from "@/components/Thumb";
+import { uploadCardImageWithThumb } from "@/lib/upload-card-image";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
 import { cropScanPadding } from "@/lib/scanAutoCrop";
@@ -249,7 +250,7 @@ function ImageCell({ url, label, onUpload, onView }: {
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
       <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
       {url ? (
-        <img loading="lazy" decoding="async" src={thumbUrl(url, 160)} alt={label} title="Click to view"
+        <Thumb url={url} width={160} alt={label} title="Click to view"
           onClick={onView}
           style={{ width: 56, height: 56, borderRadius: 8, border: '2px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
       ) : (
@@ -842,7 +843,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   const trimmed = await cropScanPadding(file);
   const ext = trimmed.name.split(".").pop() || "jpg";
   const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
-  const { error } = await supabase.storage.from("card-images").upload(path, trimmed, { upsert: true });
+  const { error } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
   if (error) { alert("Image upload failed: " + error.message); return; }
   const { data } = supabase.storage.from("card-images").getPublicUrl(path);
   const field = slot === 1 ? "Image 1" : "Image 2";
@@ -2123,7 +2124,7 @@ function ListCompleteSetModal({
     // Store under the user's namespace; one folder per set-listing slug.
     // We overwrite on subsequent uploads so we don't accumulate orphans.
     const path = `${userId}/set-listings/${setSlug}/hero-${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed);
+    const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed);
     if (upErr) { setPhotoUploading(false); setPhotoError(upErr.message); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(path);
     setHeroPhoto(data.publicUrl);

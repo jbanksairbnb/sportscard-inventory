@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import SetHeaderBanner from '@/components/SetHeaderBanner';
 import ValueDetailModal from '@/components/ValueDetailModal';
-import { thumbUrl } from '@/lib/image-transform';
+import Thumb from '@/components/Thumb';
 import { cardValueKey, trendFromRows, type Trend, type ValueHistoryRow } from '@/lib/cardValueHistory';
 
 type ImageItem = {
@@ -170,11 +170,11 @@ function CardTile({ row, year, brand, valueDisplay, trend, onValueClick, onImage
       {(img1 || img2) && (
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           {img1 && (
-            <img loading="lazy" decoding="async" src={thumbUrl(img1, 320)} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
+            <Thumb url={img1} width={320} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
               style={{ width: 128, height: 128, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
           )}
           {img2 && (
-            <img loading="lazy" decoding="async" src={thumbUrl(img2, 320)} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
+            <Thumb url={img2} width={320} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
               style={{ width: 128, height: 128, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
           )}
         </div>
@@ -237,11 +237,11 @@ function CardTableRow({ row, year, brand, valueDisplay, trend, onValueClick, onI
       <td style={{ padding: '10px 14px' }}>
         <div style={{ display: 'flex', gap: 6 }}>
           {img1 && (
-            <img loading="lazy" decoding="async" src={thumbUrl(img1, 240)} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
+            <Thumb url={img1} width={240} alt="Front" onClick={() => onImageClick(cardIdx, 'Front')}
               style={{ width: 88, height: 88, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
           {img2 && (
-            <img loading="lazy" decoding="async" src={thumbUrl(img2, 240)} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
+            <Thumb url={img2} width={240} alt="Back" onClick={() => onImageClick(cardIdx, 'Back')}
               style={{ width: 88, height: 88, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
           )}
         </div>

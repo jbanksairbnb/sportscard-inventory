@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { thumbUrl } from '@/lib/image-transform';
+import Thumb from '@/components/Thumb';
 import Pagination from '@/components/Pagination';
 
 // Read-only grid for the public seller storefront. Visitors can browse photos
@@ -281,7 +281,7 @@ export default function StorefrontListings({ items }: { items: StorefrontItem[] 
               }}>
               {l.photos.length > 0 ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img loading="lazy" decoding="async" src={thumbUrl(l.photos[0], 500)} alt={l.title}
+                <Thumb url={l.photos[0]} width={500} alt={l.title}
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               ) : (
                 <span className="eyebrow" style={{ color: 'var(--ink-mute)' }}>No photo</span>

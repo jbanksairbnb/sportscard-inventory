@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { isSeller } from '@/lib/sellerGuard';
 import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
@@ -197,9 +198,7 @@ export default function ScanMultiCardPage() {
         const frontFile = new File([frontBlob], 'front.png', { type: 'image/png' });
         const trimmedFront = await cropScanPadding(frontFile);
         const frontPath = `${userId}/${currentSet.slug}/${origIndex}/img1.png`;
-        const { error: fErr } = await supabase.storage
-          .from('card-images')
-          .upload(frontPath, trimmedFront, { upsert: true, contentType: trimmedFront.type || 'image/png' });
+        const { error: fErr } = await uploadCardImageWithThumb(supabase, frontPath, trimmedFront, { upsert: true, contentType: trimmedFront.type || 'image/png' });
         if (fErr) throw new Error(`Front #${origIndex}: ${fErr.message}`);
         const { data: fPub } = supabase.storage.from('card-images').getPublicUrl(frontPath);
         updatedRows[origIndex] = {
@@ -210,9 +209,7 @@ export default function ScanMultiCardPage() {
           const backFile = new File([backBlob], 'back.png', { type: 'image/png' });
           const trimmedBack = await cropScanPadding(backFile);
           const backPath = `${userId}/${currentSet.slug}/${origIndex}/img2.png`;
-          const { error: bErr } = await supabase.storage
-            .from('card-images')
-            .upload(backPath, trimmedBack, { upsert: true, contentType: trimmedBack.type || 'image/png' });
+          const { error: bErr } = await uploadCardImageWithThumb(supabase, backPath, trimmedBack, { upsert: true, contentType: trimmedBack.type || 'image/png' });
           if (bErr) throw new Error(`Back #${origIndex}: ${bErr.message}`);
           const { data: bPub } = supabase.storage.from('card-images').getPublicUrl(backPath);
           updatedRows[origIndex] = {

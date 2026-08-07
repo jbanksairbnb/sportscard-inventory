@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
@@ -244,7 +245,7 @@ export default function ScanInboxPage() {
         const trimmed = await cropScanPadding(file);
         const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
         const path = `${userId}/listings/${ins!.id}/${ts}-${suffix}.${ext}`;
-        const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed);
+        const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed);
         if (upErr) throw new Error(upErr.message);
         const { data } = supabase.storage.from('card-images').getPublicUrl(path);
         return data.publicUrl;

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
@@ -14,7 +15,7 @@ import Pagination from '@/components/Pagination';
 import PurchaseDetailModal, { PurchaseDetail } from '@/components/PurchaseDetailModal';
 import MarketResearchModal from '@/components/MarketResearchModal';
 import PhotoEditor from '@/components/PhotoEditor';
-import { thumbUrl } from '@/lib/image-transform';
+import Thumb from '@/components/Thumb';
 
 type ConditionType = 'raw' | 'graded';
 type Status = 'draft' | 'active' | 'sold' | 'removed';
@@ -218,7 +219,7 @@ function ListingPhotoStrip({ photos }: { photos: string[] }) {
     <>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
         {photos.slice(0, 3).map((p, i) => (
-          <img key={p + i} loading="lazy" decoding="async" src={thumbUrl(p, 200)} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
+          <Thumb key={p + i} url={p} width={200} alt={`Photo ${i + 1}`} onClick={() => setLbStart(i)}
             style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }} />
         ))}
         {photos.length > 3 && (
@@ -661,7 +662,7 @@ function ListingsPageContent() {
     const trimmed = await cropScanPadding(file);
     const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
     const path = `${userId}/listings/${editing.id}/${Date.now()}.${ext}`;
-    const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed);
+    const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed);
     if (upErr) { alert('Upload failed: ' + upErr.message); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(path);
     const url = data.publicUrl;
@@ -691,7 +692,7 @@ function ListingsPageContent() {
     const oldUrl = editing.photos[idx];
     const supabase = createClient();
     const path = `${userId}/listings/${editing.id}/${Date.now()}-edit.jpg`;
-    const { error: upErr } = await supabase.storage.from('card-images').upload(path, blob, { contentType: 'image/jpeg' });
+    const { error: upErr } = await uploadCardImageWithThumb(supabase, path, blob, { contentType: 'image/jpeg' });
     if (upErr) { alert('Upload failed: ' + upErr.message); return; }
     const url = supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
     const newPhotos = editing.photos.map((u, i) => i === idx ? url : u);

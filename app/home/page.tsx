@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { applyOwnedTransition, ensureRowIds } from '@/lib/inventory';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import SCLogo from '@/components/SCLogo';
@@ -228,7 +229,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
     if (!file) return;
     setUploading(true);
     const supabase = createClient();
-    const { error } = await supabase.storage.from('card-images').upload(storagePath, file, { upsert: true });
+    const { error } = await uploadCardImageWithThumb(supabase, storagePath, file, { upsert: true });
     if (error) { alert('Upload failed: ' + error.message); setUploading(false); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(storagePath);
     const url = data.publicUrl + `?t=${Date.now()}`;
@@ -1129,7 +1130,7 @@ function FavoriteFrame({ card, imageUrl, slotIdx, userId, onImageChange, onLight
     setUploading(true);
     const supabase = createClient();
     const path = `${userId}/favorites/${slotIdx}`;
-    const { error } = await supabase.storage.from('card-images').upload(path, file, { upsert: true });
+    const { error } = await uploadCardImageWithThumb(supabase, path, file, { upsert: true });
     if (error) { alert('Upload failed: ' + error.message); setUploading(false); return; }
     const { data } = supabase.storage.from('card-images').getPublicUrl(path);
     onImageChange(slotIdx, data.publicUrl + `?t=${Date.now()}`);
