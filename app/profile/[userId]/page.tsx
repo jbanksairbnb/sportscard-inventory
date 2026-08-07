@@ -300,7 +300,7 @@ export default function ProfilePage() {
                   const pct = s.owned_pct || 0;
                   const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
                   return (
-                    <Link key={s.share_token} href={`/share/${s.share_token}`} style={{ textDecoration: 'none' }}>
+                    <Link key={s.share_token} href={`/share/${s.share_token}?from=${userId}`} style={{ textDecoration: 'none' }}>
                       <div className="panel" style={{ padding: '16px 18px', cursor: 'pointer' }}>
                         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
                           <div style={{

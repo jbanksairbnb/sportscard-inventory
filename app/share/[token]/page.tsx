@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import Thumb from '@/components/Thumb';
@@ -196,13 +196,29 @@ function ListRow({ row, even, onImageClick }: {
 }
 
 export default function SharePage() {
+  // useSearchParams (read inside SharePageContent) must sit under a Suspense
+  // boundary or Next.js fails the build during prerender.
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>}>
+      <SharePageContent />
+    </Suspense>
+  );
+}
+
+function SharePageContent() {
   const params = useParams();
   const token = String(params?.token || '');
+  const searchParams = useSearchParams();
+  // When a visitor arrives from a collector's member page we pass ?from=<userId>
+  // so we can offer a one-click return to that exact page.
+  const fromUserId = searchParams?.get('from') || '';
+  const backHref = fromUserId ? `/profile/${fromUserId}` : '';
 
   const [setData, setSetData] = useState<SetData | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [showOwnedOnly, setShowOwnedOnly] = useState(false);
+  // Card filter: show all cards, only owned, or only the ones still needed.
+  const [ownFilter, setOwnFilter] = useState<'all' | 'owned' | 'needed'>('all');
   const [listView, setListView] = useState(false);
   const [search, setSearch] = useState('');
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
@@ -230,7 +246,9 @@ export default function SharePage() {
   // "Rendered more hooks than during the previous render," which crashed the
   // page and broke every shared-set link.
   const displayed = (setData?.rows || []).filter((row) => {
-    if (showOwnedOnly && String(row['Owned'] || '') !== 'Yes') return false;
+    const owned = String(row['Owned'] || '') === 'Yes';
+    if (ownFilter === 'owned' && !owned) return false;
+    if (ownFilter === 'needed' && owned) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       return (
@@ -329,6 +347,7 @@ export default function SharePage() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            {backHref && <Link href={backHref} className="btn btn-primary btn-sm">← Back to Collection</Link>}
             <Link href="/shared" className="btn btn-outline btn-sm">← Community</Link>
           </div>
         </div>
@@ -375,10 +394,17 @@ export default function SharePage() {
           </div>
           <button
             type="button"
-            onClick={() => setShowOwnedOnly((v) => !v)}
-            className={`btn btn-sm ${showOwnedOnly ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setOwnFilter((f) => (f === 'owned' ? 'all' : 'owned'))}
+            className={`btn btn-sm ${ownFilter === 'owned' ? 'btn-primary' : 'btn-ghost'}`}
           >
-            {showOwnedOnly ? 'All Cards' : 'Owned Only'}
+            Owned Only
+          </button>
+          <button
+            type="button"
+            onClick={() => setOwnFilter((f) => (f === 'needed' ? 'all' : 'needed'))}
+            className={`btn btn-sm ${ownFilter === 'needed' ? 'btn-primary' : 'btn-ghost'}`}
+          >
+            Needed Only
           </button>
           <button
             type="button"
@@ -454,7 +480,10 @@ export default function SharePage() {
             <div className="display" style={{ fontSize: 10, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
           </div>
         </div>
-        <Link href="/shared" style={{ color: 'inherit', textDecoration: 'none' }}>← Community Sets</Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+          {backHref && <Link href={backHref} style={{ color: 'inherit', textDecoration: 'none' }}>← Back to Collection</Link>}
+          <Link href="/shared" style={{ color: 'inherit', textDecoration: 'none' }}>← Community Sets</Link>
+        </div>
       </footer>
     </div>
   );
