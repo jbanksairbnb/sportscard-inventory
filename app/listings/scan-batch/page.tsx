@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 import AIGradeBadge from '@/components/AIGradeBadge';
@@ -276,7 +277,7 @@ export default function ScanBatchToListingsPage() {
           const trimmed = await cropScanPadding(pair.front);
           const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
           const path = `${userId}/listings/${listingId}/${ts}-front.${ext}`;
-          const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed, { upsert: true });
+          const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Front upload failed (${listingLabel(listing)}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
           slots.push({ url: `${data.publicUrl}?t=${ts}`, idx: 0 });
@@ -285,7 +286,7 @@ export default function ScanBatchToListingsPage() {
           const trimmed = await cropScanPadding(pair.back);
           const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
           const path = `${userId}/listings/${listingId}/${ts}-back.${ext}`;
-          const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed, { upsert: true });
+          const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Back upload failed (${listingLabel(listing)}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
           slots.push({ url: `${data.publicUrl}?t=${ts}`, idx: 1 });

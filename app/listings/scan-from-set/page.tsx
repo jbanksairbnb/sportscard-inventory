@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { isSeller } from '@/lib/sellerGuard';
 import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
@@ -215,7 +216,7 @@ export default function ScanFromSetPage() {
           const trimmed = await cropScanPadding(pair.front);
           const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
           const path = `${userId}/${currentSet.slug}/${origIndex}/img1.${ext}`;
-          const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed, { upsert: true });
+          const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Front upload failed (#${origIndex}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
           uploads.push({ url: `${data.publicUrl}?t=${ts}`, slot: 1 });
@@ -224,7 +225,7 @@ export default function ScanFromSetPage() {
           const trimmed = await cropScanPadding(pair.back);
           const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
           const path = `${userId}/${currentSet.slug}/${origIndex}/img2.${ext}`;
-          const { error: upErr } = await supabase.storage.from('card-images').upload(path, trimmed, { upsert: true });
+          const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Back upload failed (#${origIndex}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
           uploads.push({ url: `${data.publicUrl}?t=${ts}`, slot: 2 });

@@ -8,7 +8,7 @@ import { fetchAll } from '@/lib/supabase/fetchAll';
 import SCLogo from '@/components/SCLogo';
 import CartIcon from '@/components/CartIcon';
 import Pagination from '@/components/Pagination';
-import { thumbUrl } from '@/lib/image-transform';
+import Thumb from '@/components/Thumb';
 import { RAW_GRADES } from '@/lib/listingTitle';
 import { fetchCartIds, addToCart, removeFromCart, clearCart } from '@/lib/cart';
 
@@ -605,7 +605,7 @@ function MarketplacePageInner() {
                     cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
                   }}>
                   {l.photos && l.photos.length > 0 ? (
-                    <img loading="lazy" decoding="async" src={thumbUrl(l.photos[0], 500)} alt={l.title}
+                    <Thumb url={l.photos[0]} width={500} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)' }}>No photo</span>
@@ -674,7 +674,7 @@ function MarketplacePageInner() {
                     cursor: l.photos && l.photos.length > 0 ? 'zoom-in' : 'default',
                   }}>
                   {l.photos && l.photos.length > 0 ? (
-                    <img loading="lazy" decoding="async" src={thumbUrl(l.photos[0], 320)} alt={l.title}
+                    <Thumb url={l.photos[0]} width={320} alt={l.title}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                   ) : (
                     <span className="eyebrow" style={{ color: 'var(--ink-mute)', fontSize: 10 }}>No photo</span>

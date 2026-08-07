@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
-import { thumbUrl } from '@/lib/image-transform';
+import Thumb from '@/components/Thumb';
 import { removeFromCart, clearCart, emitCartChanged } from '@/lib/cart';
 
 type CartListing = {
@@ -238,7 +238,7 @@ function CartRow({ l, unavailable, onView, onRemove }: { l: CartListing; unavail
         style={{ flexShrink: 0, padding: 0, border: 'none', background: 'none', cursor: thumb ? 'zoom-in' : 'default', borderRadius: 8 }}
       >
         {thumb ? (
-          <img loading="lazy" decoding="async" src={thumbUrl(thumb, 160)} alt={l.title}
+          <Thumb url={thumb} width={160} alt={l.title}
             style={{ width: 56, height: 78, objectFit: 'cover', borderRadius: 8, border: '1.5px solid var(--plum)', display: 'block' }} />
         ) : (
           <div style={{ width: 56, height: 78, borderRadius: 8, border: '1.5px dashed var(--rule)', display: 'grid', placeItems: 'center', fontSize: 20 }} aria-hidden>🃏</div>
