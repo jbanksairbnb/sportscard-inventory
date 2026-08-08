@@ -136,6 +136,56 @@ function conditionLabel(l: Listing | Partial<Listing>) {
   return l.raw_grade || 'Raw';
 }
 
+// Every field on a listing gets its own CSV column so the export is a
+// complete, round-trippable snapshot of the seller's inventory. Array/object
+// columns (photos, shipping options) are flattened to text: photos as a
+// pipe-separated list of URLs, shipping options as JSON so nothing is lost.
+// `condition` is a derived, human-readable label on top of the raw
+// condition_type/grade columns.
+const INVENTORY_CSV_COLUMNS: { header: string; value: (l: Listing) => string | number }[] = [
+  { header: 'ID', value: l => l.id },
+  { header: 'Title', value: l => l.title ?? '' },
+  { header: 'Status', value: l => l.status ?? '' },
+  { header: 'Year', value: l => l.year ?? '' },
+  { header: 'Brand', value: l => l.brand ?? '' },
+  { header: 'Card Number', value: l => l.card_number ?? '' },
+  { header: 'Player', value: l => l.player ?? '' },
+  { header: 'Condition', value: l => conditionLabel(l) },
+  { header: 'Condition Type', value: l => l.condition_type ?? '' },
+  { header: 'Raw Grade', value: l => l.raw_grade ?? '' },
+  { header: 'Grading Company', value: l => l.grading_company ?? '' },
+  { header: 'Grade', value: l => l.grade ?? '' },
+  { header: 'Asking Price', value: l => l.asking_price ?? '' },
+  { header: 'Cost', value: l => l.cost ?? '' },
+  { header: 'Tag Number', value: l => l.tag_number ?? '' },
+  { header: 'Description', value: l => l.description ?? '' },
+  { header: 'Sold At', value: l => l.sold_at ?? '' },
+  { header: 'Sold Price', value: l => l.sold_price ?? '' },
+  { header: 'Sold Channel', value: l => l.sold_channel ?? '' },
+  { header: 'Sold State', value: l => l.sold_state ?? '' },
+  { header: 'Photos', value: l => (l.photos ?? []).join(' | ') },
+  { header: 'Shipping Options', value: l => JSON.stringify(l.shipping_options ?? []) },
+  { header: 'Set ID', value: l => l.set_id ?? '' },
+  { header: 'Source Set Slug', value: l => l.source_set_slug ?? '' },
+  { header: 'Source Card Number', value: l => l.source_card_number ?? '' },
+  { header: 'Source Row ID', value: l => l.source_row_id ?? '' },
+  { header: 'Created At', value: l => l.created_at ?? '' },
+];
+
+function downloadInventoryCsv(rows: Listing[], filename: string) {
+  const csv = Papa.unparse({
+    fields: INVENTORY_CSV_COLUMNS.map(c => c.header),
+    data: rows.map(l => INVENTORY_CSV_COLUMNS.map(c => c.value(l))),
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const MAX_PHOTOS = 5;
 
 function ShippingOptionsEditor({
@@ -999,10 +1049,23 @@ function ListingsPageContent() {
               </span>
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              const stamp = new Date().toISOString().slice(0, 10);
+              downloadInventoryCsv(filtered, `sports-collective-inventory-${filter}-${stamp}.csv`);
+            }}
+            disabled={filtered.length === 0}
+            title={filtered.length === 0 ? 'No listings to download' : `Download ${filtered.length} listing${filtered.length === 1 ? '' : 's'} as CSV`}
+            className="btn btn-sm btn-ghost"
+            style={{ marginLeft: 'auto' }}
+          >
+            ⬇ Download CSV
+          </button>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
             border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)',
-            flex: 1, minWidth: 240, marginLeft: 'auto', maxWidth: 420,
+            flex: 1, minWidth: 240, maxWidth: 420,
           }}>
             <span style={{ fontSize: 13, color: 'var(--plum)', fontWeight: 700 }}>🔍</span>
             <input
