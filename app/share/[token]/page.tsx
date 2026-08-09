@@ -220,6 +220,8 @@ function SharePageContent() {
   const [notFound, setNotFound] = useState(false);
   // Card filter: show all cards, only owned, or only the ones still needed.
   const [ownFilter, setOwnFilter] = useState<'all' | 'owned' | 'needed'>('all');
+  // When on, hide any card that has no front or back image attached.
+  const [imagesOnly, setImagesOnly] = useState(false);
   const [listView, setListView] = useState(false);
   const [search, setSearch] = useState('');
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
@@ -255,6 +257,10 @@ function SharePageContent() {
     const owned = String(row['Owned'] || '') === 'Yes';
     if (ownFilter === 'owned' && !owned) return false;
     if (ownFilter === 'needed' && owned) return false;
+    if (imagesOnly) {
+      const hasImage = Boolean(String(row['Image 1'] || '') || String(row['Image 2'] || ''));
+      if (!hasImage) return false;
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       return (
@@ -284,7 +290,7 @@ function SharePageContent() {
 
   // Jump back to page 1 whenever the filter or search changes the result set,
   // so the visitor isn't stranded on an out-of-range page.
-  useEffect(() => { setPage(1); }, [ownFilter, search]);
+  useEffect(() => { setPage(1); }, [ownFilter, imagesOnly, search]);
 
   if (loading) {
     return (
@@ -423,6 +429,13 @@ function SharePageContent() {
             className={`btn btn-sm ${ownFilter === 'needed' ? 'btn-primary' : 'btn-ghost'}`}
           >
             Needed Only
+          </button>
+          <button
+            type="button"
+            onClick={() => setImagesOnly((v) => !v)}
+            className={`btn btn-sm ${imagesOnly ? 'btn-primary' : 'btn-ghost'}`}
+          >
+            With Images
           </button>
           <button
             type="button"
