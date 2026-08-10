@@ -2,37 +2,26 @@ import { createClient } from '@supabase/supabase-js';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import SCLogo from '@/components/SCLogo';
-import SetContentsTable, { ContentsRow } from './SetContentsTable';
+import SetCardsView, { SetCardRow } from '@/components/SetCardsView';
+import CopyLinkButton from '@/components/CopyLinkButton';
 
 // Public, read-only view of a seller's set when they have an active
 // listing_type='set' listing pointing at it. Buyers reach this page
 // from the "↗ View set contents" link on a marketplace set listing.
 // Access is gated on the listing's existence — sets without an active
 // set-listing return 404 here.
-
-type SetRow = Record<string, unknown>;
+//
+// The set contents render through the same <SetCardsView> component that
+// powers the members share view (/share/[token]), so the two surfaces look
+// and behave identically (search, Owned/Needed filters, grid/list toggle,
+// full-set lightbox, pagination). This page's own URL —
+// /seller/<handle>/set/<slug> — is the short, copyable share address.
 
 export const dynamic = 'force-dynamic';
 
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
-}
-
-function cardLabel(r: SetRow): string {
-  const parts = [
-    r['Card #'] ? `#${r['Card #']}` : '',
-    String(r['Player'] || r['Description'] || ''),
-  ].filter(Boolean);
-  return parts.join(' ').trim() || '(card)';
-}
-
-function conditionLabel(r: SetRow): string {
-  const gco = String(r['Grading Company'] || '').trim();
-  const grade = String(r['Grade'] || '').trim();
-  if (gco && grade) return `${gco} ${grade}`;
-  const raw = String(r['Raw Grade'] || '').trim();
-  return raw || '—';
 }
 
 export default async function PublicSellerSetPage(props: { params: Promise<{ handle: string; slug: string }> }) {
@@ -72,24 +61,10 @@ export default async function PublicSellerSetPage(props: { params: Promise<{ han
     .maybeSingle();
   if (!set) notFound();
 
-  const rows = (Array.isArray(set.rows) ? set.rows : []) as SetRow[];
-  const ownedRows = rows.filter(r => String(r['Owned'] || '') === 'Yes');
+  const rows = (Array.isArray(set.rows) ? set.rows : []) as SetCardRow[];
   const totalCount = set.row_count ?? rows.length;
-  const ownedCount = set.owned_count ?? ownedRows.length;
-
-  // Serialize per-row data for the client component. Image 1 / Image 2
-  // come from the set row directly; archived slots are ignored here
-  // because the card is currently Owned (we already filtered).
-  const contentsRows: ContentsRow[] = ownedRows.map(r => {
-    const img1 = String(r['Image 1'] || '').trim();
-    const img2 = String(r['Image 2'] || '').trim();
-    const images = [img1, img2].filter(Boolean);
-    return {
-      cardLabel: cardLabel(r),
-      conditionLabel: conditionLabel(r),
-      images,
-    };
-  });
+  const ownedCount = set.owned_count ?? rows.filter(r => String(r['Owned'] || '') === 'Yes').length;
+  const pct = totalCount > 0 ? (ownedCount / totalCount) * 100 : 0;
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -107,6 +82,7 @@ export default async function PublicSellerSetPage(props: { params: Promise<{ han
             </div>
           </Link>
           <div style={{ flex: 1 }} />
+          <CopyLinkButton />
           <Link href="/marketplace" className="btn btn-ghost btn-sm">← Marketplace</Link>
         </div>
       </header>
@@ -125,6 +101,14 @@ export default async function PublicSellerSetPage(props: { params: Promise<{ han
               {listing.description}
             </p>
           )}
+          {totalCount > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 12px', maxWidth: 420 }}>
+              <div className="progress" style={{ flex: 1 }}>
+                <span style={{ width: `${Math.min(100, pct)}%`, background: 'var(--teal)' }} />
+              </div>
+              <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: 'var(--teal)' }}>{pct.toFixed(1)}%</span>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
             <div className="display" style={{ fontSize: 28, color: 'var(--plum)', fontWeight: 700 }}>
               {fmtMoney(listing.asking_price as number | null)}
@@ -136,10 +120,10 @@ export default async function PublicSellerSetPage(props: { params: Promise<{ han
         </section>
 
         <div className="display" style={{ fontSize: 18, color: 'var(--plum)', marginBottom: 12 }}>
-          Set contents ({ownedCount} cards)
+          Set contents
         </div>
 
-        <SetContentsTable rows={contentsRows} />
+        <SetCardsView rows={rows} initialFilter="owned" />
       </div>
     </div>
   );

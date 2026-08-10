@@ -1,0 +1,367 @@
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
+import Thumb from '@/components/Thumb';
+import Pagination from '@/components/Pagination';
+
+// Rich, interactive view of a set's cards — search, Owned/Needed filters,
+// grid/list toggle, a full-set image lightbox, and pagination. This is the
+// shared view behind BOTH the members share page (/share/[token]) and the
+// public seller set-listing page (/seller/[handle]/set/[slug]) so the two
+// surfaces stay visually and behaviourally in lock-step.
+
+export type SetCardRow = Record<string, string | number | null>;
+
+type FlatImage = { url: string; cardNum: string; player: string; side: 'Front' | 'Back' };
+
+function ImageLightbox({ items, idx, setIdx, onClose }: {
+  items: FlatImage[]; idx: number; setIdx: (i: number) => void; onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'ArrowLeft') { setIdx(Math.max(0, idx - 1)); e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { setIdx(Math.min(items.length - 1, idx + 1)); e.preventDefault(); }
+      else if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [items.length, idx, setIdx, onClose]);
+
+  if (items.length === 0) return null;
+  const current = items[idx];
+  const arrowBtn: React.CSSProperties = {
+    background: 'rgba(42,20,52,0.7)', color: 'var(--cream)',
+    border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 24,
+    cursor: 'pointer', lineHeight: 1,
+  };
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(42, 20, 52, 0.88)',
+      }}
+      onClick={onClose}
+    >
+      <div style={{ position: 'relative', padding: 16 }} onClick={(e) => e.stopPropagation()}>
+        <img loading="lazy" decoding="async" src={current.url} alt="Card"
+          style={{ maxWidth: '90vw', maxHeight: '78vh', borderRadius: 12, display: 'block' }} />
+        <div style={{
+          marginTop: 12, padding: '8px 14px',
+          background: 'rgba(248,236,208,0.96)', border: '2px solid var(--plum)',
+          borderRadius: 8, color: 'var(--plum)', textAlign: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <span className="mono" style={{ fontSize: 13, fontWeight: 700 }}>
+            {current.cardNum ? `#${current.cardNum}` : ''}
+          </span>
+          <span className="display" style={{ fontSize: 14 }}>{current.player || '—'}</span>
+          <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>{current.side}</span>
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', marginLeft: 8 }}>
+            {idx + 1} / {items.length}
+          </span>
+        </div>
+        {items.length > 1 && (
+          <div style={{ position: 'absolute', top: '40%', left: 0, right: 0, transform: 'translateY(-50%)', display: 'flex', justifyContent: 'space-between', padding: '0 4px', pointerEvents: 'none' }}>
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); setIdx(Math.max(0, idx - 1)); }}
+              disabled={idx === 0}
+              style={{ ...arrowBtn, pointerEvents: 'auto', opacity: idx === 0 ? 0.35 : 1 }}
+              title="Previous (←)">‹</button>
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); setIdx(Math.min(items.length - 1, idx + 1)); }}
+              disabled={idx === items.length - 1}
+              style={{ ...arrowBtn, pointerEvents: 'auto', opacity: idx === items.length - 1 ? 0.35 : 1 }}
+              title="Next (→)">›</button>
+          </div>
+        )}
+        <button type="button" onClick={onClose} className="btn btn-sm"
+          style={{ position: 'absolute', top: 4, right: 4 }}>
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CardTile({ row, onImageClick }: {
+  row: SetCardRow;
+  onImageClick: (side: 'Front' | 'Back') => void;
+}) {
+  const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
+  const description = String(row['Player'] || row['Description'] || '');
+  const gradingCo = String(row['Grading Company'] || '');
+  const grade = row['Grade'] ? `Grade ${row['Grade']}` : '';
+  const owned = String(row['Owned'] || '') === 'Yes';
+  const img1 = String(row['Image 1'] || '');
+  const img2 = String(row['Image 2'] || '');
+  const details = [gradingCo, grade].filter(Boolean).join('  ·  ');
+
+  return (
+    <div className="panel" style={{ padding: '14px 16px', position: 'relative' }}>
+      {owned && (
+        <div style={{
+          position: 'absolute', top: 10, right: 10,
+          background: 'var(--teal)', color: 'var(--cream)',
+          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+          padding: '2px 7px', borderRadius: 100,
+        }}>
+          OWNED
+        </div>
+      )}
+      <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 700, marginBottom: 4 }}>
+        {cardNum}
+      </div>
+      <div className="display" style={{ fontSize: 14, color: 'var(--plum)', marginBottom: 4, lineHeight: 1.2 }}>
+        {description || '—'}
+      </div>
+      {details && (
+        <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 6 }}>
+          {details}
+        </div>
+      )}
+      {(img1 || img2) && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          {img1 && (
+            <Thumb
+              url={img1}
+              width={320}
+              alt="Front"
+              onClick={() => onImageClick('Front')}
+              style={{ width: 128, height: 128, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
+            />
+          )}
+          {img2 && (
+            <Thumb
+              url={img2}
+              width={320}
+              alt="Back"
+              onClick={() => onImageClick('Back')}
+              style={{ width: 128, height: 128, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', cursor: 'pointer' }}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListRow({ row, even, onImageClick }: {
+  row: SetCardRow; even: boolean;
+  onImageClick: (side: 'Front' | 'Back') => void;
+}) {
+  const owned = String(row['Owned'] || '') === 'Yes';
+  const gradingCo = String(row['Grading Company'] || '');
+  const grade = row['Grade'] ? `Grade ${row['Grade']}` : '';
+  const img1 = String(row['Image 1'] || '');
+  const img2 = String(row['Image 2'] || '');
+  return (
+    <tr style={{ borderTop: '1.5px solid var(--cream-warm)', background: even ? 'var(--cream)' : 'var(--paper)' }}>
+      <td className="mono" style={{ padding: '10px 16px', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 700 }}>
+        {row['Card #'] ? `#${row['Card #']}` : '—'}
+      </td>
+      <td style={{ padding: '10px 16px' }}>
+        <span className="display" style={{ fontSize: 13, color: 'var(--plum)' }}>{String(row['Player'] || row['Description'] || '—')}</span>
+      </td>
+      <td className="eyebrow" style={{ padding: '10px 16px', fontSize: 9, color: 'var(--orange)' }}>
+        {[gradingCo, grade].filter(Boolean).join(' · ') || '—'}
+      </td>
+      <td style={{ padding: '10px 16px' }}>
+        {owned && (
+          <span style={{ background: 'var(--teal)', color: 'var(--cream)', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 8px', borderRadius: 100 }}>OWNED</span>
+        )}
+      </td>
+      <td style={{ padding: '10px 16px' }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {img1 && (
+            <Thumb url={img1} width={240} alt="Front" onClick={() => onImageClick('Front')}
+              style={{ width: 88, height: 88, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+          )}
+          {img2 && (
+            <Thumb url={img2} width={240} alt="Back" onClick={() => onImageClick('Back')}
+              style={{ width: 88, height: 88, borderRadius: 6, border: '1.5px solid var(--plum)', objectFit: 'cover', cursor: 'pointer' }} />
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export default function SetCardsView({
+  rows,
+  initialFilter = 'all',
+}: {
+  rows: SetCardRow[];
+  /** Which cards to show first. 'owned' is handy on a for-sale listing. */
+  initialFilter?: 'all' | 'owned' | 'needed';
+}) {
+  // Card filter: show all cards, only owned, or only the ones still needed.
+  const [ownFilter, setOwnFilter] = useState<'all' | 'owned' | 'needed'>(initialFilter);
+  const [listView, setListView] = useState(false);
+  const [search, setSearch] = useState('');
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  // Paginate the grid so a 600-card set doesn't try to load ~1,200 images at
+  // once — the burst is what overwhelms image loading. 96 cards/page keeps the
+  // in-DOM image count well within the browser's limits.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(96);
+
+  const displayed = useMemo(() => (rows || []).filter((row) => {
+    const owned = String(row['Owned'] || '') === 'Yes';
+    if (ownFilter === 'owned' && !owned) return false;
+    if (ownFilter === 'needed' && owned) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return (
+        String(row['Card #'] || '').toLowerCase().includes(q) ||
+        String(row['Player'] || row['Description'] || '').toLowerCase().includes(q)
+      );
+    }
+    return true;
+  }), [rows, ownFilter, search]);
+
+  // Flat image list across every currently-displayed card so the lightbox can
+  // scroll the whole filtered set without re-opening per card. Re-derived
+  // whenever the filter/search changes so navigation stays in sync with the grid.
+  const lightboxItems: FlatImage[] = useMemo(() => {
+    const items: FlatImage[] = [];
+    for (const row of displayed) {
+      const cardNum = row['Card #'] ? String(row['Card #']) : '';
+      const player = String(row['Player'] || row['Description'] || '');
+      const img1 = String(row['Image 1'] || '');
+      const img2 = String(row['Image 2'] || '');
+      if (img1) items.push({ url: img1, cardNum, player, side: 'Front' });
+      if (img2) items.push({ url: img2, cardNum, player, side: 'Back' });
+    }
+    return items;
+  }, [displayed]);
+
+  // Jump back to page 1 whenever the filter or search changes the result set,
+  // so the visitor isn't stranded on an out-of-range page.
+  useEffect(() => { setPage(1); }, [ownFilter, search]);
+
+  // Slice the filtered rows to the current page. `pageStart` offsets the
+  // per-page index back to a global index so the lightbox still walks the
+  // whole filtered set, not just this page.
+  const pageCount = Math.max(1, Math.ceil(displayed.length / pageSize));
+  const curPage = Math.min(page, pageCount);
+  const pageStart = (curPage - 1) * pageSize;
+  const paged = displayed.slice(pageStart, pageStart + pageSize);
+
+  function openLightbox(rowIdx: number, side: 'Front' | 'Back') {
+    const row = displayed[rowIdx];
+    if (!row) return;
+    const targetUrl = String(row[side === 'Front' ? 'Image 1' : 'Image 2'] || '');
+    if (!targetUrl) return;
+    const flat = lightboxItems.findIndex(it => it.url === targetUrl && it.side === side);
+    setLightboxIdx(flat >= 0 ? flat : 0);
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '7px 14px', border: '2px solid var(--plum)',
+          borderRadius: 100, background: 'var(--cream)', flex: 1, minWidth: 180, maxWidth: 300,
+        }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ color: 'var(--plum)', flexShrink: 0 }}>
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search cards…"
+            style={{
+              border: 'none', outline: 'none', background: 'transparent',
+              fontFamily: 'var(--font-body)', fontSize: 12.5, flex: 1, color: 'var(--plum)',
+            }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => setOwnFilter((f) => (f === 'owned' ? 'all' : 'owned'))}
+          className={`btn btn-sm ${ownFilter === 'owned' ? 'btn-primary' : 'btn-ghost'}`}
+        >
+          Owned Only
+        </button>
+        <button
+          type="button"
+          onClick={() => setOwnFilter((f) => (f === 'needed' ? 'all' : 'needed'))}
+          className={`btn btn-sm ${ownFilter === 'needed' ? 'btn-primary' : 'btn-ghost'}`}
+        >
+          Needed Only
+        </button>
+        <button
+          type="button"
+          onClick={() => setListView((v) => !v)}
+          className={`btn btn-sm ${listView ? 'btn-primary' : 'btn-ghost'}`}
+        >
+          {listView ? 'Grid' : 'List'}
+        </button>
+        <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700 }}>
+          {displayed.length} {displayed.length === 1 ? 'card' : 'cards'}
+        </span>
+      </div>
+
+      {displayed.length === 0 ? (
+        <div className="panel-bordered" style={{ padding: '40px 32px', textAlign: 'center' }}>
+          <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 8 }}>No cards match</div>
+          <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: 0 }}>Try adjusting your search or filter.</p>
+        </div>
+      ) : listView ? (
+        <div className="panel-bordered" style={{ overflow: 'hidden', padding: 0 }}>
+          <table style={{ minWidth: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: 'var(--plum)' }}>
+                {['Card #', 'Player', 'Grading', 'Owned', 'Images'].map((h) => (
+                  <th key={h} style={{
+                    padding: '10px 16px', textAlign: 'left',
+                    fontFamily: 'var(--font-body)', fontSize: 10, fontWeight: 700,
+                    letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--mustard)',
+                  }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {paged.map((row, i) => (
+                <ListRow key={pageStart + i} row={row} even={i % 2 === 0}
+                  onImageClick={(side) => openLightbox(pageStart + i, side)} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
+          {paged.map((row, i) => (
+            <CardTile key={pageStart + i} row={row}
+              onImageClick={(side) => openLightbox(pageStart + i, side)} />
+          ))}
+        </div>
+      )}
+
+      {displayed.length > 0 && (
+        <Pagination
+          total={displayed.length}
+          page={curPage}
+          pageSize={pageSize}
+          pageSizeOptions={[96, 192]}
+          onPageChange={(p) => { setPage(p); window.scrollTo({ top: 0 }); }}
+          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+        />
+      )}
+
+      {lightboxIdx != null && lightboxItems.length > 0 && (
+        <ImageLightbox
+          items={lightboxItems}
+          idx={Math.min(lightboxIdx, lightboxItems.length - 1)}
+          setIdx={setLightboxIdx}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
+    </>
+  );
+}
