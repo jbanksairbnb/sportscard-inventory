@@ -148,10 +148,16 @@ function MoverList({ title, accent, items, maxAbs, emptyLabel }: {
   );
 }
 
-export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
+export default function SetValueStats({ stats, onSetBenchmark, benchmarkBusy }: {
+  stats: CardValueStat[];
+  onSetBenchmark?: () => void;   // owner-only: snapshot current values as the baseline
+  benchmarkBusy?: boolean;
+}) {
   const agg = useMemo(() => {
     const valued = stats.filter(s => s.latest !== null);
     const setValue = valued.reduce((sum, s) => sum + (s.latest || 0), 0);
+    // How many valued cards already have a baseline mark to measure against.
+    const benchmarked = stats.filter(s => s.latestMarkAt !== null).length;
 
     const moved = stats.filter(s => s.trend !== null);
     let prevTotal = 0, latestTotal = 0, up = 0, down = 0, flat = 0;
@@ -190,7 +196,7 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
       if (s.latestMarkAt && (!lastChangeAt || s.latestMarkAt > lastChangeAt)) lastChangeAt = s.latestMarkAt;
     }
 
-    return { valuedCount: valued.length, setValue, movedCount: moved.length, setDelta, setPct, setDir, up, down, flat, winners, losers, topGainer, topDecliner, maxAbs, lastChangeAt };
+    return { valuedCount: valued.length, benchmarked, setValue, movedCount: moved.length, setDelta, setPct, setDir, up, down, flat, winners, losers, topGainer, topDecliner, maxAbs, lastChangeAt };
   }, [stats]);
 
   // Nothing valued in this set yet — don't show an empty stats bar.
@@ -203,6 +209,14 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
           across {agg.valuedCount} valued card{agg.valuedCount === 1 ? '' : 's'}
         </span>
+        {onSetBenchmark && (
+          <button type="button" onClick={onSetBenchmark} disabled={benchmarkBusy}
+            title="Snapshot every owned card's current value as the baseline that Change in Value is measured against"
+            className="btn btn-outline btn-sm"
+            style={{ marginLeft: 'auto', fontSize: 11, opacity: benchmarkBusy ? 0.6 : 1 }}>
+            {benchmarkBusy ? 'Saving…' : '📌 Set Value Benchmark'}
+          </button>
+        )}
       </div>
 
       {/* Roll-up tiles */}
@@ -223,7 +237,9 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
           )}
           sub={
             agg.movedCount === 0
-              ? (agg.lastChangeAt ? `set ${fmtDate(agg.lastChangeAt)} · need a 2nd mark` : 'need a second mark to compare')
+              ? (agg.benchmarked > 0
+                  ? `benchmarked ${fmtDate(agg.lastChangeAt)} · change a value to see movement`
+                  : (onSetBenchmark ? 'set a benchmark, then change a value' : 'need a second mark to compare'))
               : (
                 <>
                   {agg.setDelta >= 0 ? '+' : ''}{fmtMoney(agg.setDelta)} · {agg.movedCount} changed
