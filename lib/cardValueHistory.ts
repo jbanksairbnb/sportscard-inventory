@@ -41,6 +41,9 @@ export type ValueHistoryRow = {
   market_value: number;
   content_hash: string;
   snapshot: AnalysisSnapshot;
+  // How this mark was produced: 'research' rows carry comps in snapshot.rows;
+  // 'manual' rows just record a number the owner typed (empty comp list).
+  mark_kind: 'research' | 'manual';
   source_session_id: string | null;
   derived_from_id: string | null;
   created_at: string;
