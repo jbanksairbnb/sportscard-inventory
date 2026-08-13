@@ -51,6 +51,10 @@ export type CardDescriptor = {
   listing_id?: string | null;
   set_slug?: string | null;
   set_card_number?: string | null;
+  // Optional scans of the card being researched, so the modal can show the
+  // physical card alongside the comps. Front = Image 1, back = Image 2.
+  image_front?: string | null;
+  image_back?: string | null;
 };
 
 type Row = {
@@ -561,6 +565,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       market_value: value,
       content_hash: contentHash(normalized),
       snapshot,
+      mark_kind: 'research' as const,
       source_session_id: null, // reserved for the migration backfill only
       derived_from_id: derivedFromId,
     };
@@ -710,6 +715,25 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
         style={{ width: '100%', maxWidth: 1100, padding: 24, background: 'var(--cream)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+          {(() => {
+            const imgs = [
+              { url: card.image_front || '', label: 'Front' },
+              { url: card.image_back || '', label: 'Back' },
+            ].filter(i => i.url);
+            if (imgs.length === 0) return null;
+            return (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {imgs.map(i => (
+                  <a key={i.label} href={i.url} target="_blank" rel="noreferrer"
+                    title={`Open ${i.label.toLowerCase()} scan in a new tab`}
+                    style={{ display: 'block', lineHeight: 0 }}>
+                    <img loading="lazy" decoding="async" src={i.url} alt={i.label}
+                      style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 6, border: '2px solid var(--plum)', cursor: 'zoom-in' }} />
+                  </a>
+                ))}
+              </div>
+            );
+          })()}
           <div style={{ flex: 1, minWidth: 240 }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)' }}>📈 Research Prices</div>
             <div className="mono" style={{ fontSize: 12, color: 'var(--ink-soft)', fontWeight: 600 }}>

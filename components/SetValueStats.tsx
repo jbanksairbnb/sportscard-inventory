@@ -16,8 +16,9 @@ export type CardValueStat = {
   key: string;
   name: string;            // e.g. "#150 Willie Mays"
   conditionLabel: string;  // e.g. "PSA 8" / "Raw NM"
-  latest: number | null;   // current committed value (null if none)
-  trend: Trend | null;     // latest vs prior committed value (null if <2 commits)
+  latest: number | null;   // current value (Value field; null if none)
+  trend: Trend | null;     // latest vs prior recorded value (null if <2 marks)
+  latestMarkAt: string | null; // ISO timestamp of the most recent value mark
   onClick?: () => void;    // open the card's value detail popup
 };
 
@@ -34,6 +35,13 @@ function fmtMoneyShort(n: number): string {
 }
 function trendArrow(dir: 'up' | 'down' | 'flat'): string {
   return dir === 'up' ? '▲' : dir === 'down' ? '▼' : '→';
+}
+// Most-recent value-change date, e.g. "Aug 13, 2026". Returns '' for no marks.
+function fmtDate(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 function trendColor(dir: 'up' | 'down' | 'flat'): string {
   return dir === 'up' ? 'var(--teal)' : dir === 'down' ? 'var(--rust)' : 'var(--ink-mute)';
@@ -59,6 +67,32 @@ function StatTile({ label, value, sub, accent }: {
       <div className="display" style={{ fontSize: 22, fontWeight: 700, color: accent || 'var(--plum)', lineHeight: 1.1 }}>{value}</div>
       {sub && <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)', fontWeight: 600, marginTop: 2 }}>{sub}</div>}
     </div>
+  );
+}
+
+// Ultra-compact single-line mover, used inside the Cards Up/Down tile to name
+// the biggest gainer and decliner: "▲ #4 Tommy Henrich +12%". Clickable when the
+// stat carries an onClick, so it jumps to the card's value detail.
+function MoverLine({ stat }: { stat: CardValueStat }) {
+  const t = stat.trend!;
+  const color = trendColor(t.direction);
+  const Tag = stat.onClick ? 'button' : 'span';
+  return (
+    <Tag
+      onClick={stat.onClick}
+      title={`${stat.name} — ${fmtMoney(t.previous)} → ${fmtMoney(t.latest)}`}
+      style={{
+        display: 'flex', alignItems: 'baseline', gap: 4, width: '100%',
+        background: 'transparent', border: 0, padding: 0, textAlign: 'left',
+        cursor: stat.onClick ? 'pointer' : 'default', color: 'inherit', lineHeight: 1.5,
+      }}
+    >
+      <span style={{ color, fontWeight: 700 }}>{trendArrow(t.direction)}</span>
+      <span style={{ color: 'var(--ink-soft)', fontWeight: 700, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {stat.name}
+      </span>
+      <span style={{ color, fontWeight: 700, whiteSpace: 'nowrap' }}>{pctLabel(t)}</span>
+    </Tag>
   );
 }
 
@@ -136,6 +170,9 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
     const ranked = moved.slice().sort((a, b) => moverRank(b.trend!) - moverRank(a.trend!));
     const winners = ranked.filter(s => s.trend!.direction === 'up').slice(0, 5);
     const losers = ranked.filter(s => s.trend!.direction === 'down').reverse().slice(0, 5);
+    // Single biggest gainer / decliner, surfaced right in the up/down tile.
+    const topGainer = winners[0] || null;
+    const topDecliner = losers.length ? losers[losers.length - 1] : null;
 
     const maxAbs = Math.max(
       0,
@@ -145,7 +182,15 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
       }),
     );
 
-    return { valuedCount: valued.length, setValue, movedCount: moved.length, setDelta, setPct, setDir, up, down, flat, winners, losers, maxAbs };
+    // Most recent value change anywhere in the set — the date shown on the
+    // "Change in Value" tile. Considers every card that has any mark, so even a
+    // first-time valuation stamps a date.
+    let lastChangeAt: string | null = null;
+    for (const s of stats) {
+      if (s.latestMarkAt && (!lastChangeAt || s.latestMarkAt > lastChangeAt)) lastChangeAt = s.latestMarkAt;
+    }
+
+    return { valuedCount: valued.length, setValue, movedCount: moved.length, setDelta, setPct, setDir, up, down, flat, winners, losers, topGainer, topDecliner, maxAbs, lastChangeAt };
   }, [stats]);
 
   // Nothing valued in this set yet — don't show an empty stats bar.
@@ -169,14 +214,23 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
           accent="var(--orange)"
         />
         <StatTile
-          label="Movement Since Prior Marks"
+          label="Change in Value"
           value={agg.movedCount === 0 ? '—' : (
             <span style={{ color: trendColor(agg.setDir) }}>
               {trendArrow(agg.setDir)}{' '}
               {agg.setPct !== null ? `${agg.setPct >= 0 ? '+' : ''}${agg.setPct.toFixed(1)}%` : fmtMoneyShort(agg.setDelta)}
             </span>
           )}
-          sub={agg.movedCount === 0 ? 'need a second mark to compare' : `${agg.setDelta >= 0 ? '+' : ''}${fmtMoney(agg.setDelta)} · ${agg.movedCount} re-marked`}
+          sub={
+            agg.movedCount === 0
+              ? (agg.lastChangeAt ? `set ${fmtDate(agg.lastChangeAt)} · need a 2nd mark` : 'need a second mark to compare')
+              : (
+                <>
+                  {agg.setDelta >= 0 ? '+' : ''}{fmtMoney(agg.setDelta)} · {agg.movedCount} changed
+                  {agg.lastChangeAt && <><br />as of {fmtDate(agg.lastChangeAt)}</>}
+                </>
+              )
+          }
           accent={trendColor(agg.setDir)}
         />
         <StatTile
@@ -188,7 +242,14 @@ export default function SetValueStats({ stats }: { stats: CardValueStat[] }) {
               <span style={{ color: 'var(--rust)' }}>{agg.down}▼</span>
             </span>
           }
-          sub={agg.flat > 0 ? `${agg.flat} unchanged` : 'movers since prior mark'}
+          sub={
+            (agg.topGainer || agg.topDecliner) ? (
+              <span style={{ display: 'block' }}>
+                {agg.topGainer && <MoverLine stat={agg.topGainer} />}
+                {agg.topDecliner && <MoverLine stat={agg.topDecliner} />}
+              </span>
+            ) : (agg.flat > 0 ? `${agg.flat} unchanged` : 'movers since prior mark')
+          }
         />
       </div>
 

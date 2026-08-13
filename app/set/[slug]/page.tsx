@@ -11,6 +11,7 @@ import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearch
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
+import { recordManualValueMark } from "@/lib/recordValueMark";
 import Thumb from "@/components/Thumb";
 import GenerateThumbnailsButton from "@/components/GenerateThumbnailsButton";
 import { uploadCardImageWithThumb } from "@/lib/upload-card-image";
@@ -673,6 +674,8 @@ export default function SetEditorPage() {
       raw_grade: !isGraded ? rawGrade : null,
       set_slug: slug,
       set_card_number: String(row['Card #'] || '').trim() || null,
+      image_front: String(row['Image 1'] || '').trim() || null,
+      image_back: String(row['Image 2'] || '').trim() || null,
     };
   }
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
@@ -1168,6 +1171,17 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     copy[index] = r;
     setRows(copy);
     scheduleAutoSave(copy);
+    // A committed Value becomes a dated mark so movement is tracked no matter
+    // how the value was set. recordManualValueMark de-dups an unchanged number,
+    // so re-blurring the same value never adds a spurious flat point.
+    if (field === "Value" && userId && slug && slug !== "new") {
+      const value = toNumber(r[field]);
+      if (value > 0) {
+        recordManualValueMark(userId, descriptorForRow(r), value)
+          .then((added) => { if (added) loadValueTrends(); })
+          .catch(() => {});
+      }
+    }
   }
   function onBlurDate(index: number) {
     const copy = [...rows];
