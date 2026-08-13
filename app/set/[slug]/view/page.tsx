@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
 import SetHeaderBanner from '@/components/SetHeaderBanner';
 import ValueDetailModal from '@/components/ValueDetailModal';
+import SetValueStats, { type CardValueStat } from '@/components/SetValueStats';
 import Thumb from '@/components/Thumb';
 import { cardValueKey, trendFromRows, type Trend, type ValueHistoryRow } from '@/lib/cardValueHistory';
 
@@ -365,6 +366,35 @@ export default function InventoryViewPage() {
     };
   }
 
+  // Roll-up of every displayed card's committed value + movement, feeding the
+  // set-level stats panel (total value, overall move, winners & losers). One
+  // entry per distinct card key so duplicate rows can't double-count.
+  const setStats: CardValueStat[] = useMemo(() => {
+    const seen = new Set<string>();
+    const out: CardValueStat[] = [];
+    for (const row of displayed) {
+      const key = valueKeyForRow(row, year, brand);
+      if (seen.has(key)) continue;
+      const hist = historyByKey[key];
+      if (!hist || hist.length === 0) continue;
+      seen.add(key);
+      const chrono = hist.slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
+      const latest = chrono[chrono.length - 1].market_value;
+      const trend = trendFromRows(chrono.map(h => ({ market_value: h.market_value, created_at: h.created_at })));
+      const cardNum = row['Card #'] ? `#${row['Card #']}` : '';
+      const player = String(row['Player'] || row['Description'] || '');
+      const name = [cardNum, player].filter(Boolean).join(' ').trim() || 'Card';
+      const gradingCo = String(row['Grading Company'] || '').trim();
+      const grade = String(row['Grade'] || '').trim();
+      const rawGrade = String(row['Raw Grade'] || '').trim();
+      const conditionLabel = gradingCo
+        ? `${gradingCo}${grade ? ' ' + grade : ''}`
+        : (rawGrade ? `Raw ${rawGrade}` : 'Raw');
+      out.push({ key, name, conditionLabel, latest, trend, onClick: () => setValueModalKey(key) });
+    }
+    return out;
+  }, [displayed, historyByKey, year, brand]);
+
   // The card whose value popup is open (identity label + its history rows).
   const modalCard = useMemo(() => {
     if (!valueModalKey) return null;
@@ -445,6 +475,7 @@ export default function InventoryViewPage() {
         <div style={{ marginBottom: 20 }}>
           <SetHeaderBanner year={year} brand={brand} title={title} />
         </div>
+        <SetValueStats stats={setStats} />
         {displayed.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No cards to display</div>
