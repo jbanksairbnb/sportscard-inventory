@@ -215,6 +215,146 @@ function Sparkline({ values, width = 160, height = 34 }: { values: number[]; wid
   );
 }
 
+// Compact "prior vs new" column chart shown beside the Save / Use actions.
+// Renders every committed value over time as a bar (oldest → newest) and, once
+// the working analysis is valid (weights = 100%), appends the current value as
+// a highlighted bar — so the collector sees, at a glance, exactly how today's
+// number lands against each prior mark. A bar-per-commit reads far more
+// dramatically than a two-number diff when there are several data points: the
+// whole trajectory is visible and the pending bar pops against it. Zero-anchored
+// so the height of each bar is proportional to its dollar value. Dependency-free
+// SVG, so it adds no bundle weight.
+type ChartBar = { value: number; date: string; kind: 'history' | 'new' };
+
+function PriorVsNewChart({ history, newValue, hasNew }: {
+  history: { value: number; date: string }[]; // chronological (oldest → newest)
+  newValue: number;
+  hasNew: boolean;                            // true once weights total 100%
+}) {
+  const MAX_BARS = 8; // keep it legible next to the action buttons
+  const trimmed = history.slice(-MAX_BARS);
+  const hiddenCount = history.length - trimmed.length;
+  const bars: ChartBar[] = trimmed.map(h => ({ value: h.value, date: h.date, kind: 'history' as const }));
+  if (hasNew) bars.push({ value: newValue, date: new Date().toISOString(), kind: 'new' });
+
+  // Nothing to chart yet: no prior commits and no valid new value.
+  if (bars.length === 0) {
+    return (
+      <div style={{
+        height: '100%', minHeight: 150, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '14px 16px', background: 'var(--paper)', border: '1px dashed var(--rule)', borderRadius: 8,
+        fontSize: 12, color: 'var(--ink-mute)', textAlign: 'center', lineHeight: 1.5,
+      }}>
+        Save an analysis or finish weighting to 100% to chart the new value against your prior marks.
+      </div>
+    );
+  }
+
+  // Callout: the new value vs the most recent prior commit.
+  const lastHist = trimmed.length ? trimmed[trimmed.length - 1].value : null;
+  let callout: React.ReactNode = null;
+  if (hasNew && lastHist !== null) {
+    const delta = newValue - lastHist;
+    const pct = lastHist !== 0 ? (delta / lastHist) * 100 : null;
+    const dir: 'up' | 'down' | 'flat' = delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : 'flat';
+    callout = (
+      <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: trendColor(dir) }}
+        title={`New ${fmtMoney(newValue)} vs last ${fmtMoney(lastHist)}`}>
+        {trendArrow(dir)}{' '}
+        {pct !== null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%` : `${delta >= 0 ? '+' : ''}${fmtMoney(delta)}`}
+        {' '}vs last
+      </span>
+    );
+  }
+
+  // SVG geometry. viewBox is fixed; the element scales to its container width.
+  const width = 640;
+  const height = 172;
+  const padL = 10;
+  const padR = 10;
+  const padTop = 30;    // room for value labels (+ NEW tag)
+  const padBottom = 24; // room for date labels
+  const plotW = width - padL - padR;
+  const plotH = height - padTop - padBottom;
+
+  const max = Math.max(...bars.map(b => b.value), 0);
+  const scale = max > 0 ? plotH / max : 0;
+  const n = bars.length;
+  const slot = plotW / n;
+  const barW = Math.min(72, slot * 0.6);
+
+  return (
+    <div style={{ background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 8, padding: '10px 10px 6px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 4px 4px' }}>
+        {callout || (
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 600 }}>
+            {hasNew ? 'First analysis on record' : 'Finish weighting to preview the new value'}
+          </span>
+        )}
+        {hiddenCount > 0 && (
+          <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', marginLeft: 'auto' }}>
+            showing last {trimmed.length} of {history.length}
+          </span>
+        )}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        style={{ display: 'block' }}
+        role="img"
+        aria-label="Prior committed values versus the new value"
+      >
+        {/* baseline */}
+        <line x1={padL} y1={padTop + plotH} x2={width - padR} y2={padTop + plotH}
+          stroke="var(--rule)" strokeWidth={1} />
+        {bars.map((b, i) => {
+          const prev = i > 0 ? bars[i - 1].value : null;
+          const dir: 'up' | 'down' | 'flat' =
+            prev === null ? 'flat'
+            : b.value - prev > 0.005 ? 'up'
+            : b.value - prev < -0.005 ? 'down'
+            : 'flat';
+          const isNew = b.kind === 'new';
+          const fill = isNew ? 'var(--orange)' : i === 0 ? 'var(--plum)' : trendColor(dir);
+          const barH = Math.max(2, b.value * scale);
+          const cx = padL + slot * i + slot / 2;
+          const x = cx - barW / 2;
+          const y = padTop + plotH - barH;
+          return (
+            <g key={i}>
+              <rect
+                x={x} y={y} width={barW} height={barH} rx={3}
+                fill={fill}
+                fillOpacity={isNew ? 1 : 0.8}
+                stroke={isNew ? 'var(--plum)' : 'none'}
+                strokeWidth={isNew ? 2.5 : 0}
+              />
+              {isNew && (
+                <text x={cx} y={y - 18} textAnchor="middle"
+                  fontFamily="var(--font-mono)" fontSize={8.5} fontWeight={700}
+                  letterSpacing="0.12em" fill="var(--orange)">
+                  NEW
+                </text>
+              )}
+              <text x={cx} y={y - 7} textAnchor="middle"
+                fontFamily="var(--font-mono)" fontSize={11} fontWeight={700}
+                fill={isNew ? 'var(--orange)' : 'var(--ink-soft)'}>
+                {fmtMoney(b.value)}
+              </text>
+              <text x={cx} y={padTop + plotH + 15} textAnchor="middle"
+                fontFamily="var(--font-mono)" fontSize={9.5}
+                fontWeight={isNew ? 700 : 400}
+                fill={isNew ? 'var(--orange)' : 'var(--ink-mute)'}>
+                {isNew ? 'Now' : new Date(b.date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: '2-digit' })}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function sourceDisplay(s: SourceValue, label: string | null): string {
   if (s === 'other') return label?.trim() || 'Other';
   const found = RESEARCH_SOURCES.find(x => x.value === s);
@@ -727,18 +867,32 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                 style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1.5px solid var(--plum)', borderRadius: 6, background: 'var(--paper)', color: 'var(--plum)', fontFamily: 'var(--font-body)', fontSize: 13, resize: 'vertical' }} />
             </div>
 
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 22 }}>
-              <button type="button" onClick={save} disabled={saving || !totals.weightOk}
-                className="btn btn-ghost btn-sm">{saving ? 'Saving…' : '💾 Save research'}</button>
-              <button type="button" onClick={saveAndApply} disabled={saving || !totals.weightOk || !onApply}
-                className="btn btn-primary btn-sm">
-                {saving ? 'Saving…' : `→ Use ${totals.weightOk ? fmtMoney(totals.marketValue) : 'value'}`}
-              </button>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-                {autoSaveTick === 'pending' && '· autosave pending…'}
-                {autoSaveTick === 'saving' && '· autosaving…'}
-                {autoSaveTick === 'saved' && '· autosaved ✓'}
-              </span>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 22 }}>
+              {/* Actions */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center', minWidth: 220 }}>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button type="button" onClick={save} disabled={saving || !totals.weightOk}
+                    className="btn btn-ghost btn-sm">{saving ? 'Saving…' : '💾 Save research'}</button>
+                  <button type="button" onClick={saveAndApply} disabled={saving || !totals.weightOk || !onApply}
+                    className="btn btn-primary btn-sm">
+                    {saving ? 'Saving…' : `→ Use ${totals.weightOk ? fmtMoney(totals.marketValue) : 'value'}`}
+                  </button>
+                </div>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                  {autoSaveTick === 'pending' && '· autosave pending…'}
+                  {autoSaveTick === 'saving' && '· autosaving…'}
+                  {autoSaveTick === 'saved' && '· autosaved ✓'}
+                </span>
+              </div>
+              {/* Prior-vs-new value column chart, right beside the actions */}
+              <div style={{ flex: 1, minWidth: 300 }}>
+                <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 6 }}>Prior vs New Value</div>
+                <PriorVsNewChart
+                  history={valueHistory.slice().reverse().map(h => ({ value: h.market_value, date: h.created_at }))}
+                  newValue={totals.marketValue}
+                  hasNew={totals.weightOk}
+                />
+              </div>
             </div>
 
             {/* Price history for this card (you only) — immutable committed analyses */}
