@@ -294,6 +294,7 @@ export default function InventoryViewPage() {
   // currently open in the research table. Both are owner-only edit affordances.
   const [editRowIdx, setEditRowIdx] = useState<number | null>(null);
   const [researchTarget, setResearchTarget] = useState<{ rowIdx: number; descriptor: CardDescriptor } | null>(null);
+  const [benchmarkBusy, setBenchmarkBusy] = useState(false);
 
   // Re-fetch this set's value history and group it by card-identity key. Called
   // on first load and after any value edit so trends/movers refresh live.
@@ -350,6 +351,10 @@ export default function InventoryViewPage() {
   const persistRowValue = React.useCallback(async (rowIdx: number, value: number, recordMark: boolean) => {
     if (!userId) return;
     const supabase = createClient();
+    // The value the card carried *before* this edit — seeded as a baseline mark
+    // so a single change immediately shows movement (old → new) instead of
+    // needing a second change to have something to compare against.
+    const priorValue = parseValue(rows[rowIdx]?.['Value']);
     const formatted = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value);
     const nextRows = rows.map((r, i) => (i === rowIdx ? { ...r, Value: formatted } : r));
     const target = nextRows[rowIdx];
@@ -357,10 +362,41 @@ export default function InventoryViewPage() {
     const { error } = await supabase.from('sets').update({ rows: nextRows }).eq('user_id', userId).eq('slug', slug);
     if (error) { console.error('[set view] failed to save value:', error); return; }
     if (recordMark && target) {
-      await recordManualValueMark(userId, descriptorForRow(target, year, brand, slug) as ValueMarkCard, value);
+      const card = descriptorForRow(target, year, brand, slug) as ValueMarkCard;
+      // Seed the prior value first (no-op if it already matches the latest mark),
+      // then the new value — two sequential inserts keep created_at ordered.
+      if (priorValue > 0 && Math.abs(priorValue - value) >= 0.005) {
+        await recordManualValueMark(userId, card, priorValue);
+      }
+      await recordManualValueMark(userId, card, value);
     }
     await loadHistory(userId);
   }, [userId, slug, year, brand, loadHistory, rows]);
+
+  // Snapshot every owned card's current value as a dated mark, establishing (or
+  // re-setting) the baseline the "Change in Value" / "Cards Up / Down" tiles
+  // measure against. Deduped per card, so cards already carrying their current
+  // value as the latest mark are skipped — re-running when nothing changed is a
+  // no-op. After this, the next value change on any card shows movement.
+  const setBenchmark = React.useCallback(async () => {
+    if (!userId || benchmarkBusy) return;
+    setBenchmarkBusy(true);
+    try {
+      const seen = new Set<string>();
+      for (const row of rows) {
+        if (String(row['Owned'] || '') !== 'Yes') continue;
+        const value = parseValue(row['Value']);
+        if (value <= 0) continue;
+        const key = valueKeyForRow(row, year, brand);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        await recordManualValueMark(userId, descriptorForRow(row, year, brand, slug) as ValueMarkCard, value);
+      }
+      await loadHistory(userId);
+    } finally {
+      setBenchmarkBusy(false);
+    }
+  }, [userId, benchmarkBusy, rows, year, brand, slug, loadHistory]);
 
   const displayed = useMemo(() => {
     // __rowIdx = index into the unfiltered `rows` (stable identity for edits);
@@ -572,7 +608,7 @@ export default function InventoryViewPage() {
         <div style={{ marginBottom: 20 }}>
           <SetHeaderBanner year={year} brand={brand} title={title} />
         </div>
-        <SetValueStats stats={setStats} />
+        <SetValueStats stats={setStats} onSetBenchmark={setBenchmark} benchmarkBusy={benchmarkBusy} />
         {displayed.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No cards to display</div>
