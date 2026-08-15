@@ -1,9 +1,13 @@
-// Shared writer for a *manual* value mark — the append-only counterpart to the
-// research modal's commitHistory(). Whenever a card's Value is set directly
-// (typed in the edit table or on the inventory view), we log one immutable row
-// to card_value_history so movement is tracked the same way research is. The
-// research modal keeps owning its own richer commit; this covers the plain
-// "I just typed a number" path.
+// Shared writers for card_value_history — the append-only price-over-time log.
+//
+// `insertValueHistoryRow` is the single low-level insert both commit paths go
+// through (the research modal's richer commit and the manual mark below), so
+// they fail the same way and stay resilient to schema drift.
+//
+// `recordManualValueMark` is the *manual* counterpart to the research modal's
+// commitHistory(): whenever a card's Value is set directly (typed in the edit
+// table or on the inventory view), we log one immutable row so movement is
+// tracked the same way research is.
 //
 // Framework-light on purpose: it only needs the browser Supabase client and the
 // identity/fingerprint helpers, so both the edit page and the view page can call
@@ -15,7 +19,34 @@ import {
   normalizeAnalysis,
   contentHash,
   type AnalysisSnapshot,
+  type ValueHistoryRow,
 } from '@/lib/cardValueHistory';
+
+// Insert one history row and hand the outcome back to the caller.
+//
+// `mark_kind` is the newest column (migration 20260813_card_value_mark_kind).
+// On a deployment where that migration hasn't been applied yet, PostgREST
+// rejects the *entire* insert because of the unknown column — which silently
+// stopped every value mark, research and manual alike, from being recorded.
+// Retry once without the column so history keeps accruing on older schemas,
+// and always return the error text so callers can tell the user instead of
+// swallowing the failure.
+export async function insertValueHistoryRow(
+  payload: Record<string, unknown>,
+): Promise<{ row: ValueHistoryRow | null; error: string | null }> {
+  const supabase = createClient();
+  let res = await supabase.from('card_value_history').insert(payload).select('*').single();
+  if (res.error && (res.error.message || '').toLowerCase().includes('mark_kind')) {
+    const retry = { ...payload };
+    delete retry.mark_kind;
+    res = await supabase.from('card_value_history').insert(retry).select('*').single();
+  }
+  if (res.error) {
+    console.warn('[value] history insert failed:', res.error.message);
+    return { row: null, error: res.error.message };
+  }
+  return { row: (res.data as unknown as ValueHistoryRow) ?? null, error: null };
+}
 
 // The card-identity + breadcrumb fields a mark needs. Mirrors the research
 // modal's CardDescriptor so callers can pass the same object.
@@ -100,7 +131,6 @@ export async function recordManualValueMark(
     source_session_id: null,
     derived_from_id: null,
   };
-  const { error } = await supabase.from('card_value_history').insert(payload);
-  if (error) { console.warn('[value] manual mark insert failed:', error.message); return false; }
-  return true;
+  const { error } = await insertValueHistoryRow(payload);
+  return !error;
 }

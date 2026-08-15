@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import {
   AnalysisRow, AnalysisSnapshot, ValueHistoryRow,
-  normalizeAnalysis, contentHash, trendFromRows,
+  normalizeAnalysis, contentHash, trendFromRows, cardValueKey, dedupeByPosition,
 } from '@/lib/cardValueHistory';
+import { insertValueHistoryRow } from '@/lib/recordValueMark';
 
 // Sources we offer in the dropdown. 'other' lets the user free-form a label.
 export const RESEARCH_SOURCES = [
@@ -131,8 +132,8 @@ function emptyRow(position: number, defaults: { company: string; grade: string }
 }
 
 function rowsFromDataPoints(dps: DataPointRow[], defaults: { company: string; grade: string } = { company: '', grade: '' }): Row[] {
-  const sorted = dps.slice().sort((a, b) => a.position - b.position);
-  const rows: Row[] = sorted.map(d => {
+  const sorted = dedupeByPosition(dps.slice().sort((a, b) => a.position - b.position));
+  const rows: Row[] = sorted.map((d, i) => {
     // Read split columns first; if absent, fall back to splitting the legacy
     // combined `grade_condition` field on the first space (e.g. "PSA 8" → PSA / 8).
     let company = d.grade_company ?? '';
@@ -148,7 +149,11 @@ function rowsFromDataPoints(dps: DataPointRow[], defaults: { company: string; gr
       }
     }
     return {
-      position: d.position,
+      // Re-index rather than keeping the stored position: only rows with
+      // user-entered content are persisted, so a blank middle row leaves a gap
+      // (e.g. 0,2,3,4) and the blank rows padded on below would then collide
+      // with a real row's position.
+      position: i,
       source: (d.source as SourceValue) ?? 'other',
       source_label: d.source_label ?? '',
       grade_company: company,
@@ -168,8 +173,8 @@ function rowsFromDataPoints(dps: DataPointRow[], defaults: { company: string; gr
 // analysis"). The snapshot stores prices/weights as numbers; the form wants
 // strings.
 function rowsFromSnapshot(snap: AnalysisSnapshot, defaults: { company: string; grade: string } = { company: '', grade: '' }): Row[] {
-  const rows: Row[] = (snap.rows || []).slice().sort((a, b) => a.position - b.position).map(d => ({
-    position: d.position,
+  const rows: Row[] = dedupeByPosition((snap.rows || []).slice().sort((a, b) => a.position - b.position)).map((d, i) => ({
+    position: i, // contiguous — see rowsFromDataPoints
     source: (d.source as SourceValue) ?? 'other',
     source_label: d.source_label ?? '',
     grade_company: d.grade_company ?? '',
@@ -372,7 +377,15 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [autoSaveTick, setAutoSaveTick] = useState<'idle' | 'pending' | 'saving' | 'saved'>('idle');
+  // A failed history write used to be a console warning only — the analysis
+  // looked saved but never showed up in the price history (and so never
+  // produced a % change against the prior mark). Surface it instead.
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // Same value as `sessionId`, readable from queued saves. Saves are async and
+  // serialized, so a queued one runs with the closure it was created in — a
+  // stale `null` there would insert a *second* session for the same card.
+  const sessionIdRef = useRef<string | null>(null);
   const cardDefaults = useMemo(() => defaultsFor(card), [card]);
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: 5 }, (_, i) => emptyRow(i, defaultsFor(card))));
   const [notes, setNotes] = useState('');
@@ -385,6 +398,34 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   const [derivedFromId, setDerivedFromId] = useState<string | null>(null);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
 
+  // Keep the ref in lockstep with the state so both reads see the same session.
+  function setActiveSession(id: string | null) {
+    sessionIdRef.current = id;
+    setSessionId(id);
+  }
+
+  // The identity tuple that groups this card's sessions and price history into
+  // one series, matching how every other view (set grid, manual marks) groups
+  // them.
+  const identityKey = useMemo(() => cardValueKey({
+    year: card.year, brand: card.brand, card_number: card.card_number,
+    grade: card.grade, grading_company: card.grading_company, raw_grade: card.raw_grade,
+  }), [card.year, card.brand, card.card_number, card.grade, card.grading_company, card.raw_grade]);
+
+  // Does a stored row belong to the card we're researching? Column-level
+  // `.eq()` filters can't answer this on their own: any part of the tuple that
+  // is null for this card has to be left unfiltered, and an unfiltered column
+  // matches *every* other variant's rows — so a raw copy would inherit the PSA
+  // 5's price history. Comparing the whole key is exact, and it normalizes case
+  // and whitespace so "topps" and "Topps" stay one series.
+  const matchesCard = React.useCallback((r: {
+    card_year: number | null; card_brand: string | null; card_number: string | null;
+    card_grade: string | null; card_grading_company: string | null; card_raw_grade: string | null;
+  }) => cardValueKey({
+    year: r.card_year, brand: r.card_brand, card_number: r.card_number,
+    grade: r.card_grade, grading_company: r.card_grading_company, raw_grade: r.card_raw_grade,
+  }) === identityKey, [identityKey]);
+
   useEffect(() => {
     if (!open) return;
     const supabase = createClient();
@@ -394,21 +435,19 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       if (!user) { setLoading(false); return; }
       setUserId(user.id);
 
-      // Build a card-identity match. We require year + card_number for grouping
-      // sessions by card (so a 1965 Topps #150 rows separately from a 1953 #150).
+      // Build a card-identity match. Year + card_number narrow it server-side
+      // (both are exact, nulls included); the rest of the tuple — brand and the
+      // grade variant — is compared as a whole key in `matchesCard`, so a 1965
+      // Topps #150 PSA 8 never picks up a 1953 #150's or a raw copy's rows.
       let q = supabase.from('market_research_sessions')
         .select('*, market_research_data_points(*)')
         .order('updated_at', { ascending: false });
       if (card.year !== null) q = q.eq('card_year', card.year); else q = q.is('card_year', null);
       if (card.card_number) q = q.eq('card_number', card.card_number); else q = q.is('card_number', null);
-      if (card.brand) q = q.eq('card_brand', card.brand);
-      if (card.grade) q = q.eq('card_grade', card.grade);
-      if (card.grading_company) q = q.eq('card_grading_company', card.grading_company);
-      if (card.raw_grade) q = q.eq('card_raw_grade', card.raw_grade);
       const { data: matches, error } = await q;
       if (error) console.warn('[research] load error:', error.message);
       type SessionWithDP = SessionRow & { market_research_data_points: DataPointRow[] };
-      const all = ((matches || []) as unknown as SessionWithDP[]);
+      const all = ((matches || []) as unknown as SessionWithDP[]).filter(matchesCard);
       const ownAll = all.filter(s => s.user_id === user.id);
       // Garbage-collect: silently delete the user's own sessions that have no
       // notes AND every data point lacks user-entered content (price, weight,
@@ -438,11 +477,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       // Always open with a blank form. The user's latest analysis (if any) is
       // surfaced as a "Use most recent analysis" link, and the full archive is
       // visible in the history panel below the form.
-      setSessionId(null);
+      setActiveSession(null);
       setDerivedFromId(null);
       setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
       setNotes('');
       setAutoSaveTick('idle');
+      setHistoryError(null);
       if (own.length > 0) {
         // The banner up top is a shortcut to resume the most recent draft; the
         // full archive lives in the price-history list, sourced separately from
@@ -454,7 +494,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
 
       // Immutable committed-analysis history for this card, keyed by the same
       // identity tuple used for sessions above.
-      setValueHistory(await fetchValueHistory(supabase));
+      setValueHistory(await fetchValueHistory(supabase, user.id));
 
       // Community sessions — show last 10 from other users on this card.
       const labeledCommunity: CommunitySession[] = others.slice(0, 10).map(s => ({
@@ -467,6 +507,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setLoading(false);
     }
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, card.year, card.brand, card.card_number, card.player, card.grade, card.grading_company, card.raw_grade]);
 
   const totals = useMemo(() => {
@@ -505,31 +546,36 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   function loadFromCommunity(s: CommunitySession) {
     setRows(rowsFromDataPoints(s.data_points, cardDefaults));
     setNotes(prev => prev || `(Started from another collector's research from ${new Date(s.created_at).toLocaleDateString()})`);
-    setSessionId(null); // Treat as new session for the current user
+    setActiveSession(null); // Treat as new session for the current user
     setDerivedFromId(null);
   }
 
-  // Load this card's committed price history (newest first). RLS scopes it to
-  // the current user; the filters mirror the session-matching tuple.
-  async function fetchValueHistory(supabase: ReturnType<typeof createClient>): Promise<ValueHistoryRow[]> {
-    let q = supabase.from('card_value_history').select('*').order('created_at', { ascending: false });
+  // Load this card's committed price history (newest first) — research commits
+  // and manual value marks alike, since both are marks on the same series. Year
+  // + card_number narrow it server-side; `matchesCard` applies the rest of the
+  // identity tuple exactly, the same way the session lookup above does.
+  async function fetchValueHistory(supabase: ReturnType<typeof createClient>, uid: string): Promise<ValueHistoryRow[]> {
+    let q = supabase.from('card_value_history').select('*')
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false });
     if (card.year !== null) q = q.eq('card_year', card.year); else q = q.is('card_year', null);
     if (card.card_number) q = q.eq('card_number', card.card_number); else q = q.is('card_number', null);
-    if (card.brand) q = q.eq('card_brand', card.brand);
-    if (card.grade) q = q.eq('card_grade', card.grade);
-    if (card.grading_company) q = q.eq('card_grading_company', card.grading_company);
-    if (card.raw_grade) q = q.eq('card_raw_grade', card.raw_grade);
     const { data, error } = await q;
     if (error) { console.warn('[research] value history load error:', error.message); return []; }
-    return (data || []) as unknown as ValueHistoryRow[];
+    return ((data || []) as unknown as ValueHistoryRow[]).filter(matchesCard);
   }
 
   // Record an immutable snapshot of the current analysis — but only when it
   // differs from the most recent one for this card, so re-saving an unchanged
   // analysis (or reusing a prior one verbatim) is a no-op. Called only on
   // explicit Save research / Use value, never on the silent autosave.
-  async function commitHistory(): Promise<void> {
-    if (!userId || !totals.weightOk) return;
+  //
+  // Returns an error message when the mark could not be written. That has to
+  // reach the user: a swallowed failure looks exactly like a successful save
+  // until they reopen the card and find the analysis missing from its price
+  // history, with no % change against the prior mark.
+  async function commitHistory(): Promise<string | null> {
+    if (!userId || !totals.weightOk) return null;
     const analysisRows: AnalysisRow[] = rows.filter(rowHasUserContent).map(r => ({
       position: r.position,
       source: r.source,
@@ -554,7 +600,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     for (const ref of refs) {
       if (!ref) continue;
       const refNorm = normalizeAnalysis(ref.snapshot?.rows || [], ref.snapshot?.notes ?? null, ref.market_value);
-      if (refNorm === normalized) return;
+      if (refNorm === normalized) return null;
     }
     const snapshot: AnalysisSnapshot = { notes: trimmedNotes, market_value: value, rows: analysisRows };
     const payload = {
@@ -569,14 +615,13 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       source_session_id: null, // reserved for the migration backfill only
       derived_from_id: derivedFromId,
     };
-    const supabase = createClient();
-    const { data, error } = await supabase.from('card_value_history').insert(payload).select('*').single();
-    if (error) { console.warn('[research] history insert failed:', error.message); return; }
-    if (data) {
-      const row = data as unknown as ValueHistoryRow;
+    const { row, error } = await insertValueHistoryRow(payload);
+    if (error) return error;
+    if (row) {
       setValueHistory(prev => [row, ...prev]);
       setDerivedFromId(row.id); // subsequent commits chain off this one
     }
+    return null;
   }
 
   // Persist current session + data points. Returns true on success. The UI
@@ -601,16 +646,16 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       notes: notes.trim() || null,
       updated_at: new Date().toISOString(),
     };
-    let activeSessionId = sessionId;
-    if (sessionId) {
-      const { error } = await supabase.from('market_research_sessions').update(payload).eq('id', sessionId);
+    let activeSessionId = sessionIdRef.current;
+    if (activeSessionId) {
+      const { error } = await supabase.from('market_research_sessions').update(payload).eq('id', activeSessionId);
       if (error) { if (!opts.silent) alert('Could not save: ' + error.message); return false; }
-      await supabase.from('market_research_data_points').delete().eq('session_id', sessionId);
+      await supabase.from('market_research_data_points').delete().eq('session_id', activeSessionId);
     } else {
       const { data, error } = await supabase.from('market_research_sessions').insert(payload).select('id').single();
       if (error || !data) { if (!opts.silent) alert('Could not save: ' + error?.message); return false; }
       activeSessionId = data.id as string;
-      setSessionId(activeSessionId);
+      setActiveSession(activeSessionId);
     }
     const dpRows = rows
       .filter(rowHasUserContent)
@@ -635,14 +680,28 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     return true;
   }
 
+  // Every write to a session goes through this queue. `persistSession` replaces
+  // a session's comps with a delete-then-insert, so two of them running at once
+  // can interleave (delete, delete, insert, insert) and leave the session
+  // holding each comp twice — which reloads as double weights and a total that
+  // can never reach 100% again. Chaining guarantees one at a time.
+  const saveQueue = useRef<Promise<boolean>>(Promise.resolve(true));
+  function queueSave(opts: { silent?: boolean } = {}): Promise<boolean> {
+    const next = saveQueue.current.catch(() => false).then(() => persistSession(opts));
+    saveQueue.current = next;
+    return next;
+  }
+
   async function save() {
     if (!totals.weightOk) {
       alert('Weights must total 100% with at least one row that has a price filled in.');
       return;
     }
     setSaving(true);
-    const ok = await persistSession();
-    if (ok) await commitHistory();
+    setHistoryError(null);
+    const ok = await queueSave();
+    const err = ok ? await commitHistory() : null;
+    setHistoryError(err);
     setSaving(false);
   }
 
@@ -652,11 +711,18 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       return;
     }
     setSaving(true);
-    const ok = await persistSession();
-    if (ok) await commitHistory();
+    setHistoryError(null);
+    const ok = await queueSave();
+    const err = ok ? await commitHistory() : null;
+    setHistoryError(err);
     setSaving(false);
     if (!ok) return;
     if (onApply) onApply(totals.marketValue);
+    // The value still gets applied — but say so when it didn't make it into the
+    // price history, because the modal is about to close over the banner.
+    if (err) {
+      alert(`Value applied, but this analysis could not be added to the card's price history: ${err}`);
+    }
     onClose();
   }
 
@@ -664,7 +730,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     if (!latestSession) return;
     setRows(rowsFromDataPoints(latestSession.data_points, cardDefaults));
     setNotes(latestSession.session.notes || '');
-    setSessionId(latestSession.session.id);
+    setActiveSession(latestSession.session.id);
     setDerivedFromId(null);
     setAutoSaveTick('idle');
   }
@@ -686,7 +752,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setAutoSaveTick('pending');
     const t = setTimeout(async () => {
       setAutoSaveTick('saving');
-      const ok = await persistSession({ silent: true });
+      const ok = await queueSave({ silent: true });
       setAutoSaveTick(ok ? 'saved' : 'idle');
     }, 1500);
     return () => clearTimeout(t);
@@ -766,7 +832,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
         {latestSession && !sessionId && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
             <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
-              You analyzed this card on <strong>{new Date(latestSession.session.created_at).toLocaleDateString()}</strong>
+              {/* The draft is picked by most-recently-updated, so date it that way —
+                  `created_at` would show when the session was first opened, which
+                  on a resumed analysis is not the day the work was done. */}
+              You analyzed this card on <strong>{new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString()}</strong>
               {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}.
             </span>
             <button type="button" onClick={loadFromLatest}
@@ -907,6 +976,16 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                   {autoSaveTick === 'saving' && '· autosaving…'}
                   {autoSaveTick === 'saved' && '· autosaved ✓'}
                 </span>
+                {historyError && (
+                  <div style={{
+                    fontSize: 11.5, lineHeight: 1.5, color: 'var(--rust)', fontWeight: 600,
+                    background: 'var(--paper)', border: '1.5px solid var(--rust)', borderRadius: 6, padding: '8px 10px',
+                  }}>
+                    Your research was saved, but this analysis could not be added to the card&apos;s
+                    price history, so it won&apos;t show a change vs. your prior value.
+                    <div className="mono" style={{ fontSize: 10.5, fontWeight: 400, marginTop: 4 }}>{historyError}</div>
+                  </div>
+                )}
               </div>
               {/* Prior-vs-new value column chart, right beside the actions */}
               <div style={{ flex: 1, minWidth: 300 }}>
@@ -944,7 +1023,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                   onUse={(h) => {
                     setRows(rowsFromSnapshot(h.snapshot, cardDefaults));
                     setNotes(h.snapshot?.notes || '');
-                    setSessionId(null);       // fork a fresh working session; don't overwrite
+                    setActiveSession(null);   // fork a fresh working session; don't overwrite
                     setDerivedFromId(h.id);   // lineage recorded on the next commit
                     setAutoSaveTick('idle');
                   }}
@@ -1016,7 +1095,7 @@ function PastList({ items, showNotes }: {
           </div>
           {it.rows.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)' }}>
-              {it.rows.slice().sort((a, b) => a.position - b.position).map(d => {
+              {dedupeByPosition(it.rows.slice().sort((a, b) => a.position - b.position)).map(d => {
                 const gradeDisplay = d.grade_company || d.grade_value
                   ? `${d.grade_company || ''}${d.grade_company && d.grade_value ? ' ' : ''}${d.grade_value || ''}`.trim()
                   : (d.grade_condition || '');
@@ -1058,7 +1137,7 @@ function ValueHistoryList({ items, onUse }: {
         const pct = older && older.market_value !== 0 ? (delta! / older.market_value) * 100 : null;
         const dir: 'up' | 'down' | 'flat' = delta === null ? 'flat'
           : delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : 'flat';
-        const snapRows = (h.snapshot?.rows || []).slice().sort((a, b) => a.position - b.position);
+        const snapRows = dedupeByPosition((h.snapshot?.rows || []).slice().sort((a, b) => a.position - b.position));
         return (
           <div key={h.id} className="panel" style={{ padding: 12, background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>

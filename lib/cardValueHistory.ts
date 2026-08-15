@@ -104,6 +104,20 @@ export function contentHash(s: string): string {
   return (h >>> 0).toString(36);
 }
 
+// Two comps in one analysis can only share a `position` when concurrent saves
+// double-wrote the session's rows. The extra copy isn't a second comp — it's an
+// artifact, and leaving it in doubles every weight, so a 100% analysis reloads
+// as 200% and can never be saved or valued again. Keep the first at each
+// position, so already-affected snapshots read back correctly.
+export function dedupeByPosition<T extends { position: number }>(items: T[]): T[] {
+  const seen = new Set<number>();
+  return items.filter(i => {
+    if (seen.has(i.position)) return false;
+    seen.add(i.position);
+    return true;
+  });
+}
+
 export type Trend = {
   direction: 'up' | 'down' | 'flat';
   latest: number;
