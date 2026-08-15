@@ -9,7 +9,7 @@
 // time, the comps behind the latest analysis, and the full history log.
 
 import React, { useMemo } from 'react';
-import { ValueHistoryRow, AnalysisRow, trendFromRows } from '@/lib/cardValueHistory';
+import { ValueHistoryRow, AnalysisRow, trendFromRows, dedupeByPosition } from '@/lib/cardValueHistory';
 
 // Mirrors RESEARCH_SOURCES in MarketResearchModal — kept inline so the view
 // page doesn't pull the editor (and its Supabase writes) into its bundle.
@@ -114,7 +114,7 @@ function ValueBarChart({ points }: { points: { value: number; date: string }[] }
 
 // The comps behind a single committed analysis.
 function CompRows({ rows }: { rows: AnalysisRow[] }) {
-  const sorted = rows.slice().sort((a, b) => a.position - b.position);
+  const sorted = dedupeByPosition(rows.slice().sort((a, b) => a.position - b.position));
   if (sorted.length === 0) return null;
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)' }}>
