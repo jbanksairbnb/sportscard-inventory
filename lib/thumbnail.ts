@@ -14,10 +14,13 @@
 // Convention: the thumbnail lives beside its original with the final
 // extension swapped for `.thumb.jpg`:
 //
-//   <userId>/<slug>/<idx>/img1.jpg   ->  <userId>/<slug>/<idx>/img1.thumb.jpg
+//   <userId>/<slug>/<rowId>/img1-<token>.jpg
+//     ->  <userId>/<slug>/<rowId>/img1-<token>.thumb.jpg
 //
 // so the thumbnail's storage path (and public URL) can be derived from the
-// original by pure string manipulation — no second field to persist.
+// original by pure string manipulation — no second field to persist. The
+// per-upload token in the originals (see lib/upload-card-image.ts) means a
+// thumbnail path is never reused either.
 
 const THUMB_SUFFIX = '.thumb.jpg';
 
@@ -51,17 +54,30 @@ export function toThumbPath(path: string): string {
 /**
  * Given a public storage URL for an original image, return the public URL of
  * its sibling thumbnail. Returns null when the input isn't a Supabase public
- * storage URL (so callers can fall back to the original). Any query string
- * (e.g. the `?t=` cache-buster) is dropped.
+ * storage URL (so callers can fall back to the original).
+ *
+ * The query string is deliberately PRESERVED. Row image URLs carry a
+ * `?t=<upload time>` cache-buster, and both the browser cache and the storage
+ * CDN key on the full URL including that query. Dropping it here meant the
+ * original was re-fetched after an upload while the thumbnail was served from
+ * cache — so a re-scanned card showed the previous image's thumbnail in the
+ * table while the lightbox showed the new scan. Carrying the buster across
+ * keeps the two views in step.
  */
 export function thumbUrlFromOriginal(url: string | null | undefined): string | null {
   if (!url) return null;
   const marker = '/storage/v1/object/public/';
   const idx = url.indexOf(marker);
   if (idx === -1) return null;
-  const base = url.split(/[?#]/)[0];
-  if (isThumbPath(base)) return base; // already a thumbnail URL
-  return toThumbPath(base);
+  const [base, query = ''] = splitQuery(url);
+  if (isThumbPath(base)) return url; // already a thumbnail URL
+  return `${toThumbPath(base)}${query}`;
+}
+
+/** Split a URL into its path portion and its `?…`/`#…` remainder. */
+function splitQuery(url: string): [string, string] {
+  const cut = url.search(/[?#]/);
+  return cut === -1 ? [url, ''] : [url.slice(0, cut), url.slice(cut)];
 }
 
 /**

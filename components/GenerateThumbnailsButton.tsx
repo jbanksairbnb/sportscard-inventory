@@ -5,9 +5,11 @@ import React, { useState } from 'react';
 // Top-bar action that generates static thumbnails for every image in the
 // current set, so buyers viewing the shared set load small cached files
 // instead of leaning on the on-the-fly resizer (which breaks under the burst
-// of a large set). The work runs server-side in batches (see
-// /api/generate-thumbnails); this button just collects the image paths, drives
-// the batch loop, and shows progress. Available to any signed-in owner.
+// of a large set). It also rebuilds thumbnails that have fallen behind their
+// original — the repair for a row whose image was replaced. The work runs
+// server-side in batches (see /api/generate-thumbnails); this button just
+// collects the image paths, drives the batch loop, and shows progress.
+// Available to any signed-in owner.
 
 const STORAGE_MARKER = '/storage/v1/object/public/card-images/';
 const THUMB_SUFFIX = '.thumb.jpg';
@@ -67,7 +69,7 @@ export default function GenerateThumbnailsButton({ imageUrls }: { imageUrls: str
       }
       setResult(
         `Done — ${made} created` +
-        (skipped ? `, ${skipped} already had one` : '') +
+        (skipped ? `, ${skipped} already up to date` : '') +
         (failed ? `, ${failed} failed (try again)` : '') + '.'
       );
     } catch {

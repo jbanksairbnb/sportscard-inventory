@@ -4,7 +4,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
+import {
+  uploadCardImageWithThumb,
+  setImageStoragePath,
+  rowStorageKey,
+} from '@/lib/upload-card-image';
 import { isSeller } from '@/lib/sellerGuard';
 import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
@@ -211,11 +215,16 @@ export default function ScanFromSetPage() {
         const dest = destinations[origIndex] || { setRow: true, listing: false };
         if (!pair.front && !pair.back) continue;
 
+        // Fresh path per scan, keyed by the row's stable _id rather than its
+        // position — a position-derived path overwrote whichever card sat at
+        // that index before, and re-served its cached bytes. See
+        // lib/upload-card-image.ts.
+        const rowKey = rowStorageKey(updatedRows[origIndex], origIndex);
         const uploads: { url: string; slot: 1 | 2 }[] = [];
         if (pair.front) {
           const trimmed = await cropScanPadding(pair.front);
           const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
-          const path = `${userId}/${currentSet.slug}/${origIndex}/img1.${ext}`;
+          const path = setImageStoragePath({ userId, slug: currentSet.slug, rowKey, slot: 1, ext });
           const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Front upload failed (#${origIndex}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);
@@ -224,7 +233,7 @@ export default function ScanFromSetPage() {
         if (pair.back) {
           const trimmed = await cropScanPadding(pair.back);
           const ext = (trimmed.name.split('.').pop() || 'jpg').toLowerCase();
-          const path = `${userId}/${currentSet.slug}/${origIndex}/img2.${ext}`;
+          const path = setImageStoragePath({ userId, slug: currentSet.slug, rowKey, slot: 2, ext });
           const { error: upErr } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
           if (upErr) throw new Error(`Back upload failed (#${origIndex}): ${upErr.message}`);
           const { data } = supabase.storage.from('card-images').getPublicUrl(path);

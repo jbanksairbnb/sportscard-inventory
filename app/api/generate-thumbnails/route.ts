@@ -86,15 +86,34 @@ export async function POST(req: NextRequest) {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL!.replace(/\/$/, '')
   let made = 0, skipped = 0, failed = 0
 
+  // Last-Modified of a public object, or null when it doesn't exist / the
+  // header is missing.
+  async function modifiedAt(path: string): Promise<number | null> {
+    const res = await fetch(`${base}/storage/v1/object/public/${BUCKET}/${encodePath(path)}`, {
+      method: 'HEAD',
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const header = res.headers.get('last-modified')
+    const parsed = header ? Date.parse(header) : NaN
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+
   async function processOne(path: string) {
     const thumbPath = toThumbPath(path)
     try {
-      // Already has a thumbnail? Skip the work.
-      const head = await fetch(`${base}/storage/v1/object/public/${BUCKET}/${encodePath(thumbPath)}`, { method: 'HEAD' })
-      if (head.ok) { skipped++; return }
-      // Fetch a resized copy via the render endpoint, store it as a static object.
-      const renderUrl = `${base}/storage/v1/render/image/public/${BUCKET}/${encodePath(path)}?width=${THUMB_WIDTH}&quality=${THUMB_QUALITY}&resize=contain`
-      const res = await fetch(renderUrl)
+      // Skip only when the existing thumbnail is at least as new as the
+      // original. A thumbnail OLDER than its original is stale — the image was
+      // re-uploaded after it was generated — and regenerating it here is the
+      // repair path for rows still showing a previous scan.
+      const [thumbTime, originalTime] = await Promise.all([modifiedAt(thumbPath), modifiedAt(path)])
+      if (thumbTime !== null && originalTime !== null && thumbTime >= originalTime) { skipped++; return }
+      // Fetch a resized copy via the render endpoint, store it as a static
+      // object. The cache-buster matters: without it the renderer can hand
+      // back a cached resize of the image this path used to hold.
+      const buster = originalTime ?? 0
+      const renderUrl = `${base}/storage/v1/render/image/public/${BUCKET}/${encodePath(path)}?width=${THUMB_WIDTH}&quality=${THUMB_QUALITY}&resize=contain&v=${buster}`
+      const res = await fetch(renderUrl, { cache: 'no-store' })
       if (!res.ok) throw new Error(`render ${res.status}`)
       const bytes = Buffer.from(await res.arrayBuffer())
       const { error } = await admin.storage.from(BUCKET).upload(thumbPath, bytes, { upsert: true, contentType: 'image/jpeg' })

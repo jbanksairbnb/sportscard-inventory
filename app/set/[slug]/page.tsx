@@ -14,7 +14,12 @@ import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { recordManualValueMark } from "@/lib/recordValueMark";
 import Thumb from "@/components/Thumb";
 import GenerateThumbnailsButton from "@/components/GenerateThumbnailsButton";
-import { uploadCardImageWithThumb } from "@/lib/upload-card-image";
+import {
+  uploadCardImageWithThumb,
+  setImageStoragePath,
+  rowStorageKey,
+  removeCardImageByUrl,
+} from "@/lib/upload-card-image";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
 import { cropScanPadding } from "@/lib/scanAutoCrop";
@@ -846,15 +851,25 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   const supabase = createClient();
   const trimmed = await cropScanPadding(file);
   const ext = trimmed.name.split(".").pop() || "jpg";
-  const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
+  const field = slot === 1 ? "Image 1" : "Image 2";
+  // A fresh path per upload, keyed by the row's stable _id — never the row's
+  // current position. Reusing a position-derived path let a re-scan overwrite
+  // whichever card happened to sit at that index earlier, and served the old
+  // cached bytes for the new upload. See lib/upload-card-image.ts.
+  const path = setImageStoragePath({
+    userId, slug, rowKey: rowStorageKey(rows[origIndex], origIndex), slot, ext,
+  });
   const { error } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
   if (error) { alert("Image upload failed: " + error.message); return; }
   const { data } = supabase.storage.from("card-images").getPublicUrl(path);
-  const field = slot === 1 ? "Image 1" : "Image 2";
-    const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
+  const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
   const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: publicUrl } : r);
   setRows(nextRows);
   scheduleAutoSave(nextRows);
+  // The replaced object is deliberately left in place. A listing created from
+  // this row copies the row's image URL (see image_front/image_back), so
+  // deleting the old file on re-upload would blank out that listing's photo.
+  // An orphaned object is the cheaper mistake.
 }
    async function saveDefaultTarget(patch: {
     type: string; low: string; high: string; companies: string;
@@ -1195,10 +1210,10 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     const field = slot === 1 ? 'Image 1' : 'Image 2';
     const url = rows[origIndex]?.[field];
     if (url) {
-      const supabase = createClient();
-      const ext = url.split('.').pop()?.split('?')[0] || 'jpg';
-      const path = `${userId}/${slug}/${origIndex}/img${slot}.${ext}`;
-      await supabase.storage.from('card-images').remove([path]);
+      // Delete what the row actually points at. Rebuilding the path from the
+      // row's current index removed a different card's file whenever rows had
+      // been inserted or reordered since the upload.
+      await removeCardImageByUrl(createClient(), String(url));
     }
     const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: '' } : r);
     setRows(nextRows);
