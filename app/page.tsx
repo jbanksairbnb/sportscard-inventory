@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { createClient } from '@/lib/supabase/client';
+import { collectRowImageUrls, pruneCardImages } from '@/lib/image-cleanup';
 import SCLogo from '@/components/SCLogo';
 import CartIcon from '@/components/CartIcon';
 
@@ -378,6 +379,18 @@ export default function HomePage() {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push('/login'); return; }
+    // Grab the image URLs before the row disappears — afterwards there's no
+    // record of what this set was pointing at, and its scans would sit in the
+    // bucket (and on the bill) forever.
+    const { data: doomed } = await supabase
+      .from('sets')
+      .select('rows')
+      .eq('user_id', user.id)
+      .eq('slug', slug)
+      .maybeSingle();
+    const imageUrls = collectRowImageUrls(
+      (doomed?.rows ?? null) as Array<Record<string, unknown>> | null,
+    );
     const { error } = await supabase
       .from('sets')
       .delete()
@@ -385,6 +398,9 @@ export default function HomePage() {
       .eq('slug', slug);
     if (error) { alert('Failed to delete: ' + error.message); return; }
     setSets((prev) => prev.filter((s) => s.slug !== slug));
+    // Prune after the delete: anything still referenced by another set, a
+    // listing, or the profile is left alone.
+    await pruneCardImages(supabase, user.id, imageUrls);
   }
 
   // Toggle share state from the My Shelf card. share_token: null = private,

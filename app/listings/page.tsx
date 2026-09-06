@@ -7,6 +7,7 @@ import Link from 'next/link';
 import Papa from 'papaparse';
 import { createClient } from '@/lib/supabase/client';
 import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
+import { pruneCardImages } from '@/lib/image-cleanup';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
@@ -728,13 +729,15 @@ function ListingsPageContent() {
     const url = editing.photos[idx];
     if (!url) return;
     const supabase = createClient();
-    const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
-    if (m?.[1]) await supabase.storage.from('card-images').remove([decodeURIComponent(m[1])]);
     const newPhotos = editing.photos.filter((_, i) => i !== idx);
     const { error } = await supabase.from('listings').update({ photos: newPhotos }).eq('id', editing.id);
     if (error) { alert(error.message); return; }
     setEditing(prev => prev ? { ...prev, photos: newPhotos } : prev);
     setListings(prev => prev.map(l => l.id === editing.id ? { ...l, photos: newPhotos } : l));
+    // Drop the reference first, then prune. Removing the object outright also
+    // left its `.thumb.jpg` sibling behind, and blanked the photo on any set
+    // row the listing was created from — both share this one object.
+    if (userId) await pruneCardImages(supabase, userId, [url]);
   }
 
   async function replacePhoto(idx: number, blob: Blob) {
@@ -750,10 +753,7 @@ function ListingsPageContent() {
     if (updErr) { alert(updErr.message); return; }
     setEditing(prev => prev ? { ...prev, photos: newPhotos } : prev);
     setListings(prev => prev.map(l => l.id === editing.id ? { ...l, photos: newPhotos } : l));
-    if (oldUrl) {
-      const m = oldUrl.match(/\/card-images\/(.+?)(?:\?|$)/);
-      if (m?.[1]) supabase.storage.from('card-images').remove([decodeURIComponent(m[1])]).catch(() => {});
-    }
+    if (oldUrl) await pruneCardImages(supabase, userId, [oldUrl]);
   }
 
   async function markSold(l: Listing) {
@@ -785,13 +785,10 @@ function ListingsPageContent() {
       setWorking(null);
       if (error) { alert('Delete failed: ' + error.message); return; }
     } else {
-      for (const url of l.photos || []) {
-        const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
-        if (m?.[1]) await supabase.storage.from('card-images').remove([decodeURIComponent(m[1])]);
-      }
       const { error } = await supabase.from('listings').delete().eq('id', l.id);
       setWorking(null);
       if (error) { alert('Delete failed: ' + error.message); return; }
+      if (userId) await pruneCardImages(supabase, userId, l.photos || []);
     }
     setListings(prev => prev.filter(x => x.id !== l.id));
   }
@@ -955,14 +952,10 @@ function ListingsPageContent() {
     const softIds = ids.filter(id => blockedIds.has(id));
     const hardIds = ids.filter(id => !blockedIds.has(id));
 
-    const paths: string[] = [];
+    const hardPhotoUrls: string[] = [];
     for (const l of listings.filter(x => hardIds.includes(x.id))) {
-      for (const url of l.photos || []) {
-        const m = url.match(/\/card-images\/(.+?)(?:\?|$)/);
-        if (m?.[1]) paths.push(decodeURIComponent(m[1]));
-      }
+      for (const url of l.photos || []) if (url) hardPhotoUrls.push(url);
     }
-    if (paths.length > 0) await supabase.storage.from('card-images').remove(paths);
 
     for (const slice of chunks(softIds)) {
       const { error } = await supabase.from('listings').update({ status: 'removed' }).in('id', slice);
@@ -972,6 +965,9 @@ function ListingsPageContent() {
       const { error } = await supabase.from('listings').delete().in('id', slice);
       if (error) { setBulkWorking(false); alert('Bulk delete failed (remove): ' + error.message); return; }
     }
+    // Prune once the listings are gone, so photos still referenced by a set
+    // row or an archived listing are left in place.
+    if (userId && hardPhotoUrls.length > 0) await pruneCardImages(supabase, userId, hardPhotoUrls);
 
     setBulkWorking(false);
     setListings(prev => prev.filter(l => !selectedIds.has(l.id)));

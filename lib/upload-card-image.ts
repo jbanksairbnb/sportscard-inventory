@@ -7,12 +7,24 @@
 // to the render endpoint / original, so the image is never lost.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isThumbPath, makeThumbnailBlob, toThumbPath } from '@/lib/thumbnail';
+import { downscaleOriginal, isThumbPath, makeThumbnailBlob, toThumbPath } from '@/lib/thumbnail';
 
 const BUCKET = 'card-images';
 const PUBLIC_MARKER = `/storage/v1/object/public/${BUCKET}/`;
 
-type UploadOptions = { upsert?: boolean; contentType?: string };
+type UploadOptions = {
+  upsert?: boolean;
+  contentType?: string;
+  /**
+   * Cap the stored original's longest edge, in pixels. Defaults to
+   * ORIGINAL_MAX_DIM — the difference between a ~3 MB raw capture and a
+   * ~500 KB stored file, which is what keeps the Storage bill flat as the
+   * collection grows. Pass `null` to store the file exactly as given (lot
+   * collages do this: they pack many cards into one canvas and need the
+   * extra pixels).
+   */
+  maxDim?: number | null;
+};
 
 /**
  * Upload `file` to `path` in the card-images bucket and, on success, upload a
@@ -26,17 +38,29 @@ export async function uploadCardImageWithThumb(
   file: Blob,
   options: UploadOptions = {},
 ): Promise<{ error: { message: string } | null }> {
+  // Wrap once so both the downscale and the thumbnail see a File.
+  const asFile = file instanceof File
+    ? file
+    : new File([file], 'upload.jpg', { type: (file as Blob).type || 'image/jpeg' });
+
+  // Cap the stored original. Best-effort by construction: downscaleOriginal
+  // returns the input untouched on any failure, or when shrinking wouldn't
+  // save bytes.
+  const stored = options.maxDim === null
+    ? asFile
+    : await downscaleOriginal(asFile, options.maxDim ?? undefined);
+
   const uploadOpts: { upsert: boolean; contentType?: string } = { upsert: options.upsert ?? false };
-  if (options.contentType) uploadOpts.contentType = options.contentType;
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file, uploadOpts);
+  // A downscaled original is always re-encoded as JPEG, so the caller's
+  // content type (e.g. image/png) no longer describes the bytes.
+  if (stored !== asFile) uploadOpts.contentType = 'image/jpeg';
+  else if (options.contentType) uploadOpts.contentType = options.contentType;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, stored, uploadOpts);
   if (error) return { error };
 
   // Best-effort thumbnail — never blocks or fails the primary upload.
   try {
-    const thumbFile = file instanceof File
-      ? file
-      : new File([file], 'upload.jpg', { type: (file as Blob).type || 'image/jpeg' });
-    const thumb = await makeThumbnailBlob(thumbFile);
+    const thumb = await makeThumbnailBlob(stored);
     if (thumb) {
       await supabase.storage
         .from(BUCKET)
@@ -120,4 +144,39 @@ export async function removeCardImageByUrl(
   } catch {
     // ignore — an orphaned object is harmless next to losing the new image
   }
+}
+
+/**
+ * Delete many card images (and their generated thumbnails) in one call.
+ * Non-bucket URLs are ignored, paths are de-duplicated, and the work is
+ * chunked so a large set deletion doesn't blow past Storage's request limits.
+ * Best-effort throughout: an orphan left behind is cheaper than a half-failed
+ * delete that aborts the rest.
+ */
+export async function removeCardImagesByUrls(
+  supabase: SupabaseClient,
+  urls: Iterable<string | null | undefined>,
+): Promise<number> {
+  const paths = new Set<string>();
+  for (const url of urls) {
+    const path = storagePathFromCardImageUrl(url);
+    if (!path) continue;
+    paths.add(path);
+    if (!isThumbPath(path)) paths.add(toThumbPath(path));
+  }
+  if (paths.size === 0) return 0;
+
+  const all = [...paths];
+  const CHUNK = 100;
+  let removed = 0;
+  for (let i = 0; i < all.length; i += CHUNK) {
+    const slice = all.slice(i, i + CHUNK);
+    try {
+      await supabase.storage.from(BUCKET).remove(slice);
+      removed += slice.length;
+    } catch {
+      // ignore — see removeCardImageByUrl
+    }
+  }
+  return removed;
 }

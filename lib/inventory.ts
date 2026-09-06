@@ -50,15 +50,20 @@ export function applyOwnedTransition(
     touched = true
     const next: Row = { ...r, Owned: desired }
     if (owned) {
-      // Restore archived images if present.
+      // Restore archived images, but never over a photo the row already has.
+      // A card can be re-scanned while it's marked Not Owned; restoring on
+      // top of that put the OLD picture back on a row whose description had
+      // moved on, which reads as "the image stopped matching the card".
       const a1 = next['Image 1 Archived']
       const a2 = next['Image 2 Archived']
-      if (a1) next['Image 1'] = a1
-      if (a2) next['Image 2'] = a2
+      if (a1 && !next['Image 1']) next['Image 1'] = a1
+      if (a2 && !next['Image 2']) next['Image 2'] = a2
       delete next['Image 1 Archived']
       delete next['Image 2 Archived']
     } else {
       // Archive current images (so the row goes "imageless" while listed).
+      // Only overwrite an existing archive slot when there's something to put
+      // in it, so an unown → own → unown cycle can't blank the archive.
       const i1 = next['Image 1']
       const i2 = next['Image 2']
       if (i1) {
@@ -133,11 +138,12 @@ export async function claimPurchaseIntoBuyerSets(
       touched = true;
       const next: Row = { ...r, Owned: 'Yes' };
 
-      // Restore any archived images from a prior "Not Owned" cycle.
+      // Restore any archived images from a prior "Not Owned" cycle — without
+      // clobbering a newer scan, same as applyOwnedTransition.
       const a1 = next['Image 1 Archived'];
       const a2 = next['Image 2 Archived'];
-      if (a1) next['Image 1'] = a1;
-      if (a2) next['Image 2'] = a2;
+      if (a1 && !next['Image 1']) next['Image 1'] = a1;
+      if (a2 && !next['Image 2']) next['Image 2'] = a2;
       delete next['Image 1 Archived'];
       delete next['Image 2 Archived'];
 
