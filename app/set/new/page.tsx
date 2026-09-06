@@ -380,7 +380,7 @@ export default function NewSetPage() {
               <div className="display" style={{ fontSize: 12, color: 'var(--plum)', letterSpacing: '0.04em' }}>COLLECTIVE</div>
             </div>
           </Link>
-          <Link href="/" className="btn btn-outline btn-sm" style={{ flexShrink: 0 }}>← My Shelf</Link>
+          <Link href="/home" className="btn btn-outline btn-sm" style={{ flexShrink: 0 }}>← Home</Link>
           <div className="display" style={{ fontSize: 17, color: 'var(--plum)', flex: 1 }}>New Set</div>
         </div>
       </header>
@@ -603,7 +603,7 @@ export default function NewSetPage() {
               ))}
             </div>
             <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 6 }}>
-              Inventory sets group separately on My Shelf. Listing a complete set later auto-flips this to &quot;For Sale.&quot;
+              Inventory sets filter separately on your home page. Listing a complete set later auto-flips this to &quot;For Sale.&quot;
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>

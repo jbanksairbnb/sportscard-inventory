@@ -475,7 +475,6 @@ function MarketplacePageInner() {
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ Marketplace ★</div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Link href="/" className="btn btn-ghost btn-sm">My Shelf</Link>
             <Link href="/listings" className="btn btn-ghost btn-sm">My Listings</Link>
             <Link href="/purchases" className="btn btn-ghost btn-sm">My Purchases</Link>
             <CartIcon />
@@ -552,7 +551,7 @@ function MarketplacePageInner() {
           <button type="button" onClick={() => setWantListOnly(v => !v)}
             disabled={wantListKeys.size === 0}
             title={wantListKeys.size === 0
-              ? 'Build a set on My Shelf to enable want-list filtering'
+              ? 'Build a set on your home page to enable want-list filtering'
               : 'Show only listings of cards on your want list'}
             className={`btn btn-sm ${wantListOnly ? 'btn-primary' : 'btn-outline'}`}>
             ⭐ Want list {wantListOnly ? 'on' : 'only'}{wantListKeys.size > 0 ? ` · ${wantListMatchCount}` : ''}

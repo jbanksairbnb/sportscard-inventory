@@ -106,7 +106,7 @@ export default function CommunityPage() {
             display: 'flex', gap: 22, fontSize: 11.5, fontWeight: 700,
             letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-soft)',
           }}>
-            <Link href="/" style={{ color: 'inherit' }}>My Shelf</Link>
+            <Link href="/home" style={{ color: 'inherit' }}>Home</Link>
             <span style={{
               color: 'var(--plum)', borderBottom: '3px solid var(--orange)',
               paddingBottom: 4, cursor: 'default',
@@ -158,7 +158,7 @@ export default function CommunityPage() {
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 700 }}>
               {displayed.length} {displayed.length === 1 ? 'set' : 'sets'}
             </span>
-            <Link href="/" className="btn btn-outline btn-sm">← My Shelf</Link>
+            <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
           </div>
         </div>
 

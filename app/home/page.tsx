@@ -4,7 +4,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { createClient } from '@/lib/supabase/client';
+import { collectRowImageUrls, pruneCardImages } from '@/lib/image-cleanup';
 import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { applyOwnedTransition, ensureRowIds } from '@/lib/inventory';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
@@ -85,10 +87,40 @@ type SetRow = {
   row_count: number;
   owned_count: number;
   owned_pct: number;
+  // total_cost / gain_loss / purpose came over with the set cards when the
+  // separate "My Shelf" page was folded into Sets in Progress below.
+  total_cost: number;
   total_value: number;
+  gain_loss: number;
   updated_at: number;
   share_token: string | null;
+  // Soft classification: 'personal' (collection), 'inventory' (building to
+  // sell), 'for-sale' (currently a complete-set marketplace listing). Drives
+  // the filter pills and the badge on each card.
+  purpose?: 'personal' | 'inventory' | 'for-sale';
 };
+
+type PurposeFilter = 'all' | 'personal' | 'inventory' | 'for-sale';
+
+const PURPOSE_LABELS: Record<Exclude<PurposeFilter, 'all'>, string> = {
+  personal: 'Personal',
+  inventory: 'Inventory',
+  'for-sale': 'For Sale',
+};
+const PURPOSE_BADGE_BG: Record<Exclude<PurposeFilter, 'all'>, string> = {
+  personal: 'var(--teal)',
+  inventory: 'var(--mustard)',
+  'for-sale': 'var(--orange)',
+};
+const PURPOSE_BADGE_FG: Record<Exclude<PurposeFilter, 'all'>, string> = {
+  personal: 'var(--cream)',
+  inventory: 'var(--plum)',
+  'for-sale': 'var(--cream)',
+};
+const DONUT_COLORS = ['#e8742c', '#ecdbb8'];
+
+const fmtCurrency = (n: number) =>
+  `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function LogoShowcase() {
   return (
@@ -1337,18 +1369,266 @@ function FavoritesShowcase({ userId }: { userId: string }) {
 
 const SET_COLORS = ['#e8742c', '#2d7a6e', '#3d1f4a', '#e5b53d', '#c54a2c', '#2d7a6e', '#e8742c', '#3d1f4a'];
 
-function SetsInProgress({ sets }: { sets: SetRow[] }) {
+// The full set card, brought over from the retired "My Shelf" page. It carries
+// three controls that existed nowhere else at this density: the delete button,
+// the share toggle, and the purpose picker behind the coloured badge. Losing
+// them was the main risk in dropping that page, so the whole card came across
+// rather than just its looks.
+function SetCard({
+  s,
+  colorIndex,
+  onDelete,
+  onPurposeChange,
+  onToggleShare,
+}: {
+  s: SetRow;
+  colorIndex: number;
+  onDelete: (slug: string, title: string) => void;
+  onPurposeChange: (slug: string, next: Exclude<PurposeFilter, 'all'>) => void;
+  onToggleShare: (slug: string, currentlyShared: boolean) => void;
+}) {
+  const color = SET_COLORS[colorIndex % SET_COLORS.length];
+  const pct = s.owned_pct || 0;
+  const owned = s.owned_count || 0;
+  const gainLoss = s.gain_loss || 0;
+  const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
+  const currentPurpose = (s.purpose || 'personal') as Exclude<PurposeFilter, 'all'>;
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const donutData = [
+    { name: 'Owned',  value: Math.round(pct * 10) / 10 },
+    { name: 'Needed', value: Math.round(Math.max(0, 100 - pct) * 10) / 10 },
+  ];
+
+  return (
+    <div className="panel-bordered" style={{ padding: '18px 20px', position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div style={{
+          width: 58, height: 58,
+          background: color, color: 'var(--cream)',
+          display: 'grid', placeItems: 'center',
+          fontFamily: 'var(--font-display)', fontSize: 20,
+          borderRadius: 10, border: '2px solid var(--plum)',
+          boxShadow: '0 2px 0 var(--plum)', flexShrink: 0,
+        }}>
+          {yearShort}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Link href={`/set/${encodeURIComponent(s.slug)}`} style={{ textDecoration: 'none' }}>
+            <div className="display" style={{
+              fontSize: 17, color: 'var(--plum)', marginBottom: 2,
+              lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {s.title}
+            </div>
+          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+            <div className="eyebrow" style={{ fontSize: 9.5, color: 'var(--orange)' }}>
+              {[s.year, s.brand].filter(Boolean).join(' · ')}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <button type="button"
+                onClick={() => setPickerOpen(o => !o)}
+                title="Click to change set category"
+                style={{
+                  fontSize: 8.5, fontWeight: 700, letterSpacing: '0.08em',
+                  padding: '2px 8px 2px 6px', borderRadius: 100,
+                  background: PURPOSE_BADGE_BG[currentPurpose], color: PURPOSE_BADGE_FG[currentPurpose],
+                  textTransform: 'uppercase', border: 'none', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                }}>
+                {PURPOSE_LABELS[currentPurpose]}
+                <span style={{ fontSize: 7, opacity: 0.85, lineHeight: 1 }}>▾</span>
+              </button>
+              {pickerOpen && (
+                <>
+                  <div
+                    onClick={() => setPickerOpen(false)}
+                    style={{ position: 'fixed', inset: 0, zIndex: 25 }}
+                  />
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+                    background: 'var(--cream)', border: '1.5px solid var(--plum)',
+                    borderRadius: 8, padding: 4, zIndex: 26,
+                    boxShadow: '0 6px 18px rgba(42,20,52,0.2)',
+                    display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130,
+                  }}>
+                    {(['personal', 'inventory', 'for-sale'] as const).map(opt => {
+                      const isCurrent = opt === currentPurpose;
+                      return (
+                        <button key={opt} type="button"
+                          onClick={() => { setPickerOpen(false); if (!isCurrent) onPurposeChange(s.slug, opt); }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '6px 10px', borderRadius: 6, border: 'none',
+                            background: isCurrent ? 'var(--paper)' : 'transparent',
+                            fontFamily: 'var(--font-body)', fontSize: 11.5, fontWeight: 700,
+                            color: 'var(--plum)', cursor: isCurrent ? 'default' : 'pointer',
+                            textAlign: 'left',
+                          }}
+                          onMouseEnter={e => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = 'var(--paper)'; }}
+                          onMouseLeave={e => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}>
+                          <span style={{
+                            width: 9, height: 9, borderRadius: 100,
+                            background: PURPOSE_BADGE_BG[opt],
+                            border: '1px solid var(--plum)',
+                            flexShrink: 0,
+                          }} />
+                          {PURPOSE_LABELS[opt]}
+                          {isCurrent && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--teal)' }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="progress" style={{ marginBottom: 6 }}>
+            <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
+          </div>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            fontFamily: 'var(--font-mono)', fontSize: 12,
+            color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            <span>{owned} / {s.row_count || 0} cards</span>
+            <span>{pct.toFixed(1)}%</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
+            {[
+              { label: 'Cost',      value: fmtCurrency(s.total_cost) },
+              { label: 'Value',     value: fmtCurrency(s.total_value) },
+              { label: 'Gain/Loss', value: fmtCurrency(gainLoss), gain: gainLoss },
+            ].map(({ label, value, gain }) => (
+              <div key={label} style={{
+                background: 'var(--paper)', border: '1.5px solid var(--plum)',
+                borderRadius: 10, padding: '7px 10px',
+              }}>
+                <div className="eyebrow" style={{ fontSize: 9, color: 'var(--ink-mute)', marginBottom: 2 }}>
+                  {label}
+                </div>
+                <div className="mono" style={{
+                  fontSize: 12, fontWeight: 700,
+                  color: gain === undefined ? 'var(--ink)' : gain >= 0 ? 'var(--teal)' : 'var(--rust)',
+                }}>
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {s.updated_at && (
+            <div className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 8 }}>
+              Updated {new Date(s.updated_at).toLocaleString()}
+            </div>
+          )}
+        </div>
+
+        <div style={{ flexShrink: 0, textAlign: 'center' }}>
+          <div style={{ width: 80, height: 80 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Tooltip formatter={(v: number) => `${v}%`} />
+                <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={26} outerRadius={38} stroke="none">
+                  {donutData.map((_, idx) => (
+                    <Cell key={idx} fill={DONUT_COLORS[idx % DONUT_COLORS.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="eyebrow" style={{ fontSize: 8, color: 'var(--ink-mute)', marginTop: 2 }}>Owned</div>
+        </div>
+      </div>
+
+      {(() => {
+        const isShared = !!s.share_token;
+        return (
+          <button
+            type="button"
+            onClick={() => onToggleShare(s.slug, isShared)}
+            title={isShared ? 'Public — click to make private' : 'Private — click to share with the community'}
+            style={{
+              position: 'absolute', top: 10, right: 46,
+              padding: '4px 10px', height: 28,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+              lineHeight: 1, textTransform: 'uppercase',
+              fontFamily: 'var(--font-mono)',
+              color: isShared ? 'var(--cream)' : 'var(--ink-mute)',
+              background: isShared ? 'var(--orange)' : 'var(--paper)',
+              border: `1.5px solid ${isShared ? 'var(--orange)' : 'var(--rule)'}`,
+              borderRadius: 100, cursor: 'pointer',
+            }}
+            aria-label={isShared ? `Unshare set ${s.title}` : `Share set ${s.title}`}
+            aria-pressed={isShared}
+          >
+            <span aria-hidden="true">{isShared ? '🔗' : '🔒'}</span>
+            {isShared ? 'Shared' : 'Share'}
+          </button>
+        );
+      })()}
+
+      <button
+        type="button"
+        onClick={() => onDelete(s.slug, s.title)}
+        title="Delete this set"
+        style={{
+          position: 'absolute', top: 10, right: 10,
+          width: 28, height: 28, padding: 0,
+          display: 'grid', placeItems: 'center',
+          fontSize: 13, lineHeight: 1,
+          color: 'var(--rust)', background: 'var(--paper)',
+          border: '1.5px solid var(--rust)', borderRadius: 100,
+          cursor: 'pointer',
+        }}
+        aria-label={`Delete set ${s.title}`}
+      >
+        🗑
+      </button>
+    </div>
+  );
+}
+
+function SetsInProgress({
+  sets,
+  onDelete,
+  onPurposeChange,
+  onToggleShare,
+}: {
+  sets: SetRow[];
+  onDelete: (slug: string, title: string) => void;
+  onPurposeChange: (slug: string, next: Exclude<PurposeFilter, 'all'>) => void;
+  onToggleShare: (slug: string, currentlyShared: boolean) => void;
+}) {
   const [search, setSearch] = useState('');
+  const [purposeFilter, setPurposeFilter] = useState<PurposeFilter>('all');
   const [showAll, setShowAll] = useState(false);
+
   const sorted = useMemo(() => {
     const arr = [...sets].sort((a, b) => (a.year || 0) - (b.year || 0) || (a.brand || '').localeCompare(b.brand || ''));
+    const purposed = purposeFilter === 'all'
+      ? arr
+      : arr.filter(s => (s.purpose || 'personal') === purposeFilter);
     const q = search.trim().toLowerCase();
-    if (!q) return arr;
-    return arr.filter(s => {
+    if (!q) return purposed;
+    return purposed.filter(s => {
       const hay = `${s.title} ${s.year || ''} ${s.brand || ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [sets, search]);
+  }, [sets, search, purposeFilter]);
+
+  // Counts come from the unfiltered list so the pills always show how many
+  // sets each category holds, not how many survive the current search.
+  const purposeCounts = useMemo(() => {
+    const c: Record<PurposeFilter, number> = { all: sets.length, personal: 0, inventory: 0, 'for-sale': 0 };
+    for (const s of sets) c[(s.purpose || 'personal') as Exclude<PurposeFilter, 'all'>]++;
+    return c;
+  }, [sets]);
 
   if (sets.length === 0) {
     return (
@@ -1363,82 +1643,93 @@ function SetsInProgress({ sets }: { sets: SetRow[] }) {
             No sets yet
           </div>
           <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.55 }}>
-            Start tracking a set to see your progress, want list, and value here.
+            Import a CSV to start tracking your progress, want list, and value here.
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href="/set/new" className="btn btn-primary btn-sm">+ New Set</Link>
-            <Link href="/" className="btn btn-outline btn-sm">My Shelf →</Link>
+            <Link href="/set/new" className="btn btn-primary btn-sm">+ New Upload</Link>
+            <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
           </div>
         </div>
       </section>
     );
   }
+
   return (
     <section style={{ marginBottom: 32 }}>
-      <div className="section-head" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      {/* Not `.section-head`: that class appends the gradient rule as its LAST
+          child, which with a search box, filter pills and a button on the row
+          would strand the bar past the button. Rendering the rule explicitly
+          puts it where it belongs — between the title and the controls. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
         <span className="eyebrow" style={{ fontSize: 12 }}>★ Sets in Progress ★</span>
         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
           {sorted.length}{sorted.length !== sets.length ? ` of ${sets.length}` : ''}
         </span>
+        <span aria-hidden="true" style={{
+          flex: 1, minWidth: 20, height: 3, borderRadius: 2, alignSelf: 'center',
+          background: 'linear-gradient(90deg, var(--orange) 0%, var(--mustard) 50%, var(--teal) 100%)',
+        }} />
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="🔍 Filter by title / year / brand…"
           style={{
-            marginLeft: 'auto', padding: '6px 12px', minWidth: 200, maxWidth: 280,
+            padding: '6px 12px', minWidth: 200, maxWidth: 280,
             border: '1.5px solid var(--plum)', borderRadius: 100,
             background: 'var(--cream)', color: 'var(--plum)',
             fontFamily: 'var(--font-body)', fontSize: 12.5,
           }} />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-        {(showAll ? sorted : sorted.slice(0, 10)).map((s, i) => {
-          const color = SET_COLORS[i % SET_COLORS.length];
-          const pct = s.owned_pct || 0;
-          const yearShort = s.year ? `'${String(s.year).slice(2)}` : '—';
-          return (
-            <Link key={s.slug} href={`/set/${encodeURIComponent(s.slug)}`} style={{ textDecoration: 'none' }}>
-              <div className="panel" style={{ padding: 14, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }}>
-                <div style={{
-                  width: 58, height: 58,
-                  background: color, color: 'var(--cream)',
-                  display: 'grid', placeItems: 'center',
-                  fontFamily: 'var(--font-display)', fontSize: 22,
-                  borderRadius: 10,
-                  border: '2px solid var(--plum)',
-                  boxShadow: '0 2px 0 var(--plum)',
-                  flexShrink: 0,
+
+        {/* Category pills, sitting to the right of the search box. Search
+            narrows within a category rather than replacing it — the two filters
+            compose, so "Inventory" + "topps" gives inventory Topps sets. A
+            category with no sets is hidden rather than shown at zero. */}
+        <div style={{
+          display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0,
+          padding: '4px 8px', borderRadius: 100,
+          background: 'var(--paper)', border: '1.5px solid var(--rule)',
+        }}>
+          {(['all', 'personal', 'inventory', 'for-sale'] as const).map(id => {
+            const count = purposeCounts[id];
+            if (id !== 'all' && count === 0) return null;
+            const active = purposeFilter === id;
+            const label = id === 'all' ? 'All' : PURPOSE_LABELS[id];
+            return (
+              <button key={id} type="button" onClick={() => setPurposeFilter(id)}
+                aria-pressed={active}
+                style={{
+                  fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em',
+                  padding: '3px 10px', borderRadius: 100,
+                  background: active ? 'var(--plum)' : 'transparent',
+                  color: active ? 'var(--mustard)' : 'var(--plum)',
+                  border: active ? '1.5px solid var(--plum)' : '1.5px solid transparent',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
-                  {yearShort}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {s.title}
-                    </div>
-                    {s.share_token && (
-                      <span style={{
-                        fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
-                        background: 'var(--teal)', color: 'var(--cream)',
-                        padding: '2px 6px', borderRadius: 100, flexShrink: 0,
-                      }}>SHARED</span>
-                    )}
-                  </div>
-                  <div className="progress">
-                    <span style={{ width: `${Math.min(100, pct)}%`, background: color }} />
-                  </div>
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between', marginTop: 5,
-                    fontFamily: 'var(--font-mono)', fontSize: 10.5,
-                    color: 'var(--ink-soft)', fontWeight: 600, letterSpacing: '0.04em',
-                  }}>
-                    <span>{s.owned_count} / {s.row_count}</span>
-                    <span>{pct.toFixed(1)}%</span>
-                  </div>
-                </div>
-              </div>
-            </Link>
-          );
-        })}
+                {label} <span style={{ opacity: 0.7, marginLeft: 2 }}>({count})</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <Link href="/set/new" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ New Upload</Link>
       </div>
+
+      {sorted.length === 0 ? (
+        <div className="panel" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+          No sets match that filter.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(480px, 1fr))', gap: 16 }}>
+          {(showAll ? sorted : sorted.slice(0, 10)).map((s, i) => (
+            <SetCard
+              key={s.slug}
+              s={s}
+              colorIndex={i}
+              onDelete={onDelete}
+              onPurposeChange={onPurposeChange}
+              onToggleShare={onToggleShare}
+            />
+          ))}
+        </div>
+      )}
       {sorted.length > 10 && (
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
           <button type="button" onClick={() => setShowAll(s => !s)} className="btn btn-ghost btn-sm">
@@ -1488,7 +1779,9 @@ function SubNav({ active, setActive }: { active: string; setActive: (t: string) 
   );
 }
 
-const NAV_LINKS = ['My Shelf'];
+// The "My Shelf" nav link is gone with the page it pointed at — its sets now
+// render in Sets in Progress on this very page, so a link back here read as a
+// link to nowhere.
 
 function TopNav({ isAdmin, canSell, wantsToSell, termsAccepted, onLogout }: { isAdmin: boolean; canSell: boolean; wantsToSell: boolean; termsAccepted: boolean; onLogout: () => void }) {
   // canSell here means "the admin granted selling". The full unlock for
@@ -1518,19 +1811,6 @@ function TopNav({ isAdmin, canSell, wantsToSell, termsAccepted, onLogout }: { is
           </div>
         </div>
         <nav style={{ display: 'flex', gap: 22, fontSize: 11.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-soft)' }}>
-          {NAV_LINKS.map((label) => {
-            const active = label === 'My Shelf';
-            const style: React.CSSProperties = {
-              color: active ? 'var(--plum)' : 'inherit',
-              borderBottom: active ? '3px solid var(--orange)' : undefined,
-              paddingBottom: active ? 4 : undefined,
-              cursor: 'pointer',
-              textDecoration: 'none',
-            };
-                return active
-              ? <Link key={label} href="/" style={style}>{label}</Link>
-              : <span key={label} style={style}>{label}</span>;
-          })}
           <Link href="/members" style={{
             color: 'inherit',
             cursor: 'pointer',
@@ -1766,7 +2046,7 @@ export default function HomePage() {
       }
       const { data } = await supabase
         .from('sets')
-        .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_value, updated_at, share_token')
+        .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at, share_token, purpose')
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
       if (data) setSets(data as SetRow[]);
@@ -1779,6 +2059,77 @@ export default function HomePage() {
     const supabase = createClient();
     await supabase.auth.signOut();
     router.push('/login');
+  }
+
+  // Set-level actions, moved here with the cards from the retired "My Shelf"
+  // page. Deleting a set is still only possible from a set card, so this had
+  // to come along or the app would have lost the ability entirely.
+  async function handleDeleteSet(slug: string, title: string) {
+    if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    // Grab the image URLs before the row disappears — afterwards there's no
+    // record of what this set was pointing at, and its scans would sit in the
+    // bucket (and on the bill) forever.
+    const { data: doomed } = await supabase
+      .from('sets')
+      .select('rows')
+      .eq('user_id', user.id)
+      .eq('slug', slug)
+      .maybeSingle();
+    const imageUrls = collectRowImageUrls(
+      (doomed?.rows ?? null) as Array<Record<string, unknown>> | null,
+    );
+    const { error } = await supabase
+      .from('sets')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('slug', slug);
+    if (error) { alert('Failed to delete: ' + error.message); return; }
+    setSets((prev) => prev.filter((s) => s.slug !== slug));
+    // Prune after the delete: anything still referenced by another set, a
+    // listing, or the profile is left alone.
+    await pruneCardImages(supabase, user.id, imageUrls);
+  }
+
+  // share_token: null = private, any UUID = publicly viewable at /share/<token>
+  // and listed in Community Sets. Mirrors the toggle on the set detail page.
+  async function handleToggleShare(slug: string, currentlyShared: boolean) {
+    const prevSets = sets;
+    const nextToken = currentlyShared ? null : (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    setSets((prev) => prev.map((s) => (s.slug === slug ? { ...s, share_token: nextToken } : s)));
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    const { error } = await supabase
+      .from('sets')
+      .update({ share_token: nextToken })
+      .eq('user_id', user.id)
+      .eq('slug', slug);
+    if (error) {
+      alert('Failed to update share state: ' + error.message);
+      setSets(prevSets);
+    }
+  }
+
+  async function handlePurposeChange(slug: string, next: Exclude<PurposeFilter, 'all'>) {
+    const prevSets = sets;
+    setSets((prev) => prev.map((s) => (s.slug === slug ? { ...s, purpose: next } : s)));
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
+    const { error } = await supabase
+      .from('sets')
+      .update({ purpose: next, updated_at: Date.now() })
+      .eq('user_id', user.id)
+      .eq('slug', slug);
+    if (error) {
+      alert('Failed to update set category: ' + error.message);
+      setSets(prevSets);
+    }
   }
 
   if (loading) {
@@ -1833,7 +2184,12 @@ export default function HomePage() {
       <div className="home-grid">
         <main style={{ minWidth: 0 }}>
           <FeedSection />
-          <SetsInProgress sets={sets} />
+          <SetsInProgress
+            sets={sets}
+            onDelete={handleDeleteSet}
+            onPurposeChange={handlePurposeChange}
+            onToggleShare={handleToggleShare}
+          />
           <FavoritesShowcase userId={userId} />
         </main>
       </div>

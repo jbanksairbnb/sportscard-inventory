@@ -1244,9 +1244,9 @@ function ListingsPageContent() {
                         {l.source_set_slug && (
                           <Link
                             href={`/set/${encodeURIComponent(l.source_set_slug)}${l.source_row_id ? `#row-${l.source_row_id}` : ''}`}
-                            title="Open the source row in My Shelf"
+                            title="Open the source row in its set"
                             style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--teal)', textDecoration: 'none', padding: '3px 6px', borderRadius: 4, border: '1px dashed var(--teal)' }}>
-                            ↗ View in My Shelf
+                            ↗ View in set
                           </Link>
                         )}
                       </div>
