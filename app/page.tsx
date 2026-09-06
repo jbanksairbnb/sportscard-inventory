@@ -344,12 +344,7 @@ export default function HomePage() {
   const [sets, setSets] = useState<SetRow[]>([]);
   const [userEmail, setUserEmail] = useState('');
   const [loading, setLoading] = useState(true);
-  const [scansPickerOpen, setScansPickerOpen] = useState(false);
   const router = useRouter();
-
-  const goSingleCards = () => { setScansPickerOpen(false); router.push('/listings/scan-inbox'); };
-  const goSetInventory = () => { setScansPickerOpen(false); router.push('/listings/scan-from-set'); };
-  const goMultiCard = () => { setScansPickerOpen(false); router.push('/listings/scan-multi-card'); };
 
   useEffect(() => {
     const supabase = createClient();
@@ -494,7 +489,6 @@ export default function HomePage() {
             }} />
           <div style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
             <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
-            <button onClick={() => setScansPickerOpen(true)} className="btn btn-ghost btn-sm">📷 Scans</button>
             <Link href="/set/new" className="btn btn-primary btn-sm">+ New Upload</Link>
           </div>
         </div>
@@ -568,78 +562,12 @@ export default function HomePage() {
           <span>Keep on collectin&apos;</span>
         </div>
       </footer>
-
-      {scansPickerOpen && (
-        <ScansPicker
-          onClose={() => setScansPickerOpen(false)}
-          onSingleCards={goSingleCards}
-          onSetInventory={goSetInventory}
-          onMultiCard={goMultiCard}
-        />
-      )}
     </div>
   );
 }
 
-function ScansPicker({ onClose, onSingleCards, onSetInventory, onMultiCard }: {
-  onClose: () => void;
-  onSingleCards: () => void;
-  onSetInventory: () => void;
-  onMultiCard: () => void;
-}) {
-  const choices = [
-    {
-      icon: '📷',
-      label: 'Add Scans to Single Cards',
-      hint: 'Match scans to individual listings — front and back per card.',
-      onClick: onSingleCards,
-    },
-    {
-      icon: '📚',
-      label: 'Add Scans to Set Inventory',
-      hint: 'Bulk attach scans to rows in one of your sets.',
-      onClick: onSetInventory,
-    },
-    {
-      icon: '🪟',
-      label: 'Multi-Card Scan (2×3 grid)',
-      hint: 'Upload one image of 6 fronts + one of 6 backs. Splits losslessly into 6 cards and assigns each to a row.',
-      onClick: onMultiCard,
-    },
-  ];
-  return (
-    <div onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 200,
-        background: 'rgba(42,20,52,0.82)',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        padding: '60px 20px', overflowY: 'auto',
-      }}>
-      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
-        style={{ width: '100%', maxWidth: 540, padding: 28, background: 'var(--cream)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-          <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>Add Scans</div>
-          <button type="button" onClick={onClose} className="btn btn-outline btn-sm">✕ Close</button>
-        </div>
-        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 20 }}>
-          Pick where you want to attach card scans.
-        </p>
-        <div style={{ display: 'grid', gap: 12 }}>
-          {choices.map(c => (
-            <button key={c.label} type="button" onClick={c.onClick}
-              className="panel-bordered"
-              style={{
-                padding: '18px 20px', textAlign: 'left', background: 'var(--paper)',
-                cursor: 'pointer', border: '1.5px solid var(--rule)', borderRadius: 12,
-              }}>
-              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', marginBottom: 4 }}>
-                {c.icon} {c.label}
-              </div>
-              <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>{c.hint}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+// The "📷 Scans" button and its ScansPicker modal were removed from this page.
+// The three scan flows it opened are still live and reachable directly:
+//   /listings/scan-inbox        — add scans to single cards
+//   /listings/scan-from-set     — bulk-attach scans to rows in a set
+//   /listings/scan-multi-card   — split a multi-card sheet

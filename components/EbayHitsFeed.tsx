@@ -221,6 +221,14 @@ export default function EbayHitsFeed() {
 
   return (
     <div>
+      {/* The instruction sits above the controls it describes. It used to live
+          in a full panel BELOW them, which meant the reader met the buttons
+          before the sentence explaining what they do — and the panel vanished
+          the moment a search ran, so it only ever showed when it was least
+          needed. */}
+      <p style={{ margin: '0 0 8px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
+        Pick a set and search eBay for listings matching your unowned cards.
+      </p>
       <div className="panel" style={{ padding: 16, marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <label className="eyebrow" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>
           Search a set
@@ -298,14 +306,6 @@ export default function EbayHitsFeed() {
         <div className="panel" style={{ padding: 24, textAlign: 'center', marginBottom: 14 }}>
           <div style={{ fontSize: 13, color: 'var(--rust)', fontWeight: 600, marginBottom: 8 }}>{error}</div>
           <button onClick={() => runSearch(false)} className="btn btn-outline btn-sm">Try again</button>
-        </div>
-      )}
-
-      {!hasSearched && !error && (
-        <div className="panel" style={{ padding: 28, textAlign: 'center' }}>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-            Pick a set above and click <strong>Search eBay</strong> to find current listings that match your unowned cards and target conditions.
-          </p>
         </div>
       )}
 
