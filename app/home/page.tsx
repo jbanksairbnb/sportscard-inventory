@@ -308,24 +308,24 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
             }} />
         )}
         {!cover && (
-          <svg viewBox="0 0 1280 360" preserveAspectRatio="xMidYMid slice"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-            <g transform="translate(640 360)">
-              {Array.from({ length: 16 }).map((_, i) => {
-                const a = -Math.PI + (i / 15) * Math.PI;
-                const fill = i % 2 === 0 ? 'rgba(229,181,61,0.25)' : 'rgba(232,116,44,0.18)';
-                return <polygon key={i} points="-40,0 40,0 0,-700" fill={fill} transform={`rotate(${(a * 180) / Math.PI})`} />;
-              })}
-            </g>
-            {([[120,60,14],[220,120,8],[1100,80,16],[1180,160,10],[90,200,10],[1200,260,12],[1060,220,7]] as [number,number,number][]).map(([x,y,s],i) => (
-              <polygon key={i}
-                points={`${x},${y-s} ${x+s/3},${y-s/3} ${x+s},${y} ${x+s/3},${y+s/3} ${x},${y+s} ${x-s/3},${y+s/3} ${x-s},${y} ${x-s/3},${y-s/3}`}
-                fill="#e5b53d" opacity="0.8" />
-            ))}
-            <text x="640" y="90" textAnchor="middle" fontFamily="Pacifico, cursive" fontSize="38" fill="rgba(245,233,208,0.3)">
-              Welcome to the Collective
-            </text>
-          </svg>
+          /* The default cover: a vintage banner built from five cards in the
+             owner's own collection (1940 Play Ball Ted Williams, 1955 Bowman
+             Ernie Banks, 1953 Topps Jackie Robinson, 1955 Topps Sandy Koufax,
+             1954 Topps Hank Aaron), shot out of their slabs, straightened and
+             laid on the site's sunburst-and-halftone backdrop.
+
+             It's authored at 3200x720 with everything important inside the
+             middle 80% and clear of the bottom 130px, so object-fit:cover can
+             trim the sides on a narrow window or the top and bottom on a wide
+             one without cutting a card in half — and so the avatar and name
+             block that overlap this box don't land on a face. */
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src="/home-banner.jpg" alt=""
+            style={{
+              position: 'absolute', inset: 0, width: '100%', height: '100%',
+              objectFit: 'cover', objectPosition: 'center',
+              userSelect: 'none', pointerEvents: 'none',
+            }} />
         )}
         <div style={{ position: 'absolute', top: 18, left: 22 }}>
           <span className="chip chip-gold"><DiamondIcon size={10} /> Charter Member · Est. 2023</span>
