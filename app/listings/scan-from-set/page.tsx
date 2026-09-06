@@ -205,14 +205,36 @@ export default function ScanFromSetPage() {
     const ts = Date.now();
 
     try {
-      const updatedRows = [...currentSet.rows];
+      // Re-read the set instead of writing back the snapshot taken when it was
+      // picked. This page stays open while files are dropped, paired and
+      // reviewed; saving the stale array put images at positions from the old
+      // ordering and reverted anything edited elsewhere in the meantime.
+      const { data: fresh, error: freshErr } = await supabase
+        .from('sets')
+        .select('rows')
+        .eq('user_id', userId)
+        .eq('slug', currentSet.slug)
+        .maybeSingle();
+      if (freshErr) throw new Error(`Could not re-read the set: ${freshErr.message}`);
+      const updatedRows = [...((fresh?.rows as Array<Record<string, any>> | null) || currentSet.rows)];
+
+      // Selections were made against the snapshot, so resolve each one back to
+      // its card by the row's stable `_id` before writing.
+      function resolveIndex(snapshotIndex: number): number {
+        const id = String(currentSet!.rows[snapshotIndex]?.['_id'] ?? '');
+        if (!id) return snapshotIndex; // legacy row with no _id — position is all we have
+        return updatedRows.findIndex(r => String(r['_id'] ?? '') === id);
+      }
+
       let setRowsTouched = 0;
       let listingsCreated = 0;
 
       for (let i = 0; i < selectedOrder.length; i++) {
-        const origIndex = selectedOrder[i];
+        const snapshotIndex = selectedOrder[i];
+        const origIndex = resolveIndex(snapshotIndex);
+        if (origIndex < 0) continue; // the card was deleted while we were scanning
         const pair = pairs[i];
-        const dest = destinations[origIndex] || { setRow: true, listing: false };
+        const dest = destinations[snapshotIndex] || { setRow: true, listing: false };
         if (!pair.front && !pair.back) continue;
 
         // Fresh path per scan, keyed by the row's stable _id rather than its
@@ -252,7 +274,7 @@ export default function ScanFromSetPage() {
         }
 
         if (dest.listing) {
-          const row = currentSet.rows[origIndex];
+          const row = updatedRows[origIndex];
           const titleParts = [
             currentSet.year ? String(currentSet.year) : '',
             currentSet.brand || '',

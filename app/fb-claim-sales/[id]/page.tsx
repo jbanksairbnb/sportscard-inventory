@@ -252,7 +252,10 @@ export default function ManageClaimSalePage() {
         const blob = await buildSideBySideSingle(items[0], collageBg);
         if (!blob) { alert('Could not build image — front photo missing or failed to load.'); return; }
         const path = `${user.id}/lot-collages/${stamp}-${tag}-combined.jpg`;
-        const { error: upErr } = await uploadCardImageWithThumb(supabase, path, blob, { contentType: 'image/jpeg', upsert: false });
+        // maxDim: null — a collage packs a dozen cards into one canvas, so the
+        // per-card detail is already a fraction of the sheet. Capping the sheet
+        // the way a single scan is capped would make the individual cards mush.
+        const { error: upErr } = await uploadCardImageWithThumb(supabase, path, blob, { contentType: 'image/jpeg', upsert: false, maxDim: null });
         if (upErr) { alert('Upload failed: ' + upErr.message); return; }
         const url = supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
         const patch = { collage_url: url, back_collage_url: null };
@@ -266,7 +269,7 @@ export default function ManageClaimSalePage() {
         const blob = await buildSideCollage(items, side, collageBg);
         if (!blob) return null;
         const path = `${user!.id}/lot-collages/${stamp}-${tag}-${side}.jpg`;
-        const { error } = await uploadCardImageWithThumb(supabase, path, blob, { contentType: 'image/jpeg', upsert: false });
+        const { error } = await uploadCardImageWithThumb(supabase, path, blob, { contentType: 'image/jpeg', upsert: false, maxDim: null });
         if (error) { console.warn(`upload ${side} collage failed:`, error.message); return null; }
         return supabase.storage.from('card-images').getPublicUrl(path).data.publicUrl;
       }

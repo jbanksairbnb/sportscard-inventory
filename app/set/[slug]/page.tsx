@@ -20,6 +20,7 @@ import {
   rowStorageKey,
   removeCardImageByUrl,
 } from "@/lib/upload-card-image";
+import { collectRowImageUrls, pruneCardImages } from "@/lib/image-cleanup";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
 import { cropScanPadding } from "@/lib/scanAutoCrop";
@@ -729,6 +730,11 @@ export default function SetEditorPage() {
   const [defaultTargetOpen, setDefaultTargetOpen] = useState(false);
   const [infoEditOpen, setInfoEditOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Always-current view of `rows`, for handlers that need to apply a change
+  // AFTER an await (image uploads take seconds). Reading the `rows` closure
+  // there would write into a snapshot taken before the await and silently
+  // revert everything edited in the meantime — see handleImageUpload.
+  const rowsRef = useRef<Array<Record<string, any>>>([]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -824,26 +830,41 @@ export default function SetEditorPage() {
     init();
   }, [paramSlug, router]);
 
+  // Write rows to the database immediately, cancelling any pending debounce.
+  // Used where the next step depends on the write having landed — deleting
+  // rows, which can only clean up Storage once the rows are really gone.
+  async function saveRowsNow(nextRows?: any[]) {
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    if (!slug || slug === "new" || !datasetTitle || !userId) return;
+    const theRows = nextRows ?? rowsRef.current;
+    const { ownedCount, ownedPct } = computeOwnedStats(theRows);
+    const { totalCost, totalValue, gainLoss } = computeFinancials(theRows);
+    const supabase = createClient();
+    await supabase.from("sets").upsert({
+      user_id: userId, slug, title: datasetTitle,
+      year: Number(year) || null, brand, description: desc,
+      owner_email: userEmail,
+      purpose,
+      rows: theRows, row_count: theRows.length,
+      owned_count: ownedCount, owned_pct: ownedPct,
+      total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss,
+      updated_at: Date.now(),
+    }, { onConflict: "user_id,slug" });
+    setSaveStatus(`Saved at ${new Date().toLocaleTimeString()}`);
+  }
+
   function scheduleAutoSave(nextRows?: any[]) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      if (!slug || slug === "new" || !datasetTitle || !userId) return;
-      const theRows = nextRows ?? rows;
-      const { ownedCount, ownedPct } = computeOwnedStats(theRows);
-      const { totalCost, totalValue, gainLoss } = computeFinancials(theRows);
-      const supabase = createClient();
-      await supabase.from("sets").upsert({
-        user_id: userId, slug, title: datasetTitle,
-        year: Number(year) || null, brand, description: desc,
-        owner_email: userEmail,
-        purpose,
-        rows: theRows, row_count: theRows.length,
-        owned_count: ownedCount, owned_pct: ownedPct,
-        total_cost: totalCost, total_value: totalValue, gain_loss: gainLoss,
-        updated_at: Date.now(),
-      }, { onConflict: "user_id,slug" });
-      setSaveStatus(`Saved at ${new Date().toLocaleTimeString()}`);
-    }, 600);
+    saveTimer.current = setTimeout(() => { void saveRowsNow(nextRows); }, 600);
+  }
+
+  // Apply a new rows[] to state, the ref, and the autosave in one step. The
+  // ref has to move synchronously so a second async handler completing in the
+  // same tick sees this change instead of the pre-render snapshot.
+  function commitRows(nextRows: Array<Record<string, any>>) {
+    rowsRef.current = nextRows;
+    setRows(nextRows);
+    scheduleAutoSave(nextRows);
   }
 
 async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
@@ -852,20 +873,33 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   const trimmed = await cropScanPadding(file);
   const ext = trimmed.name.split(".").pop() || "jpg";
   const field = slot === 1 ? "Image 1" : "Image 2";
-  // A fresh path per upload, keyed by the row's stable _id — never the row's
-  // current position. Reusing a position-derived path let a re-scan overwrite
-  // whichever card happened to sit at that index earlier, and served the old
-  // cached bytes for the new upload. See lib/upload-card-image.ts.
+  // Bind this upload to WHICH CARD it belongs to, not to where that card
+  // currently sits. Two things follow from that:
+  //   - the storage path is keyed on the row's stable `_id` and gets a fresh
+  //     per-upload token, so a re-scan can never overwrite the object another
+  //     card's row still points at (see lib/upload-card-image.ts);
+  //   - the URL is written back by `_id` too. An upload takes seconds, and
+  //     "Add row" / "Duplicate rows" re-sort the whole array by Card #, so by
+  //     the time the bytes land origIndex can name a different card — which is
+  //     exactly how a photo ends up attached to someone else's description.
+  const targetRow = rowsRef.current[origIndex];
+  const rowId = typeof targetRow?.['_id'] === 'string' ? String(targetRow['_id']) : '';
   const path = setImageStoragePath({
-    userId, slug, rowKey: rowStorageKey(rows[origIndex], origIndex), slot, ext,
+    userId, slug, rowKey: rowStorageKey(targetRow, origIndex), slot, ext,
   });
   const { error } = await uploadCardImageWithThumb(supabase, path, trimmed, { upsert: true });
   if (error) { alert("Image upload failed: " + error.message); return; }
   const { data } = supabase.storage.from("card-images").getPublicUrl(path);
   const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
-  const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: publicUrl } : r);
-  setRows(nextRows);
-  scheduleAutoSave(nextRows);
+  const current = rowsRef.current;
+  const at = rowId ? current.findIndex(r => String(r['_id'] ?? '') === rowId) : origIndex;
+  if (at < 0 || at >= current.length) {
+    // The card was deleted while its photo was uploading. Drop the orphan
+    // rather than resurrecting the row or pinning the photo to a stranger.
+    await removeCardImageByUrl(supabase, publicUrl);
+    return;
+  }
+  commitRows(current.map((r, i) => i === at ? { ...r, [field]: publicUrl } : r));
   // The replaced object is deliberately left in place. A listing created from
   // this row copies the row's image URL (see image_front/image_back), so
   // deleting the old file on re-upload would blank out that listing's photo.
@@ -1123,26 +1157,45 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
     // — which is the right spot to start typing. Sort runs anyway so the
     // ordering is canonical after every mutation.
     const next = sortRowsByCardNumber([...rows, blank]);
-    setRows(next);
-    scheduleAutoSave(next);
+    // The re-sort moves rows, and selectedRows holds POSITIONS. Leaving a
+    // stale selection in place meant the next Delete / Bulk edit / Auto-number
+    // hit whichever cards had slid into those slots.
+    setSelectedRows(new Set());
+    commitRows(next);
   }
-  function deleteSelected() {
+  async function deleteSelected() {
     if (selectedRows.size === 0) return;
     if (!confirm(`Delete ${selectedRows.size} row${selectedRows.size === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    const removed = rows.filter((_, i) => selectedRows.has(i));
     const next = rows.filter((_, i) => !selectedRows.has(i));
+    rowsRef.current = next;
     setRows(next);
     setSelectedRows(new Set());
-    scheduleAutoSave(next);
+    // Save first, prune second. Deleting a row used to leave its scans in the
+    // bucket forever — billed month after month for cards no longer in the
+    // collection. pruneCardImages re-reads what's still referenced after the
+    // save, so shared photos (duplicated rows, live listings) are kept.
+    await saveRowsNow(next);
+    if (userId) await pruneCardImages(createClient(), userId, collectRowImageUrls(removed));
   }
   function duplicateSelected() {
     if (selectedRows.size === 0) return;
-    const copies = rows.filter((_, i) => selectedRows.has(i)).map(r => ({ ...r }));
+    // Strip `_id` so ensureRowIds mints a fresh one per copy. Copying it
+    // verbatim gave two rows the same identity, and everything that resolves a
+    // row by id — image uploads, AI grades, listing transitions — then landed
+    // on whichever duplicate came first.
+    const copies = ensureRowIds(
+      rows.filter((_, i) => selectedRows.has(i)).map(r => {
+        const copy = { ...r };
+        delete copy['_id'];
+        return copy;
+      }),
+    );
     // Sort puts each duplicate right next to its source row (same Card #)
     // instead of dumping them all at the end of the list.
     const next = sortRowsByCardNumber([...rows, ...copies]);
-    setRows(next);
     setSelectedRows(new Set());
-    scheduleAutoSave(next);
+    commitRows(next);
   }
 
   function applyBulkEdit() {
@@ -1208,16 +1261,21 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
   async function handleImageDelete(origIndex: number, slot: 1 | 2) {
     if (!userId || !slug || slug === 'new') return;
     const field = slot === 1 ? 'Image 1' : 'Image 2';
-    const url = rows[origIndex]?.[field];
-    if (url) {
-      // Delete what the row actually points at. Rebuilding the path from the
-      // row's current index removed a different card's file whenever rows had
-      // been inserted or reordered since the upload.
-      await removeCardImageByUrl(createClient(), String(url));
-    }
-    const nextRows = rows.map((r, i) => i === origIndex ? { ...r, [field]: '' } : r);
+    const targetRow = rowsRef.current[origIndex];
+    const rowId = typeof targetRow?.['_id'] === 'string' ? String(targetRow['_id']) : '';
+    const url = targetRow?.[field];
+    // Clear the field first, then prune. pruneCardImages only removes an
+    // object nothing points at any more, so a photo shared with a listing (or
+    // with a duplicated row) survives — deleting it here used to blank out
+    // that listing's picture.
+    const current = rowsRef.current;
+    const at = rowId ? current.findIndex(r => String(r['_id'] ?? '') === rowId) : origIndex;
+    if (at < 0 || at >= current.length) return;
+    const nextRows = current.map((r, i) => i === at ? { ...r, [field]: '' } : r);
+    rowsRef.current = nextRows;
     setRows(nextRows);
-    scheduleAutoSave(nextRows);
+    await saveRowsNow(nextRows);
+    if (url) await pruneCardImages(createClient(), userId, [String(url)]);
   }
 
   function handleExport() {
@@ -1295,6 +1353,10 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
       setIsShared(true);
     }
   }
+
+  // Every other mutation goes through plain setRows; mirror it here so the
+  // ref is never behind by more than a render.
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
 
   const displayRows = useMemo(() => {
     let filtered = rows.map((r, idx) => ({ row: r, origIndex: idx }));

@@ -4,7 +4,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
+import {
+  uploadCardImageWithThumb,
+  setImageStoragePath,
+  rowStorageKey,
+} from '@/lib/upload-card-image';
 import { isSeller } from '@/lib/sellerGuard';
 import { getScanQuota, BUYER_PHOTO_CAP, type ScanQuota } from '@/lib/scanQuota';
 import { cropScanPadding } from '@/lib/scanAutoCrop';
@@ -75,6 +79,9 @@ export default function ScanMultiCardPage() {
   // held before AI overwrote it, used for the badge's "Undo" action.
   const [savedItems, setSavedItems] = useState<Array<{
     origIndex: number;
+    // The row's stable `_id`, so a grade written minutes later still lands on
+    // the card it was computed for even if the set has been re-sorted since.
+    rowId: string;
     cardNumber: string;
     player: string;
     image_front_url: string;
@@ -124,9 +131,12 @@ export default function ScanMultiCardPage() {
   async function pickSet(slug: string) {
     setError('');
     const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push('/login'); return; }
     const { data, error: e } = await supabase
       .from('sets')
       .select('user_id, slug, title, year, brand, row_count, rows')
+      .eq('user_id', user.id)
       .eq('slug', slug)
       .maybeSingle();
     if (e || !data) { setError(e?.message || 'Could not load set'); return; }
@@ -179,12 +189,48 @@ export default function ScanMultiCardPage() {
     }
     setError('');
     setPhase('saving');
+    const ts = Date.now().toString(36);
     const supabase = createClient();
-    const updatedRows: CardRow[] = [...(currentSet.rows || [])];
+
+    // Re-read the set before writing. `currentSet.rows` is a snapshot from
+    // when the set was picked, and this page is open for minutes while the
+    // sheet is split and assigned. Writing that snapshot back put every image
+    // at a position from the OLD ordering and silently reverted any edit made
+    // in the set editor in the meantime.
+    const { data: fresh, error: freshErr } = await supabase
+      .from('sets')
+      .select('rows')
+      .eq('user_id', userId)
+      .eq('slug', currentSet.slug)
+      .maybeSingle();
+    if (freshErr) {
+      setError(`Could not re-read the set: ${freshErr.message}`);
+      setPhase('assign');
+      return;
+    }
+    const updatedRows: CardRow[] = [...((fresh?.rows as CardRow[] | null) || currentSet.rows || [])];
+
+    // Positions were assigned against the snapshot, so resolve each one back
+    // to its card by the row's stable `_id` before touching anything.
+    const rowIdByIndex = new Map<number, string>();
+    for (const position of assignedPositions) {
+      const idx = assignment[position]!;
+      const id = String((currentSet.rows || [])[idx]?.['_id'] ?? '');
+      if (id) rowIdByIndex.set(idx, id);
+    }
+    function resolveIndex(snapshotIndex: number): number {
+      const id = rowIdByIndex.get(snapshotIndex);
+      if (!id) return snapshotIndex; // legacy row with no _id — position is all we have
+      const at = updatedRows.findIndex(r => String(r['_id'] ?? '') === id);
+      return at >= 0 ? at : -1;
+    }
+
     let attached = 0;
 
     for (const position of assignedPositions) {
-      const origIndex = assignment[position]!;
+      const snapshotIndex = assignment[position]!;
+      const origIndex = resolveIndex(snapshotIndex);
+      if (origIndex < 0) continue; // the card was deleted while we were scanning
       const frontBlob = frontSplit.blobs[position - 1];
       const backIdx = backOrder[position - 1];
       const backBlob = (backSplit && backIdx !== null && backIdx !== undefined)
@@ -197,7 +243,17 @@ export default function ScanMultiCardPage() {
         // helper is a no-op when no mat is detected.
         const frontFile = new File([frontBlob], 'front.png', { type: 'image/png' });
         const trimmedFront = await cropScanPadding(frontFile);
-        const frontPath = `${userId}/${currentSet.slug}/${origIndex}/img1.png`;
+        // A fresh, token-suffixed path per scan, keyed by the row's stable
+        // `_id`. The old `<user>/<slug>/<rowIndex>/img1.png` was reused
+        // verbatim on every scan: re-scanning after rows had shifted
+        // OVERWROTE the object another card's row still pointed at, so that
+        // card silently started showing this one's photo. Every other upload
+        // path moved to setImageStoragePath; this one was missed.
+        const frontPath = setImageStoragePath({
+          userId, slug: currentSet.slug,
+          rowKey: rowStorageKey(updatedRows[origIndex], origIndex),
+          slot: 1, ext: 'jpg', token: `${ts}${position}`,
+        });
         const { error: fErr } = await uploadCardImageWithThumb(supabase, frontPath, trimmedFront, { upsert: true, contentType: trimmedFront.type || 'image/png' });
         if (fErr) throw new Error(`Front #${origIndex}: ${fErr.message}`);
         const { data: fPub } = supabase.storage.from('card-images').getPublicUrl(frontPath);
@@ -208,7 +264,11 @@ export default function ScanMultiCardPage() {
         if (backBlob) {
           const backFile = new File([backBlob], 'back.png', { type: 'image/png' });
           const trimmedBack = await cropScanPadding(backFile);
-          const backPath = `${userId}/${currentSet.slug}/${origIndex}/img2.png`;
+          const backPath = setImageStoragePath({
+            userId, slug: currentSet.slug,
+            rowKey: rowStorageKey(updatedRows[origIndex], origIndex),
+            slot: 2, ext: 'jpg', token: `${ts}${position}`,
+          });
           const { error: bErr } = await uploadCardImageWithThumb(supabase, backPath, trimmedBack, { upsert: true, contentType: trimmedBack.type || 'image/png' });
           if (bErr) throw new Error(`Back #${origIndex}: ${bErr.message}`);
           const { data: bPub } = supabase.storage.from('card-images').getPublicUrl(backPath);
@@ -253,14 +313,18 @@ export default function ScanMultiCardPage() {
     const snapshot: typeof savedItems = [];
     const aiItems: AIGradeItem[] = [];
     for (const position of assignedPositions) {
-      const origIndex = assignment[position]!;
+      const origIndex = resolveIndex(assignment[position]!);
+      if (origIndex < 0) continue;
       const row = updatedRows[origIndex] || {};
       const front = String(row['Image 1'] || '');
       const back = String(row['Image 2'] || '');
       const cardNumber = String(row['Card #'] || '');
       const player = String(row['Player'] || row['Description'] || '');
       const priorRawGrade = String(row['Raw Grade'] || '');
-      snapshot.push({ origIndex, cardNumber, player, image_front_url: front, image_back_url: back, prior_raw_grade: priorRawGrade });
+      snapshot.push({
+        origIndex, rowId: String(row['_id'] ?? ''), cardNumber, player,
+        image_front_url: front, image_back_url: back, prior_raw_grade: priorRawGrade,
+      });
       // Skip cards that are already professionally graded — actual grade
       // is truth. Front-only or back-only scans still get graded with a
       // low-confidence result rather than being silently dropped.
@@ -291,7 +355,7 @@ export default function ScanMultiCardPage() {
   // Write Raw Grade to the set row, overwriting any existing value. Passing
   // empty string clears the field (used by Undo). All writes are serialized
   // through writeQueueRef so concurrent AI results don't clobber each other.
-  function writeRawGrade(origIndex: number, rawGrade: string) {
+  function writeRawGrade(rowId: string, origIndex: number, rawGrade: string) {
     if (!currentSet || !userId) return Promise.resolve();
     const slug = currentSet.slug;
     const uid = userId;
@@ -300,10 +364,16 @@ export default function ScanMultiCardPage() {
       const { data: latest } = await supabase.from('sets')
         .select('rows').eq('user_id', uid).eq('slug', slug).maybeSingle();
       const rows: CardRow[] = Array.isArray(latest?.rows) ? [...(latest!.rows as CardRow[])] : [];
-      if (!rows[origIndex]) return;
-      const updated = { ...rows[origIndex] };
+      // Match the card, not the slot. AI results land seconds-to-minutes
+      // after the scan, by which time the set may have been re-sorted — an
+      // index write put the grade on whatever card had moved into that spot.
+      const at = rowId
+        ? rows.findIndex(r => String(r['_id'] ?? '') === rowId)
+        : origIndex;
+      if (at < 0 || !rows[at]) return;
+      const updated = { ...rows[at] };
       if (rawGrade) updated['Raw Grade'] = rawGrade; else delete updated['Raw Grade'];
-      rows[origIndex] = updated;
+      rows[at] = updated;
       await supabase.from('sets').update({ rows, updated_at: Date.now() })
         .eq('user_id', uid).eq('slug', slug);
     });
@@ -325,7 +395,7 @@ export default function ScanMultiCardPage() {
       autoAppliedRef.current.add(it.origIndex);
       const def = s.result.grade_high;
       setAppliedGrades(prev => ({ ...prev, [it.origIndex]: def }));
-      writeRawGrade(it.origIndex, def);
+      writeRawGrade(it.rowId, it.origIndex, def);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ai.statuses, savedItems]);
@@ -733,11 +803,11 @@ export default function ScanMultiCardPage() {
                           // prior_raw_grade.
                           onUseHigh={status?.state === 'done' && appliedGrades[it.origIndex] !== status.result.grade_high ? () => {
                             setAppliedGrades(p => ({ ...p, [it.origIndex]: status.result.grade_high }));
-                            writeRawGrade(it.origIndex, status.result.grade_high);
+                            writeRawGrade(it.rowId, it.origIndex, status.result.grade_high);
                           } : undefined}
                           onUseLow={status?.state === 'done' ? () => {
                             setAppliedGrades(p => ({ ...p, [it.origIndex]: status.result.grade_low }));
-                            writeRawGrade(it.origIndex, status.result.grade_low);
+                            writeRawGrade(it.rowId, it.origIndex, status.result.grade_low);
                           } : undefined}
                           onUndo={status?.state === 'done' ? () => {
                             setAppliedGrades(p => {
@@ -745,7 +815,7 @@ export default function ScanMultiCardPage() {
                               delete n[it.origIndex];
                               return n;
                             });
-                            writeRawGrade(it.origIndex, it.prior_raw_grade);
+                            writeRawGrade(it.rowId, it.origIndex, it.prior_raw_grade);
                             ai.dismissResult(String(it.origIndex));
                           } : undefined}
                           onRetry={status?.state === 'error' && currentSet ? () => {
