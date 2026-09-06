@@ -576,7 +576,7 @@ function SetInfoModal({ initial, onClose, onSave }: {
               ))}
             </div>
             <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600, marginTop: 6 }}>
-              Drives the filter pills on My Shelf. Publishing a complete-set listing flips this to &quot;For Sale&quot; automatically.
+              Drives the set filter pills on your home page. Publishing a complete-set listing flips this to &quot;For Sale&quot; automatically.
             </div>
           </div>
 
@@ -1489,7 +1489,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             </div>
           </Link>
 
-          <Link href="/" className="btn btn-outline btn-sm" style={{ flexShrink: 0 }}>← My Shelf</Link>
+          <Link href="/home" className="btn btn-outline btn-sm" style={{ flexShrink: 0 }}>← Home</Link>
 
           <div className="display" style={{ fontSize: 17, color: 'var(--plum)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {datasetTitle || 'New Set'}
@@ -1918,7 +1918,7 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center', borderStyle: 'dashed' }}>
             <div className="display" style={{ fontSize: 20, color: 'var(--plum)', marginBottom: 8 }}>No data yet</div>
             <p style={{ color: 'var(--ink-soft)', fontSize: 14, margin: 0 }}>
-              No cards loaded yet. Upload a CSV from My Shelf to populate this set.
+              No cards loaded yet. Upload a CSV from your home page to populate this set.
             </p>
           </div>
         )}
