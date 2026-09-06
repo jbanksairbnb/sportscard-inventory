@@ -1,5 +1,22 @@
 'use client';
 
+// SAVED SNAPSHOT — the home page as it stood before the September 2026 layout
+// cleanup, kept so the removed pieces can be restored without digging through
+// git history. Reachable at /home/Saved. This mirrors the existing
+// app/login/Saved and app/set/[slug]/Saved snapshots.
+//
+// What the live /home page dropped, and this copy still has:
+//   - the right-hand rail (<Sidebar>): the "★ The Collector ★" profile panel
+//     (bio / city / team / roster / chasing, with its Edit form) and the
+//     "★ Account ★" panel;
+//   - the Your Feed filter chips other than "eBay hits" — All activity,
+//     Want-list hits, Comments, Following, Auctions — and the
+//     WantListHitsFeed / AuctionHitsFeed panels behind them.
+//
+// To restore any of it, copy the piece back into app/home/page.tsx. Note that
+// the live page's Change Password now lives in the Your Feed header, so take
+// that from the live file rather than from the Sidebar copy here.
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -10,7 +27,9 @@ import { applyOwnedTransition, ensureRowIds } from '@/lib/inventory';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import SCLogo from '@/components/SCLogo';
 import CartIcon from '@/components/CartIcon';
+import WantListHitsFeed from '@/components/WantListHitsFeed';
 import EbayHitsFeed from '@/components/EbayHitsFeed';
+import AuctionHitsFeed from '@/components/AuctionHitsFeed';
 
 function SearchIcon({ size = 16 }: { size?: number }) {
   return (
@@ -944,110 +963,40 @@ function FeedItem({ item }: { item: FeedEntry }) {
   );
 }
 
-// The feed is eBay hits only. The other chips — All activity, Want-list hits,
-// Comments, Following, Auctions — were either unbuilt ("coming soon") or
-// surfaced feeds nobody opened, so the row was mostly a menu of dead ends. The
-// eBay chip stays as the section's label rather than a control: there is
-// nothing to switch to. The removed chips and their feeds are preserved in
-// app/home/Saved/page.tsx.
+const FEED_FILTERS = ['All activity', 'Want-list hits', 'eBay hits', 'Comments', 'Following', 'Auctions'];
+
 function FeedSection() {
+  const [activeFilter, setActiveFilter] = useState('eBay hits');
+  const showWantListHits = activeFilter === 'Want-list hits' || activeFilter === 'All activity';
+  const showEbayHits = activeFilter === 'eBay hits' || activeFilter === 'All activity';
+  const showAuctionHits = activeFilter === 'Auctions' || activeFilter === 'All activity';
   return (
     <section>
       <div className="section-head">
         <span className="eyebrow" style={{ fontSize: 12 }}>★ Your Feed ★</span>
       </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-        <span className="chip chip-rust">eBay hits</span>
-        {/* Pushed to the far edge so it reads as an account action rather than
-            another feed filter. It moved here when the right-hand rail (which
-            held the Account panel) was removed. */}
-        <div style={{ marginLeft: 'auto' }}>
-          <ChangePassword />
-        </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {FEED_FILTERS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setActiveFilter(f)}
+            className={`chip${f === activeFilter ? ' chip-rust' : ''}`}
+          >
+            {f}
+          </button>
+        ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <EbayHitsFeed />
+        {showWantListHits && <WantListHitsFeed />}
+        {showAuctionHits && <AuctionHitsFeed />}
+        {showEbayHits && <EbayHitsFeed />}
+        {activeFilter !== 'All activity' && activeFilter !== 'Want-list hits' && activeFilter !== 'eBay hits' && activeFilter !== 'Auctions' && (
+          <div className="panel" style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+            <strong style={{ color: 'var(--plum)' }}>{activeFilter}</strong> is coming soon.
+          </div>
+        )}
       </div>
     </section>
-  );
-}
-
-// Change Password, lifted out of the removed right-hand rail's "★ Account ★"
-// panel. Collapsed to a single button until opened; the form drops in beneath
-// the feed header so it never pushes the feed around when closed.
-function ChangePassword() {
-  const [open, setOpen] = useState(false);
-  const [newPw, setNewPw] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-
-  function reset() {
-    setError(''); setMessage(''); setNewPw(''); setConfirmPw('');
-  }
-
-  async function handleChangePassword() {
-    setError('');
-    setMessage('');
-    if (newPw.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (newPw !== confirmPw) { setError('Passwords do not match.'); return; }
-    setSaving(true);
-    const supabase = createClient();
-    const { error: updErr } = await supabase.auth.updateUser({ password: newPw });
-    setSaving(false);
-    if (updErr) {
-      setError(updErr.message);
-    } else {
-      setMessage('Password updated.');
-      setNewPw('');
-      setConfirmPw('');
-      setTimeout(() => { setOpen(false); setMessage(''); }, 1500);
-    }
-  }
-
-  const fieldStyle: React.CSSProperties = {
-    border: '1.5px solid var(--plum)', borderRadius: 6, padding: '5px 8px',
-    fontFamily: 'var(--font-body)', fontSize: 12.5, color: 'var(--plum)',
-    background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
-  };
-
-  if (!open) {
-    return (
-      <button type="button" onClick={() => { reset(); setOpen(true); }} className="btn btn-ghost btn-sm">
-        Change Password
-      </button>
-    );
-  }
-
-  return (
-    <div className="panel-bordered" style={{ padding: 16, width: 260 }}>
-      <div className="eyebrow" style={{ marginBottom: 10 }}>★ Change Password ★</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div>
-          <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>New Password</div>
-          <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} minLength={6} style={fieldStyle} autoComplete="new-password" />
-        </div>
-        <div>
-          <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>Confirm Password</div>
-          <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} minLength={6} style={fieldStyle} autoComplete="new-password" />
-        </div>
-        {error && (
-          <div style={{ background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--rust)', fontWeight: 600 }}>
-            {error}
-          </div>
-        )}
-        {message && (
-          <div style={{ background: 'rgba(45,122,110,0.1)', border: '1.5px solid var(--teal)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>
-            {message}
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-          <button type="button" onClick={handleChangePassword} disabled={saving} className="btn btn-primary btn-sm">{saving ? 'Saving…' : 'Update'}</button>
-          <button type="button" onClick={() => { setOpen(false); reset(); }} className="btn btn-outline btn-sm">Cancel</button>
-        </div>
-      </div>
-    </div>
   );
 }
 const FAVORITE_CARDS = [
@@ -1461,11 +1410,163 @@ const MOCK_ACTIVITY = [
 type CollectorProfile = { display_name: string; handle: string; bio: string; city: string; team: string; favorite_players: string; chasing: string; value_private: boolean; profile_shared: boolean; cover_position_x: number; cover_position_y: number; cover_zoom: number; };
 const EMPTY_PROFILE: CollectorProfile = { display_name: '', handle: '', bio: '', city: '', team: '', favorite_players: '', chasing: '', value_private: false, profile_shared: true, cover_position_x: 50, cover_position_y: 50, cover_zoom: 1.0 };
 
-// The right-hand rail ("★ The Collector ★" profile panel + "★ Account ★")
-// was removed so the feed, sets and showcase run the full page width. Its
-// only surviving piece is Change Password, now in the Your Feed header as
-// <ChangePassword>. The whole rail, including the collector-profile edit
-// form, is preserved in app/home/Saved/page.tsx.
+function Sidebar({ userId, profile, onProfileSave }: { userId: string; profile: CollectorProfile; onProfileSave: (p: CollectorProfile) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<CollectorProfile>(profile);
+  const [saving, setSaving] = useState(false);
+
+  const [pwOpen, setPwOpen] = useState(false);
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState('');
+  const [pwMessage, setPwMessage] = useState('');
+
+  useEffect(() => { setDraft(profile); }, [profile]);
+
+  async function handleSave() {
+    setSaving(true);
+    const supabase = createClient();
+    await supabase.from('user_profiles').upsert({ user_id: userId, ...draft });
+    onProfileSave(draft);
+    setEditing(false);
+    setSaving(false);
+  }
+
+  async function handleChangePassword() {
+    setPwError('');
+    setPwMessage('');
+    if (newPw.length < 6) { setPwError('Password must be at least 6 characters.'); return; }
+    if (newPw !== confirmPw) { setPwError('Passwords do not match.'); return; }
+    setPwSaving(true);
+    const supabase = createClient();
+    const { error } = await supabase.auth.updateUser({ password: newPw });
+    setPwSaving(false);
+    if (error) {
+      setPwError(error.message);
+    } else {
+      setPwMessage('Password updated.');
+      setNewPw('');
+      setConfirmPw('');
+      setTimeout(() => { setPwOpen(false); setPwMessage(''); }, 1500);
+    }
+  }
+
+  const players = profile.favorite_players ? profile.favorite_players.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  const fieldStyle: React.CSSProperties = {
+    border: '1.5px solid var(--plum)', borderRadius: 6, padding: '5px 8px',
+    fontFamily: 'var(--font-body)', fontSize: 12.5, color: 'var(--plum)',
+    background: 'var(--cream)', width: '100%', boxSizing: 'border-box',
+  };
+
+  return (
+    <aside style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'sticky', top: 20, alignSelf: 'start' }}>
+      <div className="panel-bordered" style={{ padding: 22 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div className="eyebrow">★ The Collector ★</div>
+          {!editing && <button type="button" onClick={() => { setDraft(profile); setEditing(true); }} className="btn btn-ghost btn-sm">Edit</button>}
+        </div>
+        {editing ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {([
+              { key: 'display_name', label: 'Name' },
+              { key: 'handle', label: 'Handle (@)' },
+              { key: 'city', label: 'City' },
+              { key: 'team', label: 'Favorite Team' },
+              { key: 'chasing', label: 'Chasing' },
+              { key: 'favorite_players', label: 'Roster (comma-separated)' },
+            ] as { key: keyof CollectorProfile; label: string }[]).map(({ key, label }) => (
+              <div key={key}>
+                <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>{label}</div>
+                <input value={draft[key] as string} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} style={fieldStyle} />
+              </div>
+            ))}
+            <div>
+              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>Bio</div>
+              <textarea value={draft.bio} onChange={e => setDraft(d => ({ ...d, bio: e.target.value }))}
+                rows={3} style={{ ...fieldStyle, resize: 'vertical' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={handleSave} disabled={saving} className="btn btn-primary btn-sm">{saving ? 'Saving…' : 'Save'}</button>
+              <button type="button" onClick={() => { setDraft(profile); setEditing(false); }} className="btn btn-outline btn-sm">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {profile.bio && (
+              <p style={{ margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.55, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+                "{profile.bio}"
+              </p>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '12px 14px', fontSize: 12.5 }}>
+              {profile.city && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Home</span>
+                <span style={{ fontWeight: 500 }}>{profile.city}</span>
+              </>}
+              {profile.team && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Team</span>
+                <span style={{ fontWeight: 500 }}>{profile.team}</span>
+              </>}
+              {players.length > 0 && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'start', paddingTop: 2, color: 'var(--orange)' }}>Roster</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {players.map(p => <span key={p} className="chip" style={{ fontSize: 9.5 }}>{p}</span>)}
+                </div>
+              </>}
+              {profile.chasing && <>
+                <span className="eyebrow" style={{ fontSize: 9.5, alignSelf: 'center', color: 'var(--orange)' }}>Chasing</span>
+                <span style={{ fontWeight: 500 }}>{profile.chasing}</span>
+              </>}
+              {!profile.bio && !profile.city && !profile.team && !profile.chasing && (
+                <span style={{ gridColumn: '1/-1', color: 'var(--ink-mute)', fontSize: 12, fontStyle: 'italic' }}>
+                  Click Edit to add your collector profile.
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="panel-bordered" style={{ padding: 22 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: pwOpen ? 14 : 0 }}>
+          <div className="eyebrow">★ Account ★</div>
+          {!pwOpen && (
+            <button type="button" onClick={() => { setPwError(''); setPwMessage(''); setNewPw(''); setConfirmPw(''); setPwOpen(true); }} className="btn btn-ghost btn-sm">
+              Change Password
+            </button>
+          )}
+        </div>
+        {pwOpen && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>New Password</div>
+              <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} minLength={6} style={fieldStyle} autoComplete="new-password" />
+            </div>
+            <div>
+              <div className="eyebrow" style={{ fontSize: 9, color: 'var(--orange)', marginBottom: 3 }}>Confirm Password</div>
+              <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} minLength={6} style={fieldStyle} autoComplete="new-password" />
+            </div>
+            {pwError && (
+              <div style={{ background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--rust)', fontWeight: 600 }}>
+                {pwError}
+              </div>
+            )}
+            {pwMessage && (
+              <div style={{ background: 'rgba(45,122,110,0.1)', border: '1.5px solid var(--teal)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>
+                {pwMessage}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <button type="button" onClick={handleChangePassword} disabled={pwSaving} className="btn btn-primary btn-sm">{pwSaving ? 'Saving…' : 'Update'}</button>
+              <button type="button" onClick={() => { setPwOpen(false); setPwError(''); setPwMessage(''); setNewPw(''); setConfirmPw(''); }} className="btn btn-outline btn-sm">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
 
 const PROFILE_TABS = ['Home', 'Collection', 'Want List', 'Activity'];
 
@@ -1828,14 +1929,13 @@ export default function HomePage() {
         },
       ]} />
       {showWantList && <WantListModal onClose={() => setShowWantList(false)} />}
-      {/* Single column: the right-hand rail is gone, so every section runs the
-          full width of the page. See app/home/Saved/page.tsx for the rail. */}
       <div className="home-grid">
         <main style={{ minWidth: 0 }}>
           <FeedSection />
           <SetsInProgress sets={sets} />
           <FavoritesShowcase userId={userId} />
         </main>
+        <Sidebar userId={userId} profile={profile} onProfileSave={setProfile} />
       </div>
     </div>
   );

@@ -329,16 +329,15 @@ img { display: block; max-width: 100%; }
 }
 
 /* ——— LAYOUT GRID ——— */
+/* Single column since the home page's right-hand rail was removed — the 320px
+   track and the breakpoint that collapsed it are both moot now. */
 .home-grid {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr;
   gap: 28px;
   max-width: 1280px;
   margin: 0 auto;
   padding: 0 28px 80px;
-}
-@media (max-width: 1000px) {
-  .home-grid { grid-template-columns: 1fr; }
 }
 
 /* ——— GAIN / LOSS COLORS ——— */
