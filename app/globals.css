@@ -343,3 +343,16 @@ img { display: block; max-width: 100%; }
 /* ——— GAIN / LOSS COLORS ——— */
 .gain-positive { color: var(--teal); }
 .gain-negative { color: var(--rust); }
+
+/* ——— COVER BANNER ———
+   The banner art is authored at 3200x720 (40:9). Holding that ratio on the
+   frame means object-fit:cover only ever scales the image — the crop stays
+   identical at every window width instead of eating the top and bottom of
+   the cards as the viewport gets wider. The clamps keep it from collapsing
+   to a sliver on phones or swallowing the fold on ultrawide monitors; only
+   outside that band does cover start trimming again. */
+.cover-banner {
+  aspect-ratio: 3200 / 720;
+  min-height: 220px;
+  max-height: 520px;
+}

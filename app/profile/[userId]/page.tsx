@@ -165,8 +165,8 @@ export default function ProfilePage() {
 
       {/* Cover banner with avatar roundel — mirrors the homepage Hero. */}
       <section>
-        <div className="halftone" style={{
-          position: 'relative', height: 280,
+        <div className="halftone cover-banner" style={{
+          position: 'relative',
           background: profile?.cover_url ? undefined : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
           borderBottom: '3px solid var(--plum)', overflow: 'hidden',
         }}>
