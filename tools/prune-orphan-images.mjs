@@ -51,6 +51,60 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+
+// Transient failures are the norm on a large bucket. Storage keeps one folder
+// per card row, so a 700-card set is 700 list calls back to back — enough to
+// exhaust Supabase's database connection pool, which answers "Too many
+// connections issued to the database". That means "slow down", not "broken":
+// the same call succeeds moments later.
+const RETRYABLE = [
+  'too many connections',
+  'rate limit',
+  'timeout',
+  'timed out',
+  'fetch failed',
+  'econnreset',
+  'socket hang up',
+  'service unavailable',
+  'gateway',
+  '429',
+  '500',
+  '502',
+  '503',
+  '504',
+];
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isRetryable(message) {
+  const m = String(message || '').toLowerCase();
+  return RETRYABLE.some((needle) => m.includes(needle));
+}
+
+/**
+ * Run `fn` until it succeeds, backing off 1s, 2s, 4s, 8s, 16s between tries.
+ * Only transient-looking errors are retried — a bad key fails immediately.
+ */
+async function withRetry(label, fn, attempts = 6) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryable(err?.message) || attempt === attempts) throw err;
+      const waitMs = 1000 * 2 ** (attempt - 1);
+      console.warn(`  … ${label} hit "${err.message}" — retrying in ${waitMs / 1000}s (${attempt}/${attempts - 1})`);
+      await sleep(waitMs);
+    }
+  }
+  throw lastErr;
+}
+
+// Pause between folder listings, in ms. Override with --delay=<ms>.
+const delayArg = process.argv.find((a) => a.startsWith('--delay='));
+const LIST_DELAY_MS = delayArg ? Number(delayArg.split('=')[1]) : 60;
+
 const PUBLIC_MARKER = `/storage/v1/object/public/${BUCKET}/`;
 const RENDER_MARKER = `/storage/v1/render/image/public/${BUCKET}/`;
 
@@ -92,11 +146,11 @@ async function collectReferenced() {
   async function eachRow(table, columns, handler) {
     const PAGE = 500;
     for (let from = 0; ; from += PAGE) {
-      const { data, error } = await supabase
-        .from(table)
-        .select(columns)
-        .range(from, from + PAGE - 1);
-      if (error) throw new Error(`read ${table}: ${error.message}`);
+      const data = await withRetry(`read ${table}`, async () => {
+        const res = await supabase.from(table).select(columns).range(from, from + PAGE - 1);
+        if (res.error) throw new Error(res.error.message);
+        return res.data;
+      });
       if (!data || data.length === 0) return;
       for (const row of data) handler(row);
       if (data.length < PAGE) return;
@@ -140,10 +194,13 @@ async function listFolder(prefix) {
   const all = [];
   const pageSize = 100;
   for (let offset = 0; ; offset += pageSize) {
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .list(prefix, { limit: pageSize, offset, sortBy: { column: 'name', order: 'asc' } });
-    if (error) throw new Error(`list ${prefix}: ${error.message}`);
+    const data = await withRetry(`list ${prefix || '/'}`, async () => {
+      const res = await supabase.storage
+        .from(BUCKET)
+        .list(prefix, { limit: pageSize, offset, sortBy: { column: 'name', order: 'asc' } });
+      if (res.error) throw new Error(res.error.message);
+      return res.data;
+    });
     if (!data || data.length === 0) break;
     all.push(...data);
     if (data.length < pageSize) break;
@@ -162,7 +219,17 @@ async function walk(prefix, referenced) {
   for (const entry of entries) {
     const path = prefix ? `${prefix}/${entry.name}` : entry.name;
     const isFile = entry.id !== null && entry.metadata;
-    if (!isFile) { await walk(path, referenced); continue; }
+    if (!isFile) {
+      // A short pause keeps a deep bucket from opening hundreds of
+      // connections a second.
+      await sleep(LIST_DELAY_MS);
+      // Deliberately NOT caught: a folder we failed to read looks empty, and
+      // an empty folder here means "these images are orphaned". Deleting on
+      // an incomplete scan is the one unrecoverable mistake this script could
+      // make, so a failed listing aborts the whole run instead.
+      await walk(path, referenced);
+      continue;
+    }
 
     if (referenced.has(originalOf(path))) { keptReferenced++; continue; }
 
