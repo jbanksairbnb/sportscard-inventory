@@ -8,8 +8,8 @@ import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
-import ValueSetModal, { type SweepTarget } from '@/components/ValueSetModal';
-import RestoreAnalysesModal from '@/components/RestoreAnalysesModal';
+import ValueSetModal from '@/components/ValueSetModal';
+import { sweepTargetsForSet, sweepDescriptorForRow, type SweepTarget } from '@/lib/sweepTargets';
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
@@ -666,65 +666,27 @@ export default function SetEditorPage() {
   const [listingsByRowId, setListingsByRowId] = useState<Record<string, { id: string; status: string }>>({});
   const [autoNumStart, setAutoNumStart] = useState('001');
   function descriptorForRow(row: Record<string, unknown>): CardDescriptor {
-    const grade = String(row['Grade'] || '').trim() || null;
-    const gradingCompany = String(row['Grading Company'] || '').trim() || null;
-    const rawGrade = String(row['Raw Grade'] || '').trim() || null;
-    // A card counts as graded when the Grading Company is filled in — no
-    // separate yes/no flag any more.
-    const isGraded = !!gradingCompany;
-    return {
+    return sweepDescriptorForRow(row, {
+      slug,
+      title: datasetTitle,
       year: year ? Number(year) || null : null,
       brand: brand || null,
-      card_number: String(row['Card #'] || '').trim() || null,
-      player: String(row['Player'] || '').trim() || null,
-      grade: isGraded ? grade : null,
-      grading_company: isGraded ? gradingCompany : null,
-      raw_grade: !isGraded ? rawGrade : null,
-      set_slug: slug,
-      set_card_number: String(row['Card #'] || '').trim() || null,
-      image_front: String(row['Image 1'] || '').trim() || null,
-      image_back: String(row['Image 2'] || '').trim() || null,
-    };
-  }
-  // Rows the sweep can actually price. Three gates, each for its own reason:
-  //
-  //  - Owned. Pricing a card you don't have is answering a question nobody
-  //    asked, and it buries the cards you do own in a review list several
-  //    times longer than it needs to be.
-  //  - Graded, with both a company and a grade. CardSight's sold data is
-  //    keyed to a graded population; an ungraded card has no comparable set
-  //    to take a median of, so the route returns no value for one anyway.
-  //    Filtering here rather than there means those cards never cost an API
-  //    call and never appear as a row of dashes the owner has to read past.
-  //  - Enough identity to look up at all — a row missing a year, number or
-  //    player can't be resolved, so it's left out rather than reported as a
-  //    failure two hundred times over.
-  const sweepTargets: SweepTarget[] = useMemo(() => {
-    const out: SweepTarget[] = [];
-    rows.forEach((row, i) => {
-      if (String(row['Owned'] || '') !== 'Yes') return;
-      const d = descriptorForRow(row);
-      if (!d.grading_company || !d.grade) return;
-      if (!d.year || !d.card_number || !d.player) return;
-      const raw = String(row['Value'] ?? '').replace(/[^0-9.\-]/g, '');
-      const cur = raw ? Number(raw) : NaN;
-      out.push({
-        key: `${i}:${d.card_number}`,
-        rowIndex: i,
-        descriptor: d,
-        // Every target is graded by construction, so the condition is always
-        // the company and grade.
-        label: [d.card_number ? `#${d.card_number}` : '', d.player, `${d.grading_company} ${d.grade}`]
-          .filter(Boolean).join(' · '),
-        currentValue: Number.isFinite(cur) ? cur : null,
-      });
     });
-    return out;
-  }, [rows, year, brand, slug]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }
+  // Rows the sweep can actually price — owned, graded with both a company and
+  // a grade, and carrying enough identity to look up. The gates and their
+  // reasoning live in lib/sweepTargets.ts, shared with the collection-wide
+  // sweep so the two can never disagree about which cards get priced.
+  const sweepTargets: SweepTarget[] = useMemo(
+    () => sweepTargetsForSet(
+      { slug, title: datasetTitle, year: year ? Number(year) || null : null, brand: brand || null },
+      rows,
+    ),
+    [rows, year, brand, slug, datasetTitle],
+  );   // eslint-disable-line react-hooks/exhaustive-deps
 
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
   const [valueSetOpen, setValueSetOpen] = useState(false);
-  const [restoreOpen, setRestoreOpen] = useState(false);
   const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
   const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
 
@@ -1955,10 +1917,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                   ⇊ Value graded cards
                 </button>
               )}
-              <button type="button" onClick={() => setRestoreOpen(true)} className="btn btn-ghost btn-sm"
-                title="Put saved analyses back on their cards' price charts, across your whole collection">
-                ⟲ Restore price history
-              </button>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                 Appends a blank row to the end of the table — fill in any fields you want.
               </span>
@@ -2091,25 +2049,21 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           loadValueTrends();
         }}
       />
-      <RestoreAnalysesModal
-        open={restoreOpen}
-        onClose={() => setRestoreOpen(false)}
-        userId={userId || ''}
-        onDone={() => loadValueTrends()}
-      />
       <ValueSetModal
         open={valueSetOpen}
         onClose={() => { setValueSetOpen(false); loadValueTrends(); }}
         userId={userId || ''}
         targets={sweepTargets}
-        onApply={(values) => {
+        valueNote="Remember to save the set to keep the new values."
+        onApply={(accepted) => {
           // One state update for the whole sweep. Applying them one at a time
           // would have each write race the previous render's stale rows.
           setRows(prev => {
             const next = [...prev];
-            for (const [i, v] of values) {
+            for (const { target, value } of accepted) {
+              const i = target.rowIndex;
               if (!next[i]) continue;
-              next[i] = { ...next[i], Value: toCurrency(v.toFixed(2)) };
+              next[i] = { ...next[i], Value: toCurrency(value.toFixed(2)) };
             }
             return next;
           });

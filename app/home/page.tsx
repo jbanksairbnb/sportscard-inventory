@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -11,6 +11,7 @@ import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { applyOwnedTransition, ensureRowIds } from '@/lib/inventory';
 import { RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import SCLogo from '@/components/SCLogo';
+import ValueCollectionModal from '@/components/ValueCollectionModal';
 import CartIcon from '@/components/CartIcon';
 import EbayHitsFeed from '@/components/EbayHitsFeed';
 
@@ -1602,11 +1603,13 @@ function SetsInProgress({
   onDelete,
   onPurposeChange,
   onToggleShare,
+  onValueCollection,
 }: {
   sets: SetRow[];
   onDelete: (slug: string, title: string) => void;
   onPurposeChange: (slug: string, next: Exclude<PurposeFilter, 'all'>) => void;
   onToggleShare: (slug: string, currentlyShared: boolean) => void;
+  onValueCollection: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [purposeFilter, setPurposeFilter] = useState<PurposeFilter>('all');
@@ -1712,6 +1715,11 @@ function SetsInProgress({
           })}
         </div>
 
+        <button type="button" onClick={onValueCollection} className="btn btn-outline btn-sm"
+          style={{ flexShrink: 0 }}
+          title="Price every graded card you own and file a dated mark for each, so the collection builds a price history">
+          ⇊ Value collection
+        </button>
         <Link href="/set/new" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ New Upload</Link>
       </div>
 
@@ -2013,6 +2021,7 @@ export default function HomePage() {
   const [cover, setCover] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('Home');
   const [showWantList, setShowWantList] = useState(false);
+  const [showValueCollection, setShowValueCollection] = useState(false);
   const [profile, setProfile] = useState<CollectorProfile>(EMPTY_PROFILE);
   const router = useRouter();
 
@@ -2057,6 +2066,20 @@ export default function HomePage() {
     }
     load();
   }, [router]);
+
+  // Re-read the set summary cards. The collection sweep writes rows and totals
+  // straight to the database, so the tiles here would otherwise keep showing
+  // the values from page load.
+  const reloadSets = useCallback(async () => {
+    if (!userId) return;
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('sets')
+      .select('slug, title, year, brand, row_count, owned_count, owned_pct, total_cost, total_value, gain_loss, updated_at, share_token, purpose')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+    if (data) setSets(data as SetRow[]);
+  }, [userId]);
 
   async function handleLogout() {
     const supabase = createClient();
@@ -2182,6 +2205,13 @@ export default function HomePage() {
         },
       ]} />
       {showWantList && <WantListModal onClose={() => setShowWantList(false)} />}
+      {showValueCollection && userId && (
+        <ValueCollectionModal
+          userId={userId}
+          onClose={() => setShowValueCollection(false)}
+          onSaved={reloadSets}
+        />
+      )}
       {/* Single column: the right-hand rail is gone, so every section runs the
           full width of the page. See app/home/Saved/page.tsx for the rail. */}
       <div className="home-grid">
@@ -2192,6 +2222,7 @@ export default function HomePage() {
             onDelete={handleDeleteSet}
             onPurposeChange={handlePurposeChange}
             onToggleShare={handleToggleShare}
+            onValueCollection={() => setShowValueCollection(true)}
           />
           <FavoritesShowcase userId={userId} />
         </main>
