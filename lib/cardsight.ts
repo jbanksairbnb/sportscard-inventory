@@ -135,50 +135,113 @@ type CatalogCard = {
   setName: string;
   releaseName: string;
   releaseYear: string;
+  attributes?: string[] | null;
 };
 
 // Basketball and hockey releases are seasons ("1986-87"), and our card_year is
 // an int, so a straight year match misses every one of them. Try the plain
 // year first (right for baseball and football, which is most of the catalog),
-// then the two season spellings.
+// then the season spelling.
 function yearVariants(year: number): string[] {
   const next = String((year + 1) % 100).padStart(2, '0');
   return [String(year), `${year}-${next}`];
 }
 
+// Words that describe a card rather than name anybody on it. Dropped before
+// comparing names so "RC" and "rookie" can't stand in for a real match.
+const DESCRIPTIVE_WORDS = new Set([
+  'rc', 'rookie', 'card', 'hof', 'auto', 'autograph', 'sp', 'the', 'and', 'psa', 'sgc', 'bgs',
+]);
+
+function nameTokens(s: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const t of (s ?? '').toLowerCase().split(/[^a-z]+/)) {
+    if (t.length > 1 && !DESCRIPTIVE_WORDS.has(t)) out.add(t);
+  }
+  return out;
+}
+
+// How well a catalogue card's name matches what the seller typed.
+//
+// Our `player` field is free text — "Rickey Henderson - Oakland Athletics RC",
+// "robinson, jackie", "NOLAN RYAN RC" — while CardSight's is a clean name. So
+// we compare in BOTH directions and take the better of the two, because each
+// direction fails on a different real card:
+//
+//   * The description is usually longer than the name (it carries the team and
+//     "RC"), so ask how much of the CARD's name appears in the description.
+//     "Rickey Henderson" is fully inside the string above → 1.0.
+//   * Multi-player rookies invert that: 1968 Topps #177 is filed as "Mets 1968
+//     Rookie Stars (Jerry Koosman / Nolan Ryan)", far longer than "Nolan Ryan
+//     RC". So also ask how much of the DESCRIPTION appears in the name.
+function nameScore(cardName: string, description: string): number {
+  const card = nameTokens(cardName);
+  const desc = nameTokens(description);
+  if (!card.size || !desc.size) return 0;
+  let shared = 0;
+  for (const t of card) if (desc.has(t)) shared += 1;
+  return Math.max(shared / card.size, shared / desc.size);
+}
+
+// Some multi-player rookies name nobody at all: 1982 Topps #21, the Cal Ripken
+// Jr. rookie, is simply "Orioles Future Stars". No amount of name comparison
+// will confirm it, so a rookie flag on both sides is the corroboration we have.
+// Small enough that it only decides otherwise-tied candidates.
+const RC_BONUS = 0.35;
+
+function scoreCandidate(card: CatalogCard, description: string, wantsRookie: boolean): number {
+  let s = nameScore(card.name, description);
+  if (wantsRookie && (card.attributes ?? []).includes('RC')) s += RC_BONUS;
+  return s;
+}
+
 // Resolve our identity tuple to a CardSight card id.
 //
-// We use the structured /catalog/cards filters rather than the fuzzy
-// /catalog/search, because search is unreliable at exactly the job that
-// matters: asked for "1986 Fleer Michael Jordan" it returns a 2006
-// anniversary reprint, while the filtered lookup returns the real
-// 1986-87 Fleer #57. Wrong card silently priced is worse than no price.
+// We do NOT send our player text as their `name` filter. That filter is a
+// substring match against their clean card name, so any extra word the seller
+// typed makes it match nothing at all — "Rickey Henderson - Oakland Athletics
+// RC" returns zero rows while "Rickey Henderson" returns the card. Instead we
+// pull every card at this year/number/release and decide locally, where we can
+// be lenient in a way a substring filter cannot.
 //
-// Returns null when the card genuinely isn't in their catalog — a real
-// outcome, not an error. Their pre-war baseball coverage has holes (1940
-// Play Ball, for one, is absent entirely).
+// Deciding locally is also what keeps us honest: year + number alone is NOT
+// unique — 1982 Topps #21 is a Cal Ripken rookie in baseball and a Bills team
+// card in football, and 1980 Topps #482 is both Rickey Henderson and Bob
+// Parsons. So a candidate has to actually beat the others on the name before
+// we accept it. Returning null beats pricing the wrong card.
 export async function resolveCard(identity: CardIdentity): Promise<CatalogCard | null> {
   const { year, brand, number, player } = identity;
   if (!year || !number || !player) return null;
+  const wantsRookie = /\b(rc|rookie)\b/i.test(player);
 
   for (const y of yearVariants(year)) {
-    // Brand first; it disambiguates same-numbered cards across releases. If
-    // our brand string doesn't match their release naming we retry without it
-    // rather than give up — number + year + player is usually unique enough.
+    // Brand narrows the field, but sellers write "Topps" where the catalogue
+    // says "Topps Traded", so fall back to year + number if it finds nothing.
     for (const withBrand of brand ? [true, false] : [false]) {
       const res = await call<{ cards: CatalogCard[]; total_count: number }>('/catalog/cards', {
-        name: player,
         number,
         year: y,
         releaseName: withBrand ? brand! : undefined,
-        take: 5,
+        take: 25,
       });
-      const cards = res.cards ?? [];
-      // Only trust an unambiguous hit. Several matches means our tuple didn't
-      // pin one card down, and guessing the first is how you price a reprint
-      // as an original.
-      if (cards.length === 1) return cards[0];
-      if (cards.length > 1 && withBrand) return cards[0];
+
+      // Their catalogue carries exact duplicates of some cards (two rows for
+      // the 1968 Ryan). Collapsing them stops a duplicate from tying with
+      // itself and looking ambiguous.
+      const unique = new Map<string, CatalogCard>();
+      for (const c of res.cards ?? []) {
+        if (!unique.has(c.name.toLowerCase())) unique.set(c.name.toLowerCase(), c);
+      }
+      if (!unique.size) continue;
+
+      const ranked = [...unique.values()]
+        .map(c => ({ card: c, score: scoreCandidate(c, player, wantsRookie) }))
+        .sort((a, b) => b.score - a.score);
+
+      const [best, second] = ranked;
+      // A clear winner, or nothing. Two candidates the seller's text can't
+      // separate is exactly the case where guessing goes wrong.
+      if (best.score > 0 && best.score > (second?.score ?? 0)) return best.card;
     }
   }
   return null;
