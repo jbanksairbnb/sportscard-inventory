@@ -246,40 +246,42 @@ function CompsPanel({ comps, onImportHistory, importing, imported }: {
       </div>
 
       {s ? (
-        <>
-          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 6 }}>
-            <Stat
-              label={comps.saleWindowDays ? `Sales (${comps.saleWindowDays}d)` : 'Sales (archive)'}
-              value={String(s.n)} warn={thin}
-            />
-            <Stat label="Median" value={fmtMoney(s.median)} />
-            <Stat label="Mean" value={fmtMoney(s.mean)} />
-            <Stat label="Middle 50%" value={`${fmtMoney(s.p25)} – ${fmtMoney(s.p75)}`} />
-            <Stat label="Range" value={`${fmtMoney(s.min)} – ${fmtMoney(s.max)}`} />
-          </div>
-
-          {/* The longer view. Unlike the stats above — which are the 30-day
-              comps window the table was filled from — this runs the whole
-              archive, and only appears when the data can support buckets.
-              See monthlySeries(): a card with one sale a month gets no line. */}
-          {comps.monthly && (
-            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--rule)' }}>
-              <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)', marginBottom: 4 }}>
-                Monthly weighted median
-              </div>
-              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                {comps.monthly.map(m => (
-                  <span key={m.month} className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
-                    {m.month} <strong style={{ color: 'var(--plum)' }}>{fmtMoney(m.stats.median)}</strong>
-                    <span style={{ color: 'var(--ink-mute)' }}> ({m.stats.n})</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+        <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 6 }}>
+          <Stat
+            label={`Sales (${comps.saleWindowDays ?? 30}d)`}
+            value={String(s.n)} warn={thin}
+          />
+          <Stat label="Median" value={fmtMoney(s.median)} />
+          <Stat label="Mean" value={fmtMoney(s.mean)} />
+          <Stat label="Middle 50%" value={`${fmtMoney(s.p25)} – ${fmtMoney(s.p75)}`} />
+          <Stat label="Range" value={`${fmtMoney(s.min)} – ${fmtMoney(s.max)}`} />
+        </div>
       ) : (
-        <div style={{ color: 'var(--ink-mute)' }}>No sales found.</div>
+        <div style={{ color: 'var(--ink-mute)' }}>
+          No completed sales in the last {comps.saleWindowDays ?? 30} days.
+        </div>
+      )}
+
+      {/* The longer view, and deliberately outside the block above: the comps
+          window is a strict 30 days, so a vintage card routinely has no current
+          sales at all, and that is exactly when the monthly archive is worth
+          reading. It is not a substitute for the stats — it is history, labelled
+          as history. See monthlySeries(): a card with one sale a month gets no
+          line. */}
+      {comps.monthly && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--rule)' }}>
+          <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)', marginBottom: 4 }}>
+            Monthly median · archive
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            {comps.monthly.map(m => (
+              <span key={m.month} className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                {m.month} <strong style={{ color: 'var(--plum)' }}>{fmtMoney(m.stats.median)}</strong>
+                <span style={{ color: 'var(--ink-mute)' }}> ({m.stats.n})</span>
+              </span>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Storing history is only offered when there are months worth storing:
@@ -378,6 +380,18 @@ function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['acti
           </div>
         ))}
       </div>
+
+      {/* With the comps window held at a strict 30 days, an unanchored fair
+          value is the normal state for vintage rather than a failure — but a
+          seller reading two ask-derived prices around an em dash deserves to
+          know which leg is missing. */}
+      {g.fairValue === null && (
+        <div style={{ fontSize: 11.5, color: 'var(--ink-soft)', lineHeight: 1.5, marginBottom: 6 }}>
+          Fair value is blank because nothing comparable has sold in the last 30 days. The two
+          prices either side of it come from the live shelf, so they say what sellers are asking,
+          not what buyers have paid.
+        </div>
+      )}
 
       {active.stale.n > 0 && (
         <div style={{ fontSize: 11.5, color: 'var(--rust)', lineHeight: 1.5, marginBottom: 6 }}>
