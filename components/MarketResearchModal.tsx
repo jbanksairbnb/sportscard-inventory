@@ -867,6 +867,21 @@ function collapseImportedMonths(rows: ValueHistoryRow[]): ValueHistoryRow[] {
   return out.reverse();
 }
 
+// Whether a stored comp row carries anything the owner actually entered.
+// Mirrors rowHasUserContent, which decides what commitHistory puts into a
+// snapshot: the two have to agree, or an analysis restored from its session
+// would hash differently from the same analysis committed the normal way.
+// Pre-populated source / grade defaults don't count — that's scaffolding from
+// the modal opening, not data the user committed.
+function dpHasUserContent(d: DataPointRow): boolean {
+  if (d.price !== null && d.price !== undefined) return true;
+  if (d.weight_pct !== null && d.weight_pct !== undefined) return true;
+  if ((d.url || '').trim()) return true;
+  if ((d.notes || '').trim()) return true;
+  if (d.source === 'other' && (d.source_label || '').trim()) return true;
+  return false;
+}
+
 function sourceDisplay(s: SourceValue, label: string | null): string {
   if (s === 'other') return label?.trim() || 'Other';
   const found = RESEARCH_SOURCES.find(x => x.value === s);
@@ -978,18 +993,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       // safe — just invisible until the recovery panel offers them back.
       setOrphanSessions(everything.filter(s => s.user_id === user.id && !matchesCard(s)));
       // Garbage-collect: silently delete the user's own sessions that have no
-      // notes AND every data point lacks user-entered content (price, weight,
-      // URL, row note, or custom-source label). Pre-populated source / grade
-      // defaults alone don't count — they're scaffolding from the modal opening,
-      // not data the user actually committed.
-      function dpHasUserContent(d: DataPointRow): boolean {
-        if (d.price !== null && d.price !== undefined) return true;
-        if (d.weight_pct !== null && d.weight_pct !== undefined) return true;
-        if ((d.url || '').trim()) return true;
-        if ((d.notes || '').trim()) return true;
-        if (d.source === 'other' && (d.source_label || '').trim()) return true;
-        return false;
-      }
+      // notes AND no data point with user-entered content.
       const empties = ownAll.filter(s => {
         if ((s.notes || '').trim()) return false;
         const dps = s.market_research_data_points || [];
@@ -1566,6 +1570,81 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setAutoSaveTick('idle');
   }
 
+  // Restoring a saved analysis to the price history -------------------------
+  //
+  // A session (the comps) and a price-history mark (the immutable point on the
+  // chart) are written by different paths. The mark is only committed on an
+  // explicit Save research / Use value, and only once weights reach 100% — so
+  // an analysis saved before that gate, or on a build predating the history
+  // table, leaves the comps intact with no point on the chart. That reads as
+  // the analysis having been lost even though every row survived.
+  //
+  // Rebuild the mark from the session's own rows. `content_hash` decides
+  // whether one is needed: an analysis committed the normal way hashes to the
+  // same value, so a card whose history is already correct never offers this.
+  const sessionAnalysis = useMemo(() => {
+    if (!latestSession || latestSession.session.market_value === null) return null;
+    const rows: AnalysisRow[] = (latestSession.data_points || [])
+      .filter(dpHasUserContent)
+      .map(d => ({
+        position: d.position,
+        source: d.source,
+        source_label: d.source === 'other' ? (d.source_label || '').trim() || null : null,
+        grade_company: d.grade_company,
+        grade_value: d.grade_value,
+        sale_date: d.sale_date,
+        price: d.price,
+        weight_pct: d.weight_pct,
+        url: (d.url || '').trim() || null,
+        notes: (d.notes || '').trim() || null,
+      }));
+    const notesText = (latestSession.session.notes || '').trim() || null;
+    const value = latestSession.session.market_value;
+    const normalized = normalizeAnalysis(rows, notesText, value);
+    return { rows, notes: notesText, value, hash: contentHash(normalized) };
+  }, [latestSession]);
+
+  // Offer the restore only when this exact analysis isn't already charted.
+  const sessionNeedsMark = !!sessionAnalysis
+    && !valueHistory.some(h => h.content_hash === sessionAnalysis.hash);
+
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  async function restoreSessionToHistory() {
+    if (!sessionAnalysis || !latestSession || !userId) return;
+    setRestoring(true);
+    setRestoreError(null);
+    const s = latestSession.session;
+    const { row, error } = await insertValueHistoryRow({
+      user_id: userId,
+      card_year: card.year, card_brand: card.brand, card_number: card.card_number, card_player: card.player,
+      card_grade: card.grade, card_grading_company: card.grading_company, card_raw_grade: card.raw_grade,
+      listing_id: card.listing_id ?? null, set_slug: card.set_slug ?? null, set_card_number: card.set_card_number ?? null,
+      market_value: sessionAnalysis.value,
+      content_hash: sessionAnalysis.hash,
+      snapshot: {
+        notes: sessionAnalysis.notes,
+        market_value: sessionAnalysis.value,
+        rows: sessionAnalysis.rows,
+      } as AnalysisSnapshot,
+      mark_kind: 'research' as const,
+      // Dating the mark to the analysis rather than to the restore is the whole
+      // point: work done on 14 Aug belongs at August in the series, not today.
+      created_at: s.updated_at || s.created_at,
+      source_session_id: s.id,
+      derived_from_id: null,
+    });
+    setRestoring(false);
+    if (error) { setRestoreError(error); return; }
+    // A duplicate returns no row and no error — the mark is already there,
+    // which is the outcome the button was asking for.
+    if (row) {
+      setValueHistory(prev => [...prev, row]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)));
+    }
+  }
+
   // Autosave: 1.5s after the last edit, persist silently. We only kick in
   // once there's at least one row with user-entered content (price, weight,
   // URL, row notes, or a custom source label) — pre-populated grade defaults
@@ -1717,21 +1796,88 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
             )}
           </div>
         )}
-        {latestSession && !sessionId && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
-              {/* The draft is picked by most-recently-updated, so date it that way —
-                  `created_at` would show when the session was first opened, which
-                  on a resumed analysis is not the day the work was done. */}
-              You analyzed this card on <strong>{new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString()}</strong>
-              {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}.
-            </span>
-            <button type="button" onClick={loadFromLatest}
-              className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11 }}>
-              ↳ Use most recent analysis
-            </button>
-          </div>
-        )}
+        {latestSession && !sessionId && (() => {
+          // The form deliberately opens blank so a new analysis never starts
+          // half-filled. The cost was that a card with saved work looked exactly
+          // like one with none — the only tell was a ghost button, which reads as
+          // "your research is gone". So show the saved rows right here: opening
+          // the card surfaces the analysis, and pulling it into the form for
+          // editing stays a deliberate click.
+          const saved = (latestSession.data_points || [])
+            .filter(dpHasUserContent)
+            .sort((a, b) => a.position - b.position);
+          const when = new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString();
+          const sessionNotes = (latestSession.session.notes || '').trim();
+          return (
+            <div style={{ padding: '10px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+                  {/* The draft is picked by most-recently-updated, so date it that way —
+                      `created_at` would show when the session was first opened, which
+                      on a resumed analysis is not the day the work was done. */}
+                  You analyzed this card on <strong>{when}</strong>
+                  {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}
+                  {saved.length > 0 ? <> · {saved.length} {saved.length === 1 ? 'comp' : 'comps'}</> : null}.
+                </span>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {sessionNeedsMark && (
+                    <button type="button" onClick={restoreSessionToHistory} disabled={restoring}
+                      className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                      title="Chart this analysis in the price history below, dated to the day you did it">
+                      {restoring ? 'Adding…' : '↑ Add to price history'}
+                    </button>
+                  )}
+                  <button type="button" onClick={loadFromLatest}
+                    className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                    ↳ Use most recent analysis
+                  </button>
+                </div>
+              </div>
+              {restoreError && (
+                <div className="mono" style={{ marginTop: 6, fontSize: 10.5, color: 'var(--rust)' }}>
+                  Couldn&rsquo;t add it to the price history: {restoreError}
+                </div>
+              )}
+              {saved.length > 0 && (
+                <div style={{ overflowX: 'auto', marginTop: 8 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <tbody>
+                      {saved.map(d => (
+                        <tr key={d.id} style={{ borderTop: '1px solid var(--rule)' }}>
+                          <td style={{ padding: '4px 8px 4px 0', color: 'var(--ink-soft)' }}>
+                            {sourceDisplay(d.source, d.source_label)}
+                          </td>
+                          <td style={{ padding: '4px 8px', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                            {[d.grade_company, d.grade_value].filter(Boolean).join(' ') || d.grade_condition || '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                            {d.sale_date ? new Date(`${d.sale_date}T00:00:00`).toLocaleDateString() : '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {d.price !== null ? fmtMoney(d.price) : '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                            {d.weight_pct !== null ? `${d.weight_pct}%` : '—'}
+                          </td>
+                          <td style={{ padding: '4px 0 4px 8px', color: 'var(--ink-mute)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {d.url
+                              ? <a href={d.url} target="_blank" rel="noreferrer" style={{ color: 'var(--ink-mute)' }}>{d.notes?.trim() || 'listing'}</a>
+                              : (d.notes || '')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {sessionNotes && (
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
+                  {sessionNotes}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {loading ? (
           <div style={{ padding: 30, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
