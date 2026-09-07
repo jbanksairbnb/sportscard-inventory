@@ -1,6 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import { cardValueKey } from '@/lib/cardValueHistory';
 import type { CardDescriptor } from '@/components/MarketResearchModal';
 import type { ValuedCard } from '@/app/api/cardsight/value-set/route';
 import { recordSweepValueMark } from '@/lib/recordValueMark';
@@ -52,6 +54,64 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
 
   const byKey = useMemo(() => new Map(targets.map(t => [t.key, t])), [targets]);
 
+  // Cards the owner has already valued themselves — a saved research analysis
+  // or a value typed in by hand.
+  //
+  // A sweep median is built from completed auctions only. An analysis can weigh
+  // in fixed-price sales, a Card Ladder read, condition notes on the specific
+  // copy — everything the owner actually knew. That makes it the better number,
+  // so the sweep must not quietly replace it. These rows are still priced and
+  // still shown, with the sweep's figure beside the owner's for comparison;
+  // they simply arrive unticked, so overriding one is a deliberate act.
+  const [ownMarks, setOwnMarks] = useState<Map<string, { value: number; at: string }>>(new Map());
+  // The pre-tick runs at the end of a sweep that may have started before this
+  // query landed, so it reads the ref rather than a stale closure.
+  const ownMarksRef = useRef(ownMarks);
+  ownMarksRef.current = ownMarks;
+
+  useEffect(() => {
+    if (!open || !userId) return;
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('card_value_history')
+        .select('card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
+        .eq('user_id', userId)
+        .in('mark_kind', ['research', 'manual'])
+        .order('created_at', { ascending: false });
+      if (cancelled) return;
+      if (error || !data) {
+        // Failing open would let the sweep overwrite hand-made values silently,
+        // so fail closed instead: no protections, but nothing is pre-ticked
+        // that the owner has not seen, which is already the modal's contract.
+        return;
+      }
+      // Newest first, so the first hit per identity is the current one.
+      const latest = new Map<string, { value: number; at: string }>();
+      for (const r of data as Array<Record<string, unknown>>) {
+        const k = cardValueKey({
+          year: r.card_year as number | null, brand: r.card_brand as string | null,
+          card_number: r.card_number as string | null, grade: r.card_grade as string | null,
+          grading_company: r.card_grading_company as string | null,
+          raw_grade: r.card_raw_grade as string | null,
+        });
+        if (!latest.has(k)) latest.set(k, { value: Number(r.market_value), at: String(r.created_at) });
+      }
+      const mine = new Map<string, { value: number; at: string }>();
+      for (const t of targets) {
+        const hit = latest.get(cardValueKey({
+          year: t.descriptor.year, brand: t.descriptor.brand, card_number: t.descriptor.card_number,
+          grade: t.descriptor.grade, grading_company: t.descriptor.grading_company,
+          raw_grade: t.descriptor.raw_grade,
+        }));
+        if (hit) mine.set(t.key, hit);
+      }
+      if (!cancelled) setOwnMarks(mine);
+    })();
+    return () => { cancelled = true; };
+  }, [open, userId, targets]);
+
   async function run() {
     setPhase('running');
     setError(null);
@@ -95,6 +155,8 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
     for (const [k, r] of acc) {
       const t = byKey.get(k);
       if (r.reason !== 'ok' || r.value === null || r.bucketLabel) continue;
+      // The owner's own analysis stands until they replace it themselves.
+      if (ownMarksRef.current.has(k)) continue;
       if (t?.currentValue != null && Math.abs(t.currentValue - r.value) < 0.005) continue;
       pre.add(k);
     }
@@ -247,6 +309,7 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                     {rows.map(({ t, r }) => {
                       const v = r!.value;
                       const cur = t.currentValue;
+                      const mine = ownMarks.get(t.key) ?? null;
                       const delta = v !== null && cur != null && cur > 0 ? ((v - cur) / cur) * 100 : null;
                       return (
                         <tr key={t.key} style={{ borderTop: '1px solid var(--rule-soft)' }}>
@@ -263,6 +326,11 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                             <div style={{ color: 'var(--ink)' }}>{t.label}</div>
                             {r!.matched && (
                               <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>{r!.matched}</div>
+                            )}
+                            {mine && (
+                              <div className="mono" style={{ fontSize: 10.5, color: 'var(--teal)' }}>
+                                your analysis · {new Date(mine.at).toLocaleDateString()}
+                              </div>
                             )}
                           </td>
                           <td className="mono" style={{ ...td, textAlign: 'right', color: 'var(--ink-mute)' }}>
@@ -282,6 +350,7 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                           </td>
                           <td style={{ ...td, color: 'var(--ink-mute)', fontSize: 11.5, maxWidth: 280 }}>
                             {[
+                              mine ? 'kept — your own analysis' : '',
                               r!.bucketLabel ? `widened to ${r!.bucketLabel}` : '',
                               r!.viaSearch ? 'title-matched comps' : '',
                               r!.note ?? '',
