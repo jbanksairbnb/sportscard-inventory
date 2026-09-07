@@ -37,19 +37,23 @@ export const runtime = 'nodejs';
 // reaches the cards an earlier resolver got wrong without a mass backfill.
 const CARDSIGHT_RESOLVER_VERSION = 2;
 
-// How far back a comp may come from, widest last.
+// How far back a comp may come from. Thirty days, and no further.
 //
-// 30 days is the answer to "what is this card worth now", and it is where we
-// start. But completed sales are much rarer than they look once asks are
-// excluded — the 1961 Mantle PSA 6 had three auctions in five months and none
-// at all in the last 30 days — so holding the window shut would leave most
-// vintage cards with an empty table. We step outward instead, and say which
-// window the numbers came from.
-const SALE_WINDOWS = [30, 90, 365] as const;
+// The obvious alternative — step the window out to 90 days, then a year, until
+// enough sales turn up — was what this did, and it is worse than showing
+// nothing. "What is this card worth now" has one honest answer window, and a
+// median standing on a sale from last spring is not a smaller version of that
+// answer; it is a different question wearing the same label. Completed sales
+// are genuinely scarce once asks are excluded (the 1961 Mantle PSA 6 had three
+// auctions in five months and none in the last 30 days), so an empty comps
+// table is the common case for vintage, and it is the correct one. The longer
+// view still exists a few inches below, in the monthly history, where it is
+// labelled as history rather than as the current market.
+const SALE_WINDOW_DAYS = 30;
 
-// Enough sales to stop widening. Below this the next window is worth the extra
-// staleness; a single sale is a data point, not a market.
-const ENOUGH_SALES = 3;
+// Below this the sample is too thin to read as a market. The rows still show;
+// they are just flagged, because one sale is a data point, not a price.
+const THIN_SALES = 3;
 
 // The live market is only the live market. An ask last seen months ago says
 // nothing about what is for sale today.
@@ -413,7 +417,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json<CompsResponse>({
       matched, tier: 'ungraded', bucketLabel: 'ungraded sales',
       rows: [],
-      stats: stats(withinDays(rawSales, SALE_WINDOWS[1])),
+      stats: stats(withinDays(rawSales, SALE_WINDOW_DAYS)),
       monthly: monthlySeries(rawSales),
       // No stored history for ungraded cards: a month's median across unknown
       // conditions isn't a value, it's an average of different cards.
@@ -421,9 +425,9 @@ export async function POST(req: NextRequest) {
       ask: null,
       active: buildActiveMarket(
         raw.map(r => ({ ...r, company: '', grade: '' })),
-        '', '', stats(withinDays(rawSales, SALE_WINDOWS[1])),
+        '', '', stats(withinDays(rawSales, SALE_WINDOW_DAYS)),
       ),
-      saleWindowDays: SALE_WINDOWS[1],
+      saleWindowDays: SALE_WINDOW_DAYS,
       lastSale: comps.lastSale,
       truncated: comps.truncated,
       note: 'Ungraded sales carry no condition data, and condition drives most of the spread you see here. Treat this as a range to judge against, not as comps.',
@@ -486,19 +490,9 @@ export async function POST(req: NextRequest) {
   const qualifiedOut = selection.records.length - comparable.length;
   const sales = comparable.filter(isCompletedSale);
 
-  // Step the window out until there are enough sales to say something.
-  let saleWindowDays: number | null = null;
-  let recent: TaggedRecord[] = [];
-  for (const days of SALE_WINDOWS) {
-    recent = withinDays(sales, days);
-    saleWindowDays = days;
-    if (recent.length >= ENOUGH_SALES) break;
-  }
-  if (!recent.length && sales.length) {
-    // Nothing even in a year, but the archive holds something. Show it and say so.
-    recent = sales;
-    saleWindowDays = null;
-  }
+  // One window, held shut. When nothing sold in the last 30 days the table
+  // stays empty and the note says why. See SALE_WINDOW_DAYS.
+  const recent: TaggedRecord[] = withinDays(sales, SALE_WINDOW_DAYS);
   const shown = recent.slice(0, MAX_COMP_ROWS);
   const trimmed = recent.length - shown.length;
 
@@ -523,10 +517,10 @@ export async function POST(req: NextRequest) {
     history,
     ask: active?.stats ?? null,
     active,
-    saleWindowDays,
+    saleWindowDays: SALE_WINDOW_DAYS,
     lastSale: comps.lastSale,
     truncated: comps.truncated,
-    note: compsNote(shown.length, saleWindowDays, trimmed, sales.length, active?.n ?? 0, qualifiedOut),
+    note: compsNote(shown.length, trimmed, sales.length, active?.n ?? 0, qualifiedOut),
   });
 }
 
@@ -590,7 +584,7 @@ function roundPrice(n: number): number {
 // deserves to be read differently from one standing on twelve auctions, and
 // only the breakdown tells the user which they have.
 function compsNote(
-  shown: number, windowDays: number | null, trimmed: number,
+  shown: number, trimmed: number,
   totalSales: number, activeAsks: number, qualifiedOut: number,
 ): string | null {
   const qualified = qualifiedOut > 0
@@ -601,22 +595,19 @@ function compsNote(
     : '';
 
   if (!shown) {
-    return `No completed sales for this card in CardSight's archive — only asking prices.${qualified}${live} Their sold data covers auctions; eBay's completed Buy-It-Now sales are not in it.`;
+    const older = totalSales
+      ? ` ${totalSales} older sale${totalSales === 1 ? '' : 's'} sit${totalSales === 1 ? 's' : ''} in CardSight's archive and feed the monthly history below — history, not a current comp, which is why the window stays at ${SALE_WINDOW_DAYS} days rather than reaching back to fill this table.`
+      : ` CardSight's archive holds no completed sales for this card at all — only asking prices. Their sold data covers auctions; eBay's completed Buy-It-Now sales are not in it.`;
+    return `No completed sales in the last ${SALE_WINDOW_DAYS} days.${older}${qualified}${live}`;
   }
-
-  const when = windowDays === null
-    ? 'across the whole archive (nothing in the last year)'
-    : windowDays === SALE_WINDOWS[0]
-      ? `in the last ${windowDays} days`
-      : `in the last ${windowDays} days — the ${SALE_WINDOWS[0]}-day window held too few to judge`;
 
   const capped = trimmed > 0
     ? ` ${trimmed} more sale${trimmed === 1 ? '' : 's'} in the window ${trimmed === 1 ? 'is' : 'are'} not shown.`
     : '';
-  const thin = shown < ENOUGH_SALES
+  const thin = shown < THIN_SALES
     ? ` Only ${shown} sale${shown === 1 ? '' : 's'} — thin, weight accordingly.`
     : '';
   const depth = totalSales > shown ? ` ${totalSales} sales sit in the archive overall and all of them feed the monthly history below.` : '';
 
-  return `${shown} completed auction sale${shown === 1 ? '' : 's'} ${when}.${thin}${qualified}${capped}${live}${depth}`;
+  return `${shown} completed auction sale${shown === 1 ? '' : 's'} in the last ${SALE_WINDOW_DAYS} days.${thin}${qualified}${capped}${live}${depth}`;
 }
