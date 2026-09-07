@@ -45,8 +45,13 @@ export type ValueHistoryRow = {
   // 'manual' rows just record a number the owner typed (empty comp list);
   // 'cardsight' rows are a month's median of sold comps, imported in bulk from
   // the price history CardSight has for the card, and dated to that month's
-  // last sale rather than to the day they were imported.
-  mark_kind: 'research' | 'manual' | 'cardsight';
+  // last sale rather than to the day they were imported;
+  // 'sweep' rows come from pricing the whole set at once — the same 30-day
+  // median the research modal computes, dated to the day it was taken. Kept
+  // distinct from 'cardsight' because those are back-filled months and these
+  // are a forward-running series: collapsing a sweep to one point per month
+  // would throw away the very cadence that makes it worth having.
+  mark_kind: 'research' | 'manual' | 'cardsight' | 'sweep';
   // Idempotency key for machine-imported marks, so re-running an import is a
   // no-op rather than a second copy. Null on marks a person made — two
   // analyses of the same card on the same day are both real.
@@ -87,6 +92,12 @@ export function cardValueKey(p: CardKeyParts): string {
 // 20260908_cardsight_history_dedupe.sql — the unique index is what actually
 // prevents duplicates, and a key the database computes differently would let
 // every already-imported month import a second time.
+// One sweep mark per card per day. A second sweep the same afternoon is the
+// same observation twice; a sweep next week is a new data point.
+export function sweepDedupeKey(p: CardKeyParts, day: string): string {
+  return `sweep:${cardValueKey(p)}:${day}`;
+}
+
 export function cardsightDedupeKey(p: CardKeyParts, month: string): string {
   return `cardsight:${cardValueKey(p)}:${month}`;
 }

@@ -154,6 +154,28 @@ async function call<T>(path: string, params: Record<string, string | number | un
   }
 }
 
+// The same request discipline as call(), for the endpoints that take a body.
+async function post<T>(path: string, body: unknown): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      // A collection sweep re-asks for the same cards on a schedule, so let the
+      // platform serve the repeat within the hour rather than spending budget.
+      next: { revalidate: 3600 },
+    });
+    if (res.ok) return res.json() as Promise<T>;
+
+    const text = await res.text().catch(() => '');
+    if (res.status === 429 && attempt < 4) {
+      await sleep(400 * (attempt + 1));
+      continue;
+    }
+    throw new CardSightError(`CardSight ${path} returned ${res.status}: ${text.slice(0, 200)}`, res.status);
+  }
+}
+
 // ——— Resolution ———————————————————————————————————————————————
 
 type CatalogCard = {
@@ -318,27 +340,7 @@ export async function fetchComps(
   // one ask used to be collapsed here, but the sighting history is now the
   // evidence behind "listed 33 days, still unsold" — see activeListings() —
   // and asks no longer reach the valuation, so there is nothing to protect.
-  const clean = (records: CardSightRecord[]): CardSightRecord[] =>
-    opts.includeAutographs ? records : records.filter(r => !isAutographTitle(r.title));
-
-  const buckets: CompBucket[] = [];
-  if (res.raw?.records?.length) {
-    const records = clean(res.raw.records);
-    if (records.length) buckets.push({ company: null, grade: null, records });
-  }
-  for (const company of res.graded ?? []) {
-    for (const g of company.grades ?? []) {
-      const records = clean(g.records ?? []);
-      if (records.length) {
-        buckets.push({ company: company.company_name, grade: g.grade_value, records });
-      }
-    }
-  }
-  return {
-    buckets,
-    lastSale: res.meta?.last_sale_date ?? null,
-    truncated: (res.meta?.total_records ?? 0) >= MAX_RECORDS,
-  };
+  return bucketPricing(res, opts.includeAutographs, MAX_RECORDS);
 }
 
 // ——— Record hygiene ———————————————————————————————————————————
@@ -588,6 +590,25 @@ export function selectComps(
 // Graders whose numbers don't line up with the PSA/SGC/BGS scale, so they're
 // excluded from cross-grader substitution.
 const SOFT_SCALE_GRADERS = new Set(['BCCG', 'GMA', 'HGA', 'PRO', 'ISA']);
+
+// The records sitting in the exact company+grade bucket, however few.
+//
+// selectComps() deliberately hands back its WIDEST tier when nothing reaches
+// minSamples, which means a card with two PSA 6 sales reports as
+// 'adjacent-grade'. That is the right answer for filling a table and the wrong
+// one for deciding whether the exact grade is thin — and thin exact grades are
+// precisely the ones worth searching harder for. Callers that need to know
+// what they really have at the grade asked for use this instead of the tier.
+export function exactRecords(
+  buckets: CompBucket[],
+  company: string,
+  grade: string,
+): TaggedRecord[] {
+  const c = company.trim().toUpperCase();
+  return buckets
+    .filter(b => b.company !== null && b.company.toUpperCase() === c && b.grade === grade)
+    .flatMap(b => b.records.map(r => ({ ...r, company: b.company!, grade: b.grade! })));
+}
 
 // Ungraded sales for a card. Kept separate from selectComps because these
 // are NOT comparable to each other, let alone to a graded card: CardSight
@@ -1009,4 +1030,79 @@ export function marketBucket(
 export function conditionLabel(c: string | null | undefined): string | null {
   if (!c || c === 'UNKNOWN') return null;
   return c.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
+}
+
+// ——— Pricing many cards at once ————————————————————————————————
+
+// POST /pricing takes up to 100 card ids and answers for all of them in one
+// round trip, which is the difference between pricing a collection and pricing
+// a card. Two differences from the single-card endpoint matter:
+//
+//   - `limit` caps at 100 rows per card here, against 500 there, and that
+//     budget is still shared across every grade bucket. A card with a busy
+//     PSA 9 market can come back thin at PSA 4 for no reason but crowding, so
+//     a caller that needs depth on one grade should follow up per-card.
+//   - There is no grade filter, so we always take the whole spread and pick
+//     the bucket locally.
+//
+// Partial failure is normal: each result carries its own `success`, and one
+// bad id does not spoil the batch.
+export async function fetchCompsBulk(
+  cardIds: string[],
+  opts: { listingType?: 'auction' | 'fixed' | 'both'; period?: string; includeAutographs?: boolean } = {},
+): Promise<Map<string, { buckets: CompBucket[]; lastSale: string | null; truncated: boolean }>> {
+  const out = new Map<string, { buckets: CompBucket[]; lastSale: string | null; truncated: boolean }>();
+  const ids = [...new Set(cardIds.filter(Boolean))];
+
+  for (let i = 0; i < ids.length; i += BULK_CARDS) {
+    const chunk = ids.slice(i, i + BULK_CARDS);
+    const res = await post<{ results?: Array<{ card_id: string; success: boolean; data?: PricingResponse }> }>(
+      '/pricing',
+      {
+        card_ids: chunk,
+        listing_type: opts.listingType ?? 'both',
+        period: opts.period ?? 'all',
+        limit: BULK_ROWS,
+      },
+    );
+    for (const r of res.results ?? []) {
+      if (!r.success || !r.data) continue;
+      out.set(r.card_id, bucketPricing(r.data, opts.includeAutographs));
+    }
+  }
+  return out;
+}
+
+// Their documented ceilings, both enforced server-side with a 400.
+const BULK_CARDS = 100;
+const BULK_ROWS = 100;
+
+// The bucketing half of fetchComps(), shared so the single-card and bulk paths
+// cannot drift on what counts as a comp.
+function bucketPricing(
+  res: PricingResponse,
+  includeAutographs?: boolean,
+  cap: number = BULK_ROWS,
+): { buckets: CompBucket[]; lastSale: string | null; truncated: boolean } {
+  const clean = (records: CardSightRecord[]): CardSightRecord[] =>
+    includeAutographs ? records : records.filter(r => !isAutographTitle(r.title));
+
+  const buckets: CompBucket[] = [];
+  if (res.raw?.records?.length) {
+    const records = clean(res.raw.records);
+    if (records.length) buckets.push({ company: null, grade: null, records });
+  }
+  for (const company of res.graded ?? []) {
+    for (const g of company.grades ?? []) {
+      const records = clean(g.records ?? []);
+      if (records.length) {
+        buckets.push({ company: company.company_name, grade: g.grade_value, records });
+      }
+    }
+  }
+  return {
+    buckets,
+    lastSale: res.meta?.last_sale_date ?? null,
+    truncated: (res.meta?.total_records ?? 0) >= cap,
+  };
 }

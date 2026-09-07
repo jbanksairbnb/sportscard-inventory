@@ -18,6 +18,7 @@ import {
   cardValueKey,
   normalizeAnalysis,
   contentHash,
+  sweepDedupeKey,
   type AnalysisSnapshot,
   type ValueHistoryRow,
 } from '@/lib/cardValueHistory';
@@ -145,4 +146,62 @@ export async function recordManualValueMark(
   };
   const { error } = await insertValueHistoryRow(payload);
   return !error;
+}
+
+// Append a sweep mark — one card's value from pricing the whole set at once.
+//
+// Unlike recordManualValueMark this does NOT skip an unchanged value. A sweep
+// is a measurement taken on a date, and "the median was the same this week as
+// last" is a real and useful observation; suppressing it would leave a gap in
+// the series that reads as missing data rather than as a flat market. The
+// daily dedupe key stops an accidental second run from double-counting, and
+// the database enforces it.
+export async function recordSweepValueMark(
+  userId: string,
+  card: ValueMarkCard,
+  value: number,
+  evidence: { n: number; low: number | null; high: number | null; bucketLabel: string | null; viaSearch: boolean },
+): Promise<{ ok: boolean; duplicate: boolean }> {
+  if (!userId || !Number.isFinite(value)) return { ok: false, duplicate: false };
+
+  const day = new Date().toISOString().slice(0, 10);
+  const notes = [
+    `CardSight sweep ${day}: median of ${evidence.n} completed sale${evidence.n === 1 ? '' : 's'} in the last 30 days`,
+    evidence.low !== null && evidence.high !== null && evidence.low !== evidence.high
+      ? `range $${evidence.low.toFixed(2)}–$${evidence.high.toFixed(2)}`
+      : '',
+    evidence.bucketLabel ? `widened to ${evidence.bucketLabel}` : '',
+    evidence.viaSearch ? 'includes title-matched comps' : '',
+  ].filter(Boolean).join(' · ');
+
+  const snapshot: AnalysisSnapshot = { notes, market_value: value, rows: [] };
+  const normalized = normalizeAnalysis([], notes, value);
+  const { error, duplicate } = await insertValueHistoryRow({
+    user_id: userId,
+    card_year: card.year,
+    card_brand: card.brand,
+    card_number: card.card_number,
+    card_player: card.player,
+    card_grade: card.grade,
+    card_grading_company: card.grading_company,
+    card_raw_grade: card.raw_grade,
+    listing_id: card.listing_id ?? null,
+    set_slug: card.set_slug ?? null,
+    set_card_number: card.set_card_number ?? null,
+    market_value: value,
+    content_hash: contentHash(normalized),
+    snapshot,
+    mark_kind: 'sweep' as const,
+    dedupe_key: sweepDedupeKey({
+      year: card.year,
+      brand: card.brand,
+      card_number: card.card_number,
+      grade: card.grade,
+      grading_company: card.grading_company,
+      raw_grade: card.raw_grade,
+    }, day),
+    source_session_id: null,
+    derived_from_id: null,
+  });
+  return { ok: !error, duplicate };
 }

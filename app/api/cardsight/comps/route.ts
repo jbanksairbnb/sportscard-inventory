@@ -8,6 +8,7 @@ import {
   fetchMarketplace,
   groupByMonth,
   isAutographTitle,
+  exactRecords,
   isCompletedSale,
   isQualifiedGrade,
   marketBucket,
@@ -541,15 +542,42 @@ export async function POST(req: NextRequest) {
   // stays empty and the note says why. See SALE_WINDOW_DAYS.
   let recent: TaggedRecord[] = withinDays(sales, SALE_WINDOW_DAYS);
 
-  // Thin at the exact grade even after widening the bucket — the shortfall may
-  // be CardSight's matcher rather than the market. Search the listing titles
-  // and re-verify every hit locally. Only cards that need it pay the request.
+  // Thin at the exact grade — the shortfall may be CardSight's matcher rather
+  // than the market, so search the listing titles and re-verify every hit.
+  //
+  // The test is the count at the grade actually asked for, NOT selection.tier.
+  // selectComps() returns its widest tier whenever nothing reaches its
+  // minimum, so a card with two PSA 6 sales reports as 'adjacent-grade' — and
+  // gating the search on tier === 'exact' switched it off for exactly the
+  // sparse cards it exists to rescue. The 1967 Carew was one of them.
+  const exactSales = withinDays(
+    exactRecords(comps.buckets, company, String(body.grade))
+      .filter(r => !isQualifiedGrade(r.title))
+      .filter(isCompletedSale),
+    SALE_WINDOW_DAYS,
+  );
+
   let salvaged = 0;
-  if (recent.length < WIDEN_BELOW && selection.tier === 'exact') {
+  if (exactSales.length < WIDEN_BELOW) {
     const extra = await wideNet(body, company, String(body.grade), comparable, wantsAutographs);
     if (extra.length) {
       salvaged = extra.length;
-      comparable = [...comparable, ...extra];
+      // Salvaged rows carry the exact grade by construction — matchesCard()
+      // insists on it. So widening now has to earn its keep: if the exact
+      // grade has as many recent sales as the widened pool does, use the exact
+      // grade. A genuine PSA 6 sale is the better comp, and labelling the
+      // table "grade 6 ±0.5, any grader" when every row in it is a PSA 6 tells
+      // the user something untrue about their own comps.
+      const exactRecent = withinDays([...exactSales, ...extra.filter(isCompletedSale)], SALE_WINDOW_DAYS);
+      if (selection.tier !== 'exact' && exactRecent.length >= recent.length) {
+        comparable = [
+          ...exactRecords(comps.buckets, company, String(body.grade)).filter(r => !isQualifiedGrade(r.title)),
+          ...extra,
+        ];
+        selection = { tier: 'exact', bucketLabel: `${company} ${body.grade}`, records: comparable };
+      } else {
+        comparable = [...comparable, ...extra];
+      }
       sales = comparable.filter(isCompletedSale);
       recent = withinDays(sales, SALE_WINDOW_DAYS);
     }
