@@ -23,6 +23,11 @@ import {
 
 export const runtime = 'nodejs';
 
+// Bump when the matching logic in resolveCard() changes materially. Cached
+// rows resolved by an older version are re-looked-up on next use, so a fix
+// reaches the cards an earlier resolver got wrong without a mass backfill.
+const CARDSIGHT_RESOLVER_VERSION = 2;
+
 function adminClient() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -183,12 +188,15 @@ export async function POST(req: NextRequest) {
   // of misses, which stops us re-spending a call on a card we know is absent.
   const { data: cached } = await admin
     .from('cardsight_cards')
-    .select('cardsight_card_id, not_found, matched_release, matched_set, matched_year, matched_name')
+    .select('cardsight_card_id, not_found, matched_release, matched_set, matched_year, matched_name, resolver_version')
     .match(k)
     .maybeSingle();
 
-  let cardId = cached?.cardsight_card_id ?? null;
-  let matched = cached && !cached.not_found
+  // A row an older resolver produced is not trustworthy — treat it as a miss.
+  const fresh = cached && (cached.resolver_version ?? 1) >= CARDSIGHT_RESOLVER_VERSION;
+
+  let cardId = fresh ? cached!.cardsight_card_id ?? null : null;
+  let matched = fresh && cached && !cached.not_found
     ? {
         name: cached.matched_name ?? '',
         release: cached.matched_release ?? '',
@@ -197,7 +205,7 @@ export async function POST(req: NextRequest) {
       }
     : null;
 
-  if (!cached) {
+  if (!fresh) {
     let resolved;
     try {
       resolved = await resolveCard({
@@ -215,6 +223,7 @@ export async function POST(req: NextRequest) {
       matched_set: resolved?.setName ?? null,
       matched_year: resolved?.releaseYear ?? null,
       matched_name: resolved?.name ?? null,
+      resolver_version: CARDSIGHT_RESOLVER_VERSION,
       checked_at: new Date().toISOString(),
     }, { onConflict: 'card_year,card_brand,card_number,card_player' });
     cardId = resolved?.id ?? null;
