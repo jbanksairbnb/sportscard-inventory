@@ -212,13 +212,18 @@ function fmtMoney(n: number): string {
 // era a specific grade often has only a handful of sales in CardSight's whole
 // window — a 1968 Ryan PSA 6 had exactly one — and a median of n=1 presented
 // like a market price is the failure mode this panel exists to prevent.
-function CompsPanel({ comps, onImportHistory, importing, imported }: {
+function CompsPanel({ comps, onImportHistory, importing, imported, storedMonths }: {
   comps: CompsResponse;
   onImportHistory: () => void;
   importing: boolean;
   imported: number | null;
+  /** Months (YYYY-MM) this card already has a CardSight mark for. */
+  storedMonths: Set<string>;
 }) {
   const s = comps.stats;
+  // Months CardSight has that this card's chart doesn't.
+  const missingMonths = comps.history.filter(p => !storedMonths.has(p.month));
+  const alreadyStored = comps.history.length - missingMonths.length;
   const tierLabel: Record<string, string> = {
     exact: 'exact grade match',
     'same-grade': 'same grade, different grader',
@@ -284,21 +289,35 @@ function CompsPanel({ comps, onImportHistory, importing, imported }: {
         </div>
       )}
 
-      {/* Storing history is only offered when there are months worth storing:
-          each point is a median of at least two sold comps. */}
-      {comps.history.length > 0 && (
+      {/* Storing history is offered only for months that aren't on the chart
+          yet. The import has always been idempotent — a month already stored
+          hits the dedupe key and is skipped — but the button still counted
+          every month CardSight returned, so a card whose history was fully
+          imported kept offering to save it again and answered "Saved 0". An
+          action with nothing to do shouldn't be on screen. */}
+      {missingMonths.length > 0 && (
         <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button type="button" onClick={onImportHistory} disabled={importing}
             className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
-            {importing ? 'Saving…' : `↳ Save ${comps.history.length} month${comps.history.length === 1 ? '' : 's'} to price history`}
+            {importing ? 'Saving…' : `↳ Save ${missingMonths.length} month${missingMonths.length === 1 ? '' : 's'} to price history`}
           </button>
           <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
             {imported === null
-              ? 'One mark per month of completed sales, dated to the month\u2019s end.'
-              : imported === 0
-                ? 'Already saved — nothing new to add.'
-                : `Saved ${imported} month${imported === 1 ? '' : 's'}.`}
+              ? alreadyStored > 0
+                ? `${alreadyStored} of ${comps.history.length} already on the chart; one mark per remaining month, dated to the month\u2019s end.`
+                : 'One mark per month of completed sales, dated to the month\u2019s end.'
+              : `Saved ${imported} month${imported === 1 ? '' : 's'}.`}
           </span>
+        </div>
+      )}
+      {/* Nothing left to import, but the months exist — say so once, so the
+          absence of the button reads as "done" rather than as a missing
+          feature. */}
+      {comps.history.length > 0 && missingMonths.length === 0 && (
+        <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)', fontSize: 11, color: 'var(--ink-mute)' }}>
+          {imported !== null && imported > 0
+            ? `Saved ${imported} month${imported === 1 ? '' : 's'} — all ${comps.history.length} of CardSight\u2019s months are on this card\u2019s price chart.`
+            : `All ${comps.history.length} month${comps.history.length === 1 ? '' : 's'} CardSight has are already on this card\u2019s price chart.`}
         </div>
       )}
 
@@ -1567,6 +1586,20 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // Rebuild the mark from the session's own rows. `content_hash` decides
   // whether one is needed: an analysis committed the normal way hashes to the
   // same value, so a card whose history is already correct never offers this.
+  // Which months this card already carries a CardSight mark for. Keyed on the
+  // month of created_at, the same key collapseImportedMonths uses and the same
+  // one the import writes to — and unlike dedupe_key it is present on marks
+  // imported before that column existed, so an older card doesn't read as
+  // un-imported and get offered a save that would be a no-op.
+  const storedCardsightMonths = useMemo(
+    () => new Set(
+      valueHistory
+        .filter(h => h.mark_kind === 'cardsight')
+        .map(h => h.created_at.slice(0, 7)),
+    ),
+    [valueHistory],
+  );
+
   const sessionAnalysis = useMemo(() => {
     if (!latestSession || latestSession.session.market_value === null) return null;
     const rows = analysisFromDataPoints(latestSession.data_points || []);
@@ -1984,7 +2017,8 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
             )}
             {comps && (
               <CompsPanel comps={comps} onImportHistory={importHistory}
-                importing={importingHistory} imported={importedCount} />
+                importing={importingHistory} imported={importedCount}
+                storedMonths={storedCardsightMonths} />
             )}
 
             <div style={{ marginBottom: 16 }}>
