@@ -686,13 +686,25 @@ export default function SetEditorPage() {
       image_back: String(row['Image 2'] || '').trim() || null,
     };
   }
-  // Every row with enough identity for CardSight to find the card. A row
-  // missing a year, number or player cannot be looked up at all, so it is left
-  // out of the sweep rather than reported as a failure 200 times over.
+  // Rows the sweep can actually price. Three gates, each for its own reason:
+  //
+  //  - Owned. Pricing a card you don't have is answering a question nobody
+  //    asked, and it buries the cards you do own in a review list several
+  //    times longer than it needs to be.
+  //  - Graded, with both a company and a grade. CardSight's sold data is
+  //    keyed to a graded population; an ungraded card has no comparable set
+  //    to take a median of, so the route returns no value for one anyway.
+  //    Filtering here rather than there means those cards never cost an API
+  //    call and never appear as a row of dashes the owner has to read past.
+  //  - Enough identity to look up at all — a row missing a year, number or
+  //    player can't be resolved, so it's left out rather than reported as a
+  //    failure two hundred times over.
   const sweepTargets: SweepTarget[] = useMemo(() => {
     const out: SweepTarget[] = [];
     rows.forEach((row, i) => {
+      if (String(row['Owned'] || '') !== 'Yes') return;
       const d = descriptorForRow(row);
+      if (!d.grading_company || !d.grade) return;
       if (!d.year || !d.card_number || !d.player) return;
       const raw = String(row['Value'] ?? '').replace(/[^0-9.\-]/g, '');
       const cur = raw ? Number(raw) : NaN;
@@ -700,8 +712,9 @@ export default function SetEditorPage() {
         key: `${i}:${d.card_number}`,
         rowIndex: i,
         descriptor: d,
-        label: [d.card_number ? `#${d.card_number}` : '', d.player,
-                d.grading_company && d.grade ? `${d.grading_company} ${d.grade}` : (d.raw_grade || 'raw')]
+        // Every target is graded by construction, so the condition is always
+        // the company and grade.
+        label: [d.card_number ? `#${d.card_number}` : '', d.player, `${d.grading_company} ${d.grade}`]
           .filter(Boolean).join(' · '),
         currentValue: Number.isFinite(cur) ? cur : null,
       });
@@ -1938,8 +1951,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               </button>
               {sweepTargets.length > 0 && (
                 <button type="button" onClick={() => setValueSetOpen(true)} className="btn btn-ghost btn-sm"
-                  title="Price every card in this set from CardSight comps">
-                  ⇊ Value all cards
+                  title="Price the graded cards you own in this set from CardSight comps — CardSight's sold data covers graded cards only">
+                  ⇊ Value graded cards
                 </button>
               )}
               <button type="button" onClick={() => setRestoreOpen(true)} className="btn btn-ghost btn-sm"
