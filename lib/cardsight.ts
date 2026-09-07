@@ -54,6 +54,20 @@ export type CompBucket = {
   records: CardSightRecord[];
 };
 
+// How much a listing type counts toward a blended value.
+//
+// An `auction` record is a card that changed hands: their timestamps cluster
+// at 00:00-04:00 UTC, which is eBay's auction-close window. A `fixed` record
+// is an ASK observed by a crawler — those timestamps cluster at 09:00-13:00
+// UTC, a daily sweep, and the same listing reappears month after month while
+// it fails to sell. Asks still carry information (they bound the top of the
+// market and they're all you have on a quiet card), just less of it, so a
+// completed auction counts double.
+export const LISTING_WEIGHT: Record<CardSightRecord['listing_type'], number> = {
+  auction: 2,
+  fixed: 1,
+};
+
 // A record that remembers which bucket it came from. Once the ladder widens,
 // the comps no longer share the card's own grade, and a row labelled with the
 // TARGET grade would be a lie — a BCCG 10 is roughly a PSA 8, so showing one
@@ -272,7 +286,12 @@ type PricingResponse = {
 // need to see every bucket at once.
 export async function fetchComps(
   cardId: string,
-  opts: { listingType?: 'auction' | 'fixed' | 'both'; period?: string; gradeId?: string } = {},
+  opts: {
+    listingType?: 'auction' | 'fixed' | 'both';
+    period?: string;
+    gradeId?: string;
+    includeAutographs?: boolean;
+  } = {},
 ): Promise<{ buckets: CompBucket[]; lastSale: string | null; truncated: boolean }> {
   const res = await call<PricingResponse>(`/pricing/${cardId}`, {
     period: opts.period ?? 'all',
@@ -281,13 +300,22 @@ export async function fetchComps(
     limit: MAX_RECORDS,
   });
 
+  const clean = (records: CardSightRecord[], listingAware: boolean): CardSightRecord[] => {
+    const kept = opts.includeAutographs ? records : records.filter(r => !isAutographTitle(r.title));
+    return listingAware ? collapseRelistings(kept) : kept;
+  };
+
   const buckets: CompBucket[] = [];
   if (res.raw?.records?.length) {
-    buckets.push({ company: null, grade: null, records: res.raw.records });
+    const records = clean(res.raw.records, true);
+    if (records.length) buckets.push({ company: null, grade: null, records });
   }
   for (const company of res.graded ?? []) {
     for (const g of company.grades ?? []) {
-      buckets.push({ company: company.company_name, grade: g.grade_value, records: g.records ?? [] });
+      const records = clean(g.records ?? [], true);
+      if (records.length) {
+        buckets.push({ company: company.company_name, grade: g.grade_value, records });
+      }
     }
   }
   return {
@@ -295,6 +323,67 @@ export async function fetchComps(
     lastSale: res.meta?.last_sale_date ?? null,
     truncated: (res.meta?.total_records ?? 0) >= MAX_RECORDS,
   };
+}
+
+// ——— Record hygiene ———————————————————————————————————————————
+
+// A signed card is a different market from the same card unsigned, and
+// CardSight files them together. PSA issues a separate *Autograph* grade
+// alongside the *Card* grade, but the pricing response exposes only one grade
+// per record, so a "PSA AUTO 10" slab lands in the PSA 10 bucket: on the 1967
+// Carew rookie, every single PSA 10 "sale" was an autographed card at ~$600,
+// against a genuine PSA 10 worth six figures. Eight of that card's 23 graded
+// records were signed copies.
+//
+// The title is the only signal we get, so we read it. A card the owner says is
+// itself an autograph opts back in — see fetchComps({ includeAutographs }).
+const AUTOGRAPH_TITLE = /\b(auto|autos|autod|autoed|autograph|autographs|autographed|signed|signature|inscribed|jsa|psa\s*\/?\s*dna|beckett\s+witness)\b/i;
+
+export function isAutographTitle(title: string | null | undefined): boolean {
+  return AUTOGRAPH_TITLE.test(title ?? '');
+}
+
+// Collapse repeat sightings of one unsold listing down to its latest price.
+//
+// Their crawler re-observes active Buy-It-Now listings on a roughly monthly
+// cadence and emits a fresh record each time, with a new short-link URL, so
+// there is no listing id to group on. The pattern is unmistakable in the data:
+// on the 1974 Parker, a BGS 4.5 at $70 appears on 2026-08-04 and again on
+// 2026-09-04; a PSA 6 at $100 on 08-07 and again on 09-07. Nineteen of that
+// card's 91 asks were re-sightings.
+//
+// Left alone they would corrupt exactly what we're building: one stubborn
+// seller's unsold card would contribute a data point to every month of the
+// price history. Keyed on the title because that's what stays constant while
+// the price drifts — the same Parker slab (serial 12170349 in its title) shows
+// $355.12, then $285.30 a fortnight later, before finally selling at auction
+// for $257.37.
+//
+// Completed auctions are NEVER collapsed: a seller who reuses one title
+// template across listings really did sell three different copies, and those
+// are three real sales.
+function collapseRelistings(records: CardSightRecord[]): CardSightRecord[] {
+  const latest = new Map<string, CardSightRecord>();
+  const out: CardSightRecord[] = [];
+  for (const r of records) {
+    if (r.listing_type !== 'fixed') { out.push(r); continue; }
+    const k = (r.title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    // An untitled ask can't be matched to anything, so it stands on its own.
+    if (!k) { out.push(r); continue; }
+    const prev = latest.get(k);
+    if (!prev || r.date > prev.date) latest.set(k, r);
+  }
+  return [...out, ...latest.values()];
+}
+
+// Records no older than `days`. The pricing endpoint takes a `period` and
+// honours it server-side ("30d" really does return only the last 30 days), but
+// we re-apply the cut locally: one call serves both the short comps window and
+// the full-archive history, and a client-side filter is the same answer for
+// free rather than a second request.
+export function withinDays<T extends { date: string }>(records: T[], days: number): T[] {
+  const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+  return records.filter(r => r.date >= cutoff);
 }
 
 // ——— Grade catalogue ——————————————————————————————————————————
@@ -434,7 +523,75 @@ export function stats(records: Array<{ price: number }>): CompStats | null {
   };
 }
 
-export type MonthPoint = { month: string; stats: CompStats };
+// A record carrying enough to be weighted. Loose on purpose so both raw
+// CardSightRecords and TaggedRecords satisfy it.
+type Weighable = { price: number; listing_type: CardSightRecord['listing_type'] };
+
+// Statistics that count a completed auction twice and an ask once.
+//
+// Implemented by repeating each record LISTING_WEIGHT times before taking the
+// order statistics. With integer weights this is exact — no interpolation, no
+// approximation — and it keeps median/quartiles as real observed prices rather
+// than synthetic points between them.
+//
+// `n` reports the number of real records, not the expanded count: the user is
+// being told how many sales back the number, and inflating that to 34 when
+// there were 20 would misrepresent the sample.
+export function weightedStats(records: Weighable[]): CompStats | null {
+  const expanded: number[] = [];
+  let realCount = 0;
+  let weightSum = 0;
+  let weightedTotal = 0;
+  for (const r of records) {
+    const price = Number(r.price);
+    if (!Number.isFinite(price)) continue;
+    realCount += 1;
+    const w = LISTING_WEIGHT[r.listing_type] ?? 1;
+    weightSum += w;
+    weightedTotal += w * price;
+    for (let i = 0; i < w; i++) expanded.push(price);
+  }
+  if (!realCount) return null;
+  expanded.sort((a, b) => a - b);
+  const at = (q: number) => expanded[Math.min(expanded.length - 1, Math.floor(q * expanded.length))];
+  const mid = Math.floor(expanded.length / 2);
+  return {
+    n: realCount,
+    mean: weightedTotal / weightSum,
+    median: expanded.length % 2 ? expanded[mid] : (expanded[mid - 1] + expanded[mid]) / 2,
+    min: expanded[0],
+    max: expanded[expanded.length - 1],
+    p25: at(0.25),
+    p75: at(0.75),
+  };
+}
+
+// The last calendar day of a YYYY-MM, as YYYY-MM-DD — never in the future.
+//
+// Monthly marks are stamped to the close of the month they describe, so the
+// price-history chart reads as a monthly series ("5/31") instead of labelling
+// each point with whatever day the month's last sale happened to fall on
+// ("5/29"). The current month has no close yet, so it's clamped to today.
+export function monthEndDate(month: string, now: Date = new Date()): string {
+  const [y, m] = month.split('-').map(Number);
+  // Day 0 of the following month is the last day of this one.
+  const end = new Date(Date.UTC(y, m, 0));
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return (end > today ? today : end).toISOString().slice(0, 10);
+}
+
+// Group records into calendar months, each month holding only its own sales.
+export function groupByMonth<T extends { date: string }>(records: T[]): Array<[string, T[]]> {
+  const byMonth = new Map<string, T[]>();
+  for (const r of records) {
+    const m = r.date.slice(0, 7);
+    if (!byMonth.has(m)) byMonth.set(m, []);
+    byMonth.get(m)!.push(r);
+  }
+  return [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+export type MonthPoint = { month: string; monthEnd: string; stats: CompStats };
 
 // Per-month stats, but only when the data can carry them.
 //
@@ -446,18 +603,11 @@ export type MonthPoint = { month: string; stats: CompStats };
 // So: return a series only if enough months clear `minPerBucket`, and let the
 // caller fall back to a single aggregate when this returns null.
 export function monthlySeries(
-  records: Array<{ price: number; date: string }>,
+  records: Array<Weighable & { date: string }>,
   { minPerBucket = 4, minBuckets = 3 }: { minPerBucket?: number; minBuckets?: number } = {},
 ): MonthPoint[] | null {
-  const byMonth = new Map<string, Array<{ price: number; date: string }>>();
-  for (const r of records) {
-    const m = r.date.slice(0, 7);
-    if (!byMonth.has(m)) byMonth.set(m, []);
-    byMonth.get(m)!.push(r);
-  }
-  const points = [...byMonth.entries()]
+  const points = groupByMonth(records)
     .filter(([, rs]) => rs.length >= minPerBucket)
-    .map(([month, rs]) => ({ month, stats: stats(rs)! }))
-    .sort((a, b) => a.month.localeCompare(b.month));
+    .map(([month, rs]) => ({ month, monthEnd: monthEndDate(month), stats: weightedStats(rs)! }));
   return points.length >= minBuckets ? points : null;
 }

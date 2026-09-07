@@ -22,30 +22,42 @@ import {
   type ValueHistoryRow,
 } from '@/lib/cardValueHistory';
 
+// Columns added by later migrations. On a deployment that hasn't run one yet,
+// PostgREST rejects the *entire* insert because of the unknown column — which
+// silently stopped every value mark, research and manual alike, from being
+// recorded. We retry without whichever column the error names, so history keeps
+// accruing on older schemas.
+const OPTIONAL_COLUMNS = ['mark_kind', 'dedupe_key'] as const;
+
 // Insert one history row and hand the outcome back to the caller.
 //
-// `mark_kind` is the newest column (migration 20260813_card_value_mark_kind).
-// On a deployment where that migration hasn't been applied yet, PostgREST
-// rejects the *entire* insert because of the unknown column — which silently
-// stopped every value mark, research and manual alike, from being recorded.
-// Retry once without the column so history keeps accruing on older schemas,
-// and always return the error text so callers can tell the user instead of
-// swallowing the failure.
+// Three outcomes, not two. `duplicate` means the database already holds this
+// exact mark and refused the copy — which is the unique index on `dedupe_key`
+// doing its job on a re-import, not a failure, so callers count it as skipped
+// rather than showing the user an error. Anything else returns the error text,
+// because a swallowed write failure looks exactly like a successful save until
+// the user reopens the card and finds the mark missing.
 export async function insertValueHistoryRow(
   payload: Record<string, unknown>,
-): Promise<{ row: ValueHistoryRow | null; error: string | null }> {
+): Promise<{ row: ValueHistoryRow | null; error: string | null; duplicate: boolean }> {
   const supabase = createClient();
-  let res = await supabase.from('card_value_history').insert(payload).select('*').single();
-  if (res.error && (res.error.message || '').toLowerCase().includes('mark_kind')) {
-    const retry = { ...payload };
-    delete retry.mark_kind;
-    res = await supabase.from('card_value_history').insert(retry).select('*').single();
+  const body = { ...payload };
+  let res = await supabase.from('card_value_history').insert(body).select('*').single();
+
+  for (const col of OPTIONAL_COLUMNS) {
+    if (!res.error || !(col in body)) continue;
+    if (!(res.error.message || '').toLowerCase().includes(col)) continue;
+    delete body[col];
+    res = await supabase.from('card_value_history').insert(body).select('*').single();
   }
+
   if (res.error) {
+    // 23505 = unique_violation. The row is already there; nothing went wrong.
+    if (res.error.code === '23505') return { row: null, error: null, duplicate: true };
     console.warn('[value] history insert failed:', res.error.message);
-    return { row: null, error: res.error.message };
+    return { row: null, error: res.error.message, duplicate: false };
   }
-  return { row: (res.data as unknown as ValueHistoryRow) ?? null, error: null };
+  return { row: (res.data as unknown as ValueHistoryRow) ?? null, error: null, duplicate: false };
 }
 
 // The card-identity + breadcrumb fields a mark needs. Mirrors the research

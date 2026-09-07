@@ -3,14 +3,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import {
   fetchComps,
+  groupByMonth,
+  isAutographTitle,
+  LISTING_WEIGHT,
+  monthEndDate,
   monthlySeries,
   resolveCard,
   selectComps,
-  stats,
   ungradedRecords,
+  weightedStats,
+  withinDays,
   fetchGradeCatalog,
   type CompStats,
   type MatchTier,
+  type MonthPoint,
   type TaggedRecord,
 } from '@/lib/cardsight';
 
@@ -28,6 +34,17 @@ export const runtime = 'nodejs';
 // reaches the cards an earlier resolver got wrong without a mass backfill.
 const CARDSIGHT_RESOLVER_VERSION = 2;
 
+// How far back a comp may come from. A comp is an answer to "what is this card
+// worth now", and a five-month-old sale answers a different question — so the
+// prefilled table is deliberately a recent-activity window, not the archive.
+// The archive still feeds the monthly trend line and the stored price history,
+// where age is the point rather than a problem.
+const COMP_WINDOW_DAYS = 30;
+
+// Ceiling on prefilled rows. Past a dozen the table stops being something a
+// person reviews and re-weights, which is the whole exercise.
+const MAX_COMP_ROWS = 12;
+
 function adminClient() {
   return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,7 +60,6 @@ type Body = {
   player?: string | null;
   grading_company?: string | null;  // 'PSA' | 'SGC' | ... | 'Raw' | null
   grade?: string | null;
-  listing_type?: 'auction' | 'fixed';
 };
 
 export type CompRow = {
@@ -63,9 +79,14 @@ export type CompRow = {
   source_label: string | null;
 };
 
-// One month of sold comps, ready to store as a value-history mark.
+// One month of comps, ready to store as a value-history mark.
 export type HistoryPoint = {
   month: string;              // YYYY-MM
+  // The date the mark is filed under: the last day of the month it describes
+  // (clamped to today for the month still in progress). Using the close of the
+  // month rather than the month's last sale is what makes the price-history
+  // chart read as an evenly spaced monthly series.
+  monthEnd: string;           // YYYY-MM-DD
   asOf: string;               // YYYY-MM-DD, the month's most recent sale
   stats: CompStats;
   rows: CompRow[];
@@ -77,7 +98,7 @@ export type CompsResponse = {
   bucketLabel: string | null;
   rows: CompRow[];
   stats: CompStats | null;
-  monthly: Array<{ month: string; stats: CompStats }> | null;
+  monthly: MonthPoint[] | null;
   // Per-month medians we can write into card_value_history. Looser than
   // `monthly` (which gates on density before drawing a trend) because a
   // two-sale month is still a real data point once its sample size is shown.
@@ -99,14 +120,19 @@ function key(b: Body) {
   };
 }
 
-// Equal weights that sum to exactly 100. The modal unlocks Save only when the
-// total is within 0.001 of 100, and floating-point thirds don't get there on
-// their own, so the remainder lands on the first row.
-function equalWeights(n: number): number[] {
-  if (n <= 0) return [];
-  const each = Math.floor((100 / n) * 100) / 100;
-  const weights = Array<number>(n).fill(each);
-  weights[0] = Math.round((100 - each * (n - 1)) * 100) / 100;
+// Weights proportional to `units`, summing to exactly 100. The modal unlocks
+// Save only when the total is within 0.001 of 100, and shares of a hundred
+// rarely divide cleanly, so the rounding remainder lands on the first row.
+//
+// Callers pass LISTING_WEIGHT per row, which makes a completed auction count
+// double a Buy-It-Now ask. Equal units give equal weights, so this covers the
+// all-auction case too.
+function proportionalWeights(units: number[]): number[] {
+  const total = units.reduce((s, u) => s + u, 0);
+  if (!units.length || total <= 0) return units.map(() => 0);
+  const weights = units.map(u => Math.floor((u / total) * 10000) / 100);
+  const sum = weights.reduce((s, w) => s + w, 0);
+  weights[0] = Math.round((weights[0] + (100 - sum)) * 100) / 100;
   return weights;
 }
 
@@ -133,8 +159,12 @@ function toRow(r: TaggedRecord, weight: number, tierNote: string): CompRow {
       ? `CardSight · ${r.source} ${r.listing_type === 'fixed' ? 'Buy-It-Now' : 'auction'}`
       : null,
     // The listing title is the audit trail: it's how a user spots that a comp
-    // is an autograph, a reprint, or a trimmed card that shouldn't count.
-    notes: [tierNote, r.title].filter(Boolean).join(' · '),
+    // is a reprint or a trimmed card that shouldn't count. A Buy-It-Now says
+    // so in words as well as in the Source column, because the distinction
+    // between what a card fetched and what someone hoped for is the single
+    // easiest thing to misread in this table.
+    notes: [tierNote, r.listing_type === 'fixed' ? 'asking price, not a sale' : '', r.title]
+      .filter(Boolean).join(' · '),
     weight_pct: weight,
     listing_type: r.listing_type,
   };
@@ -172,10 +202,19 @@ async function gradeIdFor(
   const hit = await read();
   if (hit) return hit;
 
+  // Is the catalogue actually populated FOR THIS COMPANY? The check used to
+  // ask whether the table held any rows at all, which meant a mirror that died
+  // part-way through — the grade catalogue costs ~30 calls against a 4-req/sec
+  // limit, so a 429 mid-sweep is a real outcome — left us permanently
+  // convinced the catalogue was complete. Every later lookup then returned
+  // null and every pricing call ran unfiltered, quietly sharing the 500-row
+  // response cap across all grades instead of spending it on the one asked
+  // for. Scoping the check to the company retries the missing half.
   const { count } = await admin
     .from('cardsight_grades')
-    .select('id', { count: 'exact', head: true });
-  if (count && count > 0) return null;   // catalogue is present; this grade just isn't in it
+    .select('id', { count: 'exact', head: true })
+    .ilike('company', company);
+  if (count && count > 0) return null;   // this company is mirrored; the grade just isn't in it
 
   try {
     const catalog = await fetchGradeCatalog();
@@ -206,19 +245,26 @@ async function gradeIdFor(
 // writing it into a price history gives a lone eBay result the authority of a
 // monthly market value.
 function buildHistory(records: TaggedRecord[], tierNote: string): HistoryPoint[] {
-  const byMonth = new Map<string, TaggedRecord[]>();
-  for (const r of records) {
-    const m = r.date.slice(0, 7);
-    if (!byMonth.has(m)) byMonth.set(m, []);
-    byMonth.get(m)!.push(r);
-  }
   const out: HistoryPoint[] = [];
-  for (const [month, rs] of byMonth) {
+  for (const [month, rs] of groupByMonth(records)) {
+    // Each month is valued on its own sales alone — no carry-over from the
+    // month before, no rolling window. A monthly price series that borrowed
+    // from its neighbours would smooth away the movement it exists to show.
     if (rs.length < 2) continue;
-    const s = stats(rs);
+    const s = weightedStats(rs);
     if (!s) continue;
     const asOf = rs.map(r => r.date.slice(0, 10)).sort().at(-1)!;
-    out.push({ month, asOf, stats: s, rows: rs.map(r => toRow(r, 0, tierNote)) });
+    out.push({
+      month,
+      monthEnd: monthEndDate(month),
+      asOf,
+      stats: s,
+      // Every listing behind the month, kept as the mark's evidence so the
+      // user can open the point later and see what it was built from. They
+      // carry no weight: the month's value is the weighted median of the whole
+      // set, so no single row owns a share of it.
+      rows: rs.map(r => toRow(r, 0, tierNote)),
+    });
   }
   return out.sort((a, b) => a.month.localeCompare(b.month));
 }
@@ -297,33 +343,36 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const listingType = body.listing_type ?? 'auction';
   const company = (body.grading_company ?? '').trim();
   const isGraded = !!company && company.toLowerCase() !== 'raw' && !!body.grade;
+
+  // Signed copies are normally stripped out — CardSight files a "PSA AUTO 10"
+  // slab in the PSA 10 bucket — but a card the owner has recorded AS an
+  // autograph wants exactly those comps, so it opts back in.
+  const wantsAutographs = isAutographTitle(body.player);
 
   // Ungraded cards get statistics but no prefilled rows. CardSight exposes no
   // condition field on a listing, and a raw card's price is mostly condition —
   // handing over a $430 and a $3,938 sale as comparable "comps" would be
   // actively misleading. The distribution, clearly labelled, is honest.
   if (!isGraded) {
-    let comps, askComps;
+    let comps;
     try {
-      comps = await fetchComps(cardId, { listingType });
-      askComps = await fetchComps(cardId, { listingType: 'fixed' });
+      comps = await fetchComps(cardId, { listingType: 'both', includeAutographs: wantsAutographs });
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: 502 });
     }
     const raw = ungradedRecords(comps.buckets);
-    const rawAsk = ungradedRecords(askComps.buckets);
+    const rawAsk = raw.filter(r => r.listing_type === 'fixed');
     return NextResponse.json<CompsResponse>({
       matched, tier: 'ungraded', bucketLabel: 'ungraded sales',
       rows: [],
-      stats: stats(raw),
+      stats: weightedStats(withinDays(raw, COMP_WINDOW_DAYS)),
       monthly: monthlySeries(raw),
       // No stored history for ungraded cards: a month's median across unknown
       // conditions isn't a value, it's an average of different cards.
       history: [],
-      ask: stats(rawAsk),
+      ask: weightedStats(withinDays(rawAsk, COMP_WINDOW_DAYS)),
       lastSale: comps.lastSale,
       truncated: comps.truncated,
       note: 'Ungraded sales carry no condition data, and condition drives most of the spread you see here. Treat this as a range to judge against, not as comps.',
@@ -336,17 +385,14 @@ export async function POST(req: NextRequest) {
   // full depth for this grade — hundreds of sales on a busy card, where an
   // unfiltered call would have handed back a couple of dozen — and it's the
   // answer we want most of the time, so the common case costs one request.
-  let comps, askComps = null as Awaited<ReturnType<typeof fetchComps>> | null;
+  //
+  // One call covers both jobs: `both` brings completed auctions and Buy-It-Now
+  // asks back together, and the whole archive comes with them, so the recent
+  // comps window is a local filter rather than a second round trip.
+  const fetchOpts = { listingType: 'both' as const, includeAutographs: wantsAutographs };
+  let comps;
   try {
-    comps = await fetchComps(cardId, { listingType, gradeId: gradeId ?? undefined });
-    if (gradeId) {
-      // Buy-It-Now asks for the same grade. These become rows too — the
-      // Source column names them as Buy-It-Now so they're distinguishable —
-      // but they arrive weighted at zero, because an ask is what a seller
-      // hoped for rather than what the card fetched and runs meaningfully
-      // higher (13% on a PSA 9 Griffey). Visible as context, not counted.
-      askComps = await fetchComps(cardId, { listingType: 'fixed', gradeId });
-    }
+    comps = await fetchComps(cardId, { ...fetchOpts, gradeId: gradeId ?? undefined });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
@@ -357,7 +403,7 @@ export async function POST(req: NextRequest) {
   // second, unfiltered call. Only vintage and scarce grades get this far.
   if (!selection || selection.records.length < 3) {
     try {
-      const all = await fetchComps(cardId, { listingType });
+      const all = await fetchComps(cardId, fetchOpts);
       const widened = selectComps(all.buckets, company, String(body.grade), 3);
       if (widened && widened.records.length > (selection?.records.length ?? 0)) {
         selection = widened;
@@ -377,46 +423,63 @@ export async function POST(req: NextRequest) {
   }
 
   const tierNote = selection.tier === 'exact' ? '' : `widened to ${selection.bucketLabel}`;
-  const askSelection = askComps ? selectComps(askComps.buckets, company, String(body.grade), 3) : null;
 
-  // Prefill the ten most recent sold comps. More than that and the table stops
-  // being reviewable, and the older tail is the least comparable anyway.
-  const sold = selection.records.slice(0, 10);
-  // A handful of asks for context. Fewer, because they don't carry weight.
-  const asks = (askSelection?.records ?? []).slice(0, 3);
+  // The comps table is a recent-activity window: completed auctions and
+  // Buy-It-Now asks from the last 30 days, most recent first.
+  const inWindow = withinDays(selection.records, COMP_WINDOW_DAYS);
+  const recent = inWindow.slice(0, MAX_COMP_ROWS);
+  const trimmed = inWindow.length - recent.length;   // in-window but past the row cap
+  const older = selection.records.length - inWindow.length;
 
-  // Sold comps carry the whole 100%. Asks come in at zero so the default
-  // valuation stays bid-side while the seller can still see what people are
-  // asking — and re-weight them if they disagree.
-  const weights = equalWeights(sold.length);
-  const rows = [
-    ...sold.map((r, i) => toRow(r, weights[i], tierNote)),
-    ...asks.map(r => toRow(r, 0, [tierNote, 'asking price, not a sale'].filter(Boolean).join(' · '))),
-  ];
-  // Unless there were no sales at all, in which case asks are all we have and
-  // an unweighted table would be useless.
-  if (!sold.length && asks.length) {
-    const askWeights = equalWeights(asks.length);
-    rows.forEach((r, i) => { r.weight_pct = askWeights[i]; });
-  }
+  // Auctions carry twice the weight of asks. Both are evidence; only one of
+  // them is a transaction. See LISTING_WEIGHT.
+  const weights = proportionalWeights(recent.map(r => LISTING_WEIGHT[r.listing_type] ?? 1));
+  const rows = recent.map((r, i) => toRow(r, weights[i], tierNote));
 
-  // Monthly medians of the SOLD comps, for storing as value history. Two sales
-  // is the floor: one sale is a single data point wearing the word "median".
+  // Monthly values across the whole archive, for storing as price history.
   const history = buildHistory(selection.records, tierNote);
+
+  const soldCount = recent.filter(r => r.listing_type === 'auction').length;
+  const askCount = recent.length - soldCount;
 
   return NextResponse.json<CompsResponse>({
     matched,
     tier: selection.tier,
     bucketLabel: selection.bucketLabel,
     rows,
-    stats: stats(selection.records),
+    stats: weightedStats(recent),
     monthly: monthlySeries(selection.records),
     history,
-    ask: askSelection ? stats(askSelection.records) : null,
+    ask: weightedStats(recent.filter(r => r.listing_type === 'fixed')),
     lastSale: comps.lastSale,
     truncated: comps.truncated,
-    note: selection.records.length < 3
-      ? `Only ${selection.records.length} sale${selection.records.length === 1 ? '' : 's'} found — thin sample, weight accordingly.`
-      : null,
+    note: compsNote(recent.length, soldCount, askCount, older, trimmed),
   });
+}
+
+// What to say about the sample above the table. The counts matter more than
+// any adjective here: a blended figure standing on one auction and four asks
+// deserves to be read differently from one standing on twelve auctions, and
+// only the breakdown tells the user which they have.
+function compsNote(
+  total: number, sold: number, asks: number, older: number, trimmed: number,
+): string | null {
+  // Say what isn't on the table as well as what is. A user who can see two
+  // listings and is told nothing about the twelve behind them has no way to
+  // know whether the sample is the market or a slice of it.
+  const outside = older > 0
+    ? ` ${older} older listing${older === 1 ? '' : 's'} sit${older === 1 ? 's' : ''} outside the window — they still feed the monthly history below.`
+    : '';
+  const capped = trimmed > 0
+    ? ` ${trimmed} more in the window ${trimmed === 1 ? 'is' : 'are'} not shown; the stats above cover the ${total} listed.`
+    : '';
+  if (!total) {
+    return `No listings in the last ${COMP_WINDOW_DAYS} days.${outside || ' CardSight\u2019s archive reaches back about five months.'}`;
+  }
+  const parts = [
+    sold ? `${sold} completed auction${sold === 1 ? '' : 's'}` : '',
+    asks ? `${asks} Buy-It-Now ask${asks === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' and ');
+  const thin = total < 3 ? ' Thin sample — weight accordingly.' : '';
+  return `Last ${COMP_WINDOW_DAYS} days: ${parts}. Auctions are weighted double, because an ask is what a seller wanted, not what the card fetched.${thin}${capped}${outside}`;
 }
