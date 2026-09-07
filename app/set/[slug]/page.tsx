@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
+import ValueSetModal, { type SweepTarget } from '@/components/ValueSetModal';
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
@@ -684,7 +685,31 @@ export default function SetEditorPage() {
       image_back: String(row['Image 2'] || '').trim() || null,
     };
   }
+  // Every row with enough identity for CardSight to find the card. A row
+  // missing a year, number or player cannot be looked up at all, so it is left
+  // out of the sweep rather than reported as a failure 200 times over.
+  const sweepTargets: SweepTarget[] = useMemo(() => {
+    const out: SweepTarget[] = [];
+    rows.forEach((row, i) => {
+      const d = descriptorForRow(row);
+      if (!d.year || !d.card_number || !d.player) return;
+      const raw = String(row['Value'] ?? '').replace(/[^0-9.\-]/g, '');
+      const cur = raw ? Number(raw) : NaN;
+      out.push({
+        key: `${i}:${d.card_number}`,
+        rowIndex: i,
+        descriptor: d,
+        label: [d.card_number ? `#${d.card_number}` : '', d.player,
+                d.grading_company && d.grade ? `${d.grading_company} ${d.grade}` : (d.raw_grade || 'raw')]
+          .filter(Boolean).join(' · '),
+        currentValue: Number.isFinite(cur) ? cur : null,
+      });
+    });
+    return out;
+  }, [rows, year, brand, slug]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
+  const [valueSetOpen, setValueSetOpen] = useState(false);
   const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
   const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
 
@@ -1909,6 +1934,12 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <button type="button" onClick={addRow} className="btn btn-ghost btn-sm">
                 + Add row
               </button>
+              {sweepTargets.length > 0 && (
+                <button type="button" onClick={() => setValueSetOpen(true)} className="btn btn-ghost btn-sm"
+                  title="Price every card in this set from CardSight comps">
+                  ⇊ Value all cards
+                </button>
+              )}
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                 Appends a blank row to the end of the table — fill in any fields you want.
               </span>
@@ -2038,6 +2069,25 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           // don't lose the change to a stale-rows blur formatter on the next tick.
           onChangeCell(idx, 'Value', toCurrency(value.toFixed(2)));
           // A commit may have just added a history point — refresh trend badges.
+          loadValueTrends();
+        }}
+      />
+      <ValueSetModal
+        open={valueSetOpen}
+        onClose={() => { setValueSetOpen(false); loadValueTrends(); }}
+        userId={userId || ''}
+        targets={sweepTargets}
+        onApply={(values) => {
+          // One state update for the whole sweep. Applying them one at a time
+          // would have each write race the previous render's stale rows.
+          setRows(prev => {
+            const next = [...prev];
+            for (const [i, v] of values) {
+              if (!next[i]) continue;
+              next[i] = { ...next[i], Value: toCurrency(v.toFixed(2)) };
+            }
+            return next;
+          });
           loadValueTrends();
         }}
       />
