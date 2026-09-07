@@ -3,20 +3,27 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import {
   activeListings,
+  conditionLabel,
   fetchComps,
+  fetchMarketplace,
   groupByMonth,
   isAutographTitle,
   isCompletedSale,
   isQualifiedGrade,
+  marketBucket,
+  matchesCard,
   monthEndDate,
   monthlySeries,
   resolveCard,
+  searchListings,
+  searchQuery,
   selectComps,
   stats,
   ungradedRecords,
   withinDays,
   fetchGradeCatalog,
   type ActiveListing,
+  type MarketRecord,
   type CompStats,
   type MatchTier,
   type MonthPoint,
@@ -62,6 +69,10 @@ const ACTIVE_WINDOW_DAYS = 45;
 // Ceiling on prefilled rows. Past a dozen the table stops being something a
 // person reviews and re-weights, which is the whole exercise.
 const MAX_COMP_ROWS = 12;
+
+// Below this many completed sales in the window, go looking through listing
+// titles as well. See wideNet().
+const WIDEN_BELOW = THIN_SALES;
 
 function adminClient() {
   return createAdminClient(
@@ -116,16 +127,39 @@ export type HistoryPoint = {
 // card's own data shows how far that can drift. They answer a different and
 // genuinely useful question: if you were selling tomorrow, what would you be
 // competing against, and what have buyers already refused?
+export type LiveAuction = {
+  title: string | null;
+  url: string | null;
+  price: number;            // the current bid
+  bidCount: number | null;
+  endDate: string | null;
+  condition: string | null;
+};
+
 export type ActiveMarket = {
   n: number;
-  stats: CompStats;
-  listings: Array<ActiveListing & { staleDays: number | null }>;
+  // Null when the only live thing is a running auction and nothing is on ask.
+  stats: CompStats | null;
+  listings: Array<ActiveListing & {
+    staleDays: number | null;
+    condition: string | null;
+    // Seen in today's marketplace snapshot, rather than inferred from a recent
+    // crawl of the pricing archive. See buildActiveMarket().
+    confirmed: boolean;
+  }>;
+  // Auctions running right now, soonest to close first. The only
+  // forward-looking data in this API: an auction with bids on it is demand
+  // that has not resolved yet, and its close date is a date the owner can put
+  // in a diary. Everything else on this page is history.
+  auctions: LiveAuction[];
   // Asks we have watched go unsold across at least two crawls. The clearest
   // signal on the page: a price the market has already declined.
   stale: { n: number; median: number | null; maxDaysListed: number };
   // Median ask against median sale. Above zero means sellers are asking more
   // than the card fetches — normal, but the size of the gap is the story.
   premiumPct: number | null;
+  // How many of `listings` the marketplace confirms are still up.
+  liveConfirmed: number;
   guidance: {
     // Undercut the cheapest live ask; the fastest honest sale.
     priceToMove: number | null;
@@ -212,8 +246,15 @@ function toRow(r: TaggedRecord, weight: number, tierNote: string): CompRow {
     // so in words as well as in the Source column, because the distinction
     // between what a card fetched and what someone hoped for is the single
     // easiest thing to misread in this table.
-    notes: [tierNote, r.listing_type === 'fixed' ? 'asking price, not a sale' : '', r.title]
-      .filter(Boolean).join(' · '),
+    notes: [
+      tierNote,
+      // Where the row came from, when that isn't CardSight's own matcher. The
+      // evidence is the same listing either way, but the user is entitled to
+      // know which rows we vouched for ourselves.
+      r.viaSearch ? 'title match' : '',
+      r.listing_type === 'fixed' ? 'asking price, not a sale' : '',
+      r.title,
+    ].filter(Boolean).join(' · '),
     weight_pct: weight,
     listing_type: r.listing_type,
   };
@@ -412,7 +453,13 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: 502 });
     }
-    const raw = ungradedRecords(comps.buckets);
+    let raw = ungradedRecords(comps.buckets).map(r => ({ ...r, company: '', grade: '' }));
+    // Ungraded listings are exactly the ones sellers title loosely, so the
+    // matcher misses more of them than it does slabs — on the 1967 Carew the
+    // title search finds 47 raw copies against the card-id endpoint's nine.
+    if (withinDays(raw.filter(isCompletedSale), SALE_WINDOW_DAYS).length < WIDEN_BELOW) {
+      raw = [...raw, ...await wideNet(body, 'Raw', null, raw, wantsAutographs)];
+    }
     const rawSales = raw.filter(isCompletedSale);
     return NextResponse.json<CompsResponse>({
       matched, tier: 'ungraded', bucketLabel: 'ungraded sales',
@@ -424,8 +471,8 @@ export async function POST(req: NextRequest) {
       history: [],
       ask: null,
       active: buildActiveMarket(
-        raw.map(r => ({ ...r, company: '', grade: '' })),
-        '', '', stats(withinDays(rawSales, SALE_WINDOW_DAYS)),
+        await liveShelf(cardId, '', '', wantsAutographs),
+        raw, '', '', stats(withinDays(rawSales, SALE_WINDOW_DAYS)),
       ),
       saleWindowDays: SALE_WINDOW_DAYS,
       lastSale: comps.lastSale,
@@ -486,13 +533,28 @@ export async function POST(req: NextRequest) {
   //
   // Qualified slabs come out too: "PSA 6 OC" sits in the PSA 6 bucket and
   // trades nowhere near it. See isQualifiedGrade().
-  const comparable = selection.records.filter(r => !isQualifiedGrade(r.title));
+  let comparable = selection.records.filter(r => !isQualifiedGrade(r.title));
   const qualifiedOut = selection.records.length - comparable.length;
-  const sales = comparable.filter(isCompletedSale);
+  let sales = comparable.filter(isCompletedSale);
 
   // One window, held shut. When nothing sold in the last 30 days the table
   // stays empty and the note says why. See SALE_WINDOW_DAYS.
-  const recent: TaggedRecord[] = withinDays(sales, SALE_WINDOW_DAYS);
+  let recent: TaggedRecord[] = withinDays(sales, SALE_WINDOW_DAYS);
+
+  // Thin at the exact grade even after widening the bucket — the shortfall may
+  // be CardSight's matcher rather than the market. Search the listing titles
+  // and re-verify every hit locally. Only cards that need it pay the request.
+  let salvaged = 0;
+  if (recent.length < WIDEN_BELOW && selection.tier === 'exact') {
+    const extra = await wideNet(body, company, String(body.grade), comparable, wantsAutographs);
+    if (extra.length) {
+      salvaged = extra.length;
+      comparable = [...comparable, ...extra];
+      sales = comparable.filter(isCompletedSale);
+      recent = withinDays(sales, SALE_WINDOW_DAYS);
+    }
+  }
+
   const shown = recent.slice(0, MAX_COMP_ROWS);
   const trimmed = recent.length - shown.length;
 
@@ -505,7 +567,10 @@ export async function POST(req: NextRequest) {
   const history = buildHistory(sales, tierNote);
 
   const saleStats = stats(shown);
-  const active = buildActiveMarket(comparable, company, String(body.grade), saleStats);
+  const active = buildActiveMarket(
+    await liveShelf(cardId, company, String(body.grade), wantsAutographs),
+    comparable, company, String(body.grade), saleStats,
+  );
 
   return NextResponse.json<CompsResponse>({
     matched,
@@ -520,41 +585,178 @@ export async function POST(req: NextRequest) {
     saleWindowDays: SALE_WINDOW_DAYS,
     lastSale: comps.lastSale,
     truncated: comps.truncated,
-    note: compsNote(shown.length, trimmed, sales.length, active?.n ?? 0, qualifiedOut),
+    note: compsNote(shown.length, trimmed, sales.length, active?.n ?? 0, qualifiedOut, salvaged),
   });
 }
 
-// Build the live Buy-It-Now picture for the grade we matched on.
+// Go looking for the listings CardSight's matcher never tied to this card.
+//
+// /pricing/{card_id} only ever returns records their matcher has already
+// linked, and on a card whose catalogue name is nothing like what sellers
+// type, that is a minority of the market. The 1967 Topps Carew rookie is
+// filed as "A. League Rookie Stars (Rod Carew / Hank Allen)": at PSA 6 the
+// card-id endpoint has one record and it is an ask, so the grade shows no
+// completed sales at all. The same card searched by title returns two real
+// auction sales, at $756 and $775, plus four asks — which is the difference
+// between "no data" and a valuation.
+//
+// The search index does not know what card it is returning, so every hit is
+// re-verified locally against the identity the owner recorded before it is
+// allowed anywhere near a price. See matchesCard(): year, number, player,
+// grade, and no reprints, lots or autographs. Anything that fails is dropped
+// silently — a wider net is only worth having if the mesh is tight.
+async function wideNet(
+  body: Body, company: string, grade: string | null,
+  have: TaggedRecord[], wantsAutographs: boolean,
+): Promise<TaggedRecord[]> {
+  const q = searchQuery({
+    year: body.year ?? null, brand: body.brand ?? null,
+    number: body.number ?? null, player: body.player ?? null,
+  });
+  // Too little to search on would return the whole index and match on noise.
+  if (q.split(/\s+/).filter(Boolean).length < 2) return [];
+
+  let hits;
+  try {
+    hits = await searchListings(q, { listingType: 'both', period: 'all', limit: 100 });
+  } catch {
+    return [];   // A failed widening is a thin table, not a broken one.
+  }
+
+  // Records we already hold, by listing URL. CardSight's matcher and its text
+  // index overlap heavily on the cards where the matcher works at all.
+  const seen = new Set(have.map(r => r.url ?? '').filter(Boolean));
+
+  const out: TaggedRecord[] = [];
+  for (const h of hits) {
+    if (h.url && seen.has(h.url)) continue;
+    if (!Number.isFinite(Number(h.price)) || Number(h.price) <= 0) continue;
+    if (!matchesCard(h.title, {
+      year: body.year ?? null,
+      number: body.number ?? null,
+      player: body.player ?? null,
+      company, grade,
+    }, { allowAutographs: wantsAutographs })) continue;
+    if (h.url) seen.add(h.url);
+    out.push({
+      title: h.title, price: Number(h.price), date: h.date,
+      source: h.source, listing_type: h.listing_type,
+      url: h.url, image_url: h.image_url,
+      company, grade: grade ?? '', viaSearch: true,
+    });
+  }
+  return out;
+}
+
+// What is on the shelf for this grade right now.
+//
+// A failure here costs the live-market panel and nothing else: comps, history
+// and valuation all come from the pricing archive, so a marketplace outage
+// should not take the page down with it.
+async function liveShelf(
+  cardId: string, company: string, grade: string, wantsAutographs: boolean,
+): Promise<MarketRecord[]> {
+  try {
+    const buckets = await fetchMarketplace(cardId, { includeAutographs: wantsAutographs });
+    return marketBucket(buckets, company, grade);
+  } catch {
+    return [];
+  }
+}
+
+// Build the live market picture for the grade we matched on.
+//
+// Two sources, and neither is sufficient alone.
+//
+// /marketplace is the authoritative present tense — it says what is on the
+// shelf right now, with a condition on each listing and, on the auctions, a
+// bid count and a closing time. But its coverage thins out badly on exactly
+// the cards this app is for: the 1961 Mantle PSA 6 has nine live asks in the
+// pricing archive and none at all in the marketplace snapshot; the 1986 Fleer
+// Jordan PSA 8 has fifty against nine. Switching to it wholesale would empty
+// the panel on most vintage.
+//
+// So the archive stays the base — every ask seen in a recent crawl — and the
+// marketplace adds to it: listings the archive missed, a condition where it
+// overlaps, and the running auctions, which the archive cannot contain at all
+// because an auction that has not ended has no sale record.
 function buildActiveMarket(
-  buckets: TaggedRecord[],
+  live: MarketRecord[],
+  history: TaggedRecord[],
   company: string,
   grade: string,
   saleStats: CompStats | null,
 ): ActiveMarket | null {
-  const asks = activeListings(buckets, company, grade)
-    .filter(l => withinDays([{ date: l.lastSeen }], ACTIVE_WINDOW_DAYS).length > 0);
-  if (!asks.length) return null;
+  const liveAsks = live.filter(r => r.listing_type === 'fixed');
+  const byTitle = new Map(liveAsks.map(r => [titleKey(r.title), r] as const));
+
+  // The archive's view, with its clock intact.
+  const fromArchive = activeListings(history, company, grade)
+    .filter(l => withinDays([{ date: l.lastSeen }], ACTIVE_WINDOW_DAYS).length > 0)
+    .map(l => {
+      const seen = byTitle.get(titleKey(l.title));
+      if (seen) byTitle.delete(titleKey(l.title));
+      return {
+        ...l,
+        // Only claim a listing is stale when we have watched it survive the
+        // gap between two crawls. One sighting means we know nothing of its age.
+        staleDays: l.sightings > 1 ? l.daysListed : null,
+        condition: conditionLabel(seen?.condition),
+        // Confirmed on the shelf as of the marketplace snapshot, rather than
+        // inferred from a recent crawl.
+        confirmed: !!seen,
+      };
+    });
+
+  // Whatever the marketplace has that the archive never saw. No sighting
+  // history, so no age — but it is definitely for sale, which the archive
+  // entries only probably are.
+  const fromMarket = [...byTitle.values()].map(r => ({
+    price: Number(r.price),
+    title: r.title,
+    url: r.url,
+    company: company || null,
+    grade: grade || null,
+    firstSeen: '', lastSeen: '', sightings: 1, daysListed: 0, priceCut: 0,
+    staleDays: null as number | null,
+    condition: conditionLabel(r.condition),
+    confirmed: true,
+  }));
+
+  const asks = [...fromArchive, ...fromMarket].sort((a, b) => a.price - b.price);
+
+  const auctions: LiveAuction[] = live
+    .filter(r => r.listing_type === 'auction')
+    .map(r => ({
+      title: r.title,
+      url: r.url,
+      price: Number(r.price),
+      bidCount: typeof r.bid_count === 'number' ? r.bid_count : null,
+      endDate: r.end_date ?? null,
+      condition: conditionLabel(r.condition),
+    }))
+    .sort((a, b) => (a.endDate ?? '9999').localeCompare(b.endDate ?? '9999'));
+
+  if (!asks.length && !auctions.length) return null;
 
   const askStats = stats(asks.map(l => ({ price: l.price })));
-  if (!askStats) return null;
-
-  // "Stale" needs two sightings: one crawl tells us a listing exists, two tell
-  // us it survived the gap between them without selling.
-  const staleList = asks.filter(l => l.sightings > 1 && l.daysListed >= 14);
+  const staleList = asks.filter(l => l.staleDays !== null && l.staleDays >= 14);
   const staleStats = stats(staleList.map(l => ({ price: l.price })));
 
-  const premiumPct = saleStats && saleStats.median > 0
+  const premiumPct = askStats && saleStats && saleStats.median > 0
     ? ((askStats.median - saleStats.median) / saleStats.median) * 100
     : null;
 
   return {
     n: asks.length,
     stats: askStats,
-    listings: asks.map(l => ({ ...l, staleDays: l.sightings > 1 ? l.daysListed : null })),
+    listings: asks,
+    auctions,
+    liveConfirmed: asks.filter(l => l.confirmed).length,
     stale: {
       n: staleList.length,
       median: staleStats?.median ?? null,
-      maxDaysListed: staleList.reduce((m, l) => Math.max(m, l.daysListed), 0),
+      maxDaysListed: staleList.reduce((m, l) => Math.max(m, l.staleDays ?? 0), 0),
     },
     premiumPct,
     guidance: {
@@ -563,13 +765,19 @@ function buildActiveMarket(
       // above the last sale — the 1961 Mantle's cheapest is $1,500 against a
       // $1,152 sale — beating the shelf still leaves you above the market, so
       // the clearing price wins. Rounded to a figure a person would type.
-      priceToMove: roundPrice(
-        saleStats ? Math.min(askStats.min * 0.97, saleStats.median) : askStats.min * 0.97,
-      ),
+      priceToMove: askStats
+        ? roundPrice(saleStats ? Math.min(askStats.min * 0.97, saleStats.median) : askStats.min * 0.97)
+        : (saleStats ? roundPrice(saleStats.median) : null),
       fairValue: saleStats ? roundPrice(saleStats.median) : null,
-      topOfMarket: roundPrice(askStats.p75),
+      topOfMarket: askStats ? roundPrice(askStats.p75) : null,
     },
   };
+}
+
+// How activeListings() decides two records are the same listing. Shared so the
+// live shelf and the sighting history line up on the same key.
+function titleKey(title: string | null | undefined): string {
+  return (title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 // Round to a figure a seller would actually list at.
@@ -585,13 +793,16 @@ function roundPrice(n: number): number {
 // only the breakdown tells the user which they have.
 function compsNote(
   shown: number, trimmed: number,
-  totalSales: number, activeAsks: number, qualifiedOut: number,
+  totalSales: number, activeAsks: number, qualifiedOut: number, salvaged: number,
 ): string | null {
   const qualified = qualifiedOut > 0
     ? ` ${qualifiedOut} qualified slab${qualifiedOut === 1 ? '' : 's'} (OC, MC, ST…) set aside — same grade number, different card.`
     : '';
   const live = activeAsks
     ? ` ${activeAsks} Buy-It-Now ask${activeAsks === 1 ? '' : 's'} are listed right now — those are in the live-market panel, not here, because an ask is not a sale.`
+    : '';
+  const wide = salvaged
+    ? ` ${salvaged} of these CardSight had not linked to this card — we found them by title and checked the year, number, player and grade ourselves. They are marked "title match" in the Notes column.`
     : '';
 
   if (!shown) {
@@ -609,5 +820,5 @@ function compsNote(
     : '';
   const depth = totalSales > shown ? ` ${totalSales} sales sit in the archive overall and all of them feed the monthly history below.` : '';
 
-  return `${shown} completed auction sale${shown === 1 ? '' : 's'} in the last ${SALE_WINDOW_DAYS} days.${thin}${qualified}${capped}${live}${depth}`;
+  return `${shown} completed auction sale${shown === 1 ? '' : 's'} in the last ${SALE_WINDOW_DAYS} days.${thin}${wide}${qualified}${capped}${live}${depth}`;
 }

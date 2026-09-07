@@ -80,7 +80,14 @@ export function isCompletedSale(r: Pick<CardSightRecord, 'listing_type'>): boole
 // TARGET grade would be a lie — a BCCG 10 is roughly a PSA 8, so showing one
 // as "PSA 10" would quietly inflate the analysis. Every comp carries its true
 // grader and grade from here on.
-export type TaggedRecord = CardSightRecord & { company: string; grade: string };
+export type TaggedRecord = CardSightRecord & {
+  company: string;
+  grade: string;
+  // True when the record reached us through /pricing/search and was verified
+  // against the card by matchesCard() rather than by CardSight's own matcher.
+  // The user sees it on the row: same evidence, a different chain of custody.
+  viaSearch?: boolean;
+};
 
 export type CompStats = {
   n: number;
@@ -666,4 +673,340 @@ export function monthlySeries(
     .filter(([, rs]) => rs.length >= minPerBucket)
     .map(([month, rs]) => ({ month, monthEnd: monthEndDate(month), stats: stats(rs)! }));
   return points.length >= minBuckets ? points : null;
+}
+
+// ——— The wide net ——————————————————————————————————————————————
+
+// One hit from /pricing/search, CardSight's free-text search over listing
+// titles. Same shape as a pricing record plus two optional pieces of context:
+// the card their matcher tied it to, and the grade it parsed. Both are absent
+// far more often than they are present, which is the entire point of this
+// endpoint — see searchListings().
+export type SearchRecord = CardSightRecord & {
+  matched_card?: {
+    card_id: string;
+    name: string | null;
+    number: string | null;
+    set?: { set_id: string; name: string | null; year: string | null; release: string | null } | null;
+  } | null;
+  grade?: {
+    grade_id: string;
+    grade_value: string | null;
+    company_name: string | null;
+    company_id: string | null;
+  } | null;
+};
+
+// Search listing titles directly, ignoring the card catalogue.
+//
+// /pricing/{card_id} only returns listings CardSight's matcher has already
+// tied to that card, and on cards whose real name is nothing like the name
+// sellers type, that matcher misses most of the market. The 1967 Topps Carew
+// rookie is catalogued as "A. League Rookie Stars (Rod Carew / Hank Allen)":
+// the card-id endpoint returns 32 records for it, while this endpoint returns
+// 91 for the same card, of which 70 carry no matched_card at all — listings
+// like "1967 Topps #569 AL Rookies w/ Rod Carew RC Rookie HOF PSA 6 EX-MT"
+// that are unmistakably this card to a human and invisible to the matcher.
+//
+// The cost of the wider net is that it is a text search: it will also return
+// other cards, other years, reprints and lots. Nothing from here should reach
+// a valuation without passing matchesCard().
+export async function searchListings(
+  q: string,
+  opts: { listingType?: 'auction' | 'fixed' | 'both'; period?: string; limit?: number } = {},
+): Promise<SearchRecord[]> {
+  const res = await call<{ results?: SearchRecord[] }>('/pricing/search', {
+    q,
+    period: opts.period ?? 'all',
+    listing_type: opts.listingType ?? 'both',
+    limit: Math.min(opts.limit ?? 100, 100),
+  });
+  return res.results ?? [];
+}
+
+// The query to hand searchListings() for a card the owner has described.
+//
+// Deliberately the plain-language form a seller would type — year, brand,
+// player, number — rather than the catalogue's name for the card. The whole
+// reason this path exists is that the two differ.
+export function searchQuery(identity: CardIdentity): string {
+  return [identity.year, identity.brand, identity.player, identity.number]
+    .map(v => (v == null ? '' : String(v).trim()))
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 200);
+}
+
+// ——— Verifying a title match ——————————————————————————————————
+
+// Reprints, reproductions and fantasy cards carry the real card's year, number
+// and player, so every identity check below passes them, and they sell for a
+// couple of dollars. The Carew search returns two: a $2 "Topps Reprint 1967
+// #569" auction and a $15 reprint. One of those in a five-sale window drags a
+// $600 median to $500. They do not appear in the card-id endpoint's curated
+// records, so this guard exists for the search path specifically.
+const REPRINT_TITLE =
+  /\b(re-?prints?|re-?produ(ction|ced)|repro|novelty|fantasy|custom(?:\s+made)?|aceo|broder|counterfeit|fake|replica)\b/i;
+
+export function isReprintTitle(title: string | null | undefined): boolean {
+  return REPRINT_TITLE.test(title ?? '');
+}
+
+// A lot is priced as a lot. "Lot of 12 1967 Topps including #569 Carew" is a
+// real completed sale at a real price and tells you nothing about this card.
+// Set breaks are the deliberate exception: "1967 Topps Set-Break #300 Mantle"
+// is one card, sold singly, and is exactly the comp we want.
+const LOT_TITLE =
+  /\blots?\s+of\b|\b\d+\s*(?:card|cards)\s+lot\b|\bcard\s+lot\b|\bbundle\b|\bcomplete\s+set\b|\bteam\s+set\b|\bstarter\s+set\b|\bcollection\s+of\b/i;
+
+export function isLotTitle(title: string | null | undefined): boolean {
+  return LOT_TITLE.test(title ?? '');
+}
+
+// Every grading company we have seen in a title, including the ones whose
+// scales don't line up with PSA's. Parsing them all matters even for the ones
+// we would never accept as a comp: "KSA 6" has to be *recognised* as a grade
+// so that it can be rejected as a PSA 6, rather than falling through the
+// grade check as an unbranded card.
+const GRADERS = 'psa|sgc|bgs|bvg|bccg|cgc|csg|hga|ksa|gma|isa|pro|tag|rcg|ags|mnt|ace|mba|gai|pgi|wcg|scg|pcg|csa|sga|dga';
+
+// A grade a title actually claims. The trailing lookahead is the difference
+// between a slab and a sales pitch: "Ken Griffey Jr #1 (RC) Easy PSA 9-10" is
+// a RAW card at $250 whose seller is guessing, and it matched "PSA 9" happily
+// until the range was excluded — against real PSA 9 sales of $450-550, that
+// one row would have cut the median by a third.
+const GRADER_TITLE = new RegExp(`\\b(${GRADERS})\\s*#?\\s*(10|\\d(?:\\.5)?)\\b(?!\\s*[-–—/]\\s*\\d)`, 'gi');
+
+// Any grader named at all, with or without a number.
+const GRADER_WORD = new RegExp(`\\b(${GRADERS})\\b`, 'gi');
+
+// Phrases that mean "this card is not in fact graded". Sellers of raw cards
+// invoke graders constantly — as an aspiration, a service they will pay for,
+// or an invitation to the buyer to judge — and every one of those titles would
+// otherwise read as a slab.
+const UNGRADED_CLAIM =
+  /\b(raw|ungraded|un-graded|not\s+graded|you\s+be\s+the\s+judge|would\s+grade|will\s+grade|should\s+grade|grades?\s+(?:easy|out|at|well)|easy\s+(?:psa|sgc|bgs)|ready\s+to\s+(?:grade|submit)|(?:psa|sgc|bgs)[-\s]*ready|candidate|worthy)\b/i;
+
+// Distinct grading companies named in a title.
+function graderWords(title: string): string[] {
+  return [...new Set([...title.matchAll(GRADER_WORD)].map(m => m[1].toUpperCase()))];
+}
+
+export type TitleGrade = { company: string; grade: string };
+
+// Every distinct grader+grade pair stated in a title.
+//
+// Returns all of them rather than the first, because a title naming two is
+// either a mixed lot or an autograph slab ("PSA 3 DNA 10"), and both are
+// things the caller must be able to refuse.
+export function titleGrades(title: string | null | undefined): TitleGrade[] {
+  const out: TitleGrade[] = [];
+  const seen = new Set<string>();
+  for (const m of (title ?? '').matchAll(GRADER_TITLE)) {
+    const key = `${m[1].toUpperCase()} ${m[2]}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push({ company: m[1].toUpperCase(), grade: m[2] });
+    }
+  }
+  return out;
+}
+
+// Tokens too common to identify anyone.
+const PLAYER_STOPWORDS = new Set([
+  'rookie', 'rookies', 'card', 'cards', 'base', 'set', 'topps', 'bowman',
+  'fleer', 'donruss', 'upper', 'deck', 'score', 'leaf', 'stars', 'star',
+  'league', 'baseball', 'football', 'basketball', 'hockey', 'high', 'number',
+  'series', 'graded', 'vintage', 'mint',
+]);
+
+// Does this listing title describe the card we were asked about?
+//
+// The search endpoint hands back whatever the text index matched, so this is
+// the gate that decides what may enter a valuation. It is deliberately
+// unforgiving: a comp we wrongly reject costs the user a row, and a comp we
+// wrongly accept quietly moves the number they are about to trust.
+//
+// Every clause has to pass. Absence of evidence is a rejection, not a pass —
+// a title that never states a grade cannot be shown as a PSA 6 comp, because
+// it is just as likely to be the raw copy.
+export function matchesCard(
+  title: string | null | undefined,
+  want: {
+    year: number | null;
+    number: string | null;
+    player: string | null;
+    company: string | null;   // '' / 'Raw' / null for ungraded
+    grade: string | null;
+  },
+  opts: { allowAutographs?: boolean } = {},
+): boolean {
+  const t = (title ?? '').trim();
+  if (!t) return false;
+
+  if (isReprintTitle(t) || isLotTitle(t) || isQualifiedGrade(t)) return false;
+  if (!opts.allowAutographs && isAutographTitle(t)) return false;
+
+  // Year, stated in full. Vintage sellers write it; it is the cheapest way to
+  // keep a 1968 Carew out of a 1967 Carew's comps.
+  if (want.year != null && !new RegExp(`\\b${want.year}\\b`).test(t)) return false;
+
+  // Card number, as its own token. The optional '#' and 'No.' cover how it is
+  // actually written; the boundaries keep #569 from matching 1569 or 56.
+  if (want.number) {
+    const n = want.number.trim().replace(/^#/, '');
+    if (n && !new RegExp(`(?:^|[^0-9a-z])(?:#|no\\.?\\s*)?${escapeRe(n)}(?![0-9a-z])`, 'i').test(t)) {
+      return false;
+    }
+  }
+
+  // At least one distinctive word from the player the owner recorded. On "Rod
+  // Carew" that is "carew" — "rod" is under the length floor, which is what we
+  // want, since a three-letter token matches far too much.
+  if (want.player) {
+    const tokens = want.player
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(w => w.length >= 4 && !PLAYER_STOPWORDS.has(w));
+    if (tokens.length && !tokens.some(w => new RegExp(`\\b${escapeRe(w)}`, 'i').test(t))) {
+      return false;
+    }
+  }
+
+  // Grade. Both directions are strict, and for the same reason: the price gap
+  // between a raw 1967 Carew and a PSA 8 one is two orders of magnitude.
+  const graded = !!want.company && want.company.toLowerCase() !== 'raw' && !!want.grade;
+  const found = titleGrades(t);
+  const graders = graderWords(t);
+  if (graded) {
+    // Exactly one grade, from exactly one company, and both have to be ours.
+    // Two of either means a lot or a crossover listing we cannot read
+    // confidently — "Mickey Mantle Psa 6 MBA Bronze" is one card described by
+    // two graders and we do not know which slab is being sold. None means we
+    // cannot tell this is a slab at all.
+    if (found.length !== 1 || graders.length !== 1) return false;
+    if (found[0].company !== want.company!.trim().toUpperCase()) return false;
+    if (!sameGrade(found[0].grade, want.grade!)) return false;
+    // And the seller must be describing a slab, not predicting one.
+    if (UNGRADED_CLAIM.test(t)) return false;
+  } else {
+    // Ungraded: no grader named at all, with or without a number. A raw
+    // listing that name-drops PSA is either aspirational or a crossover, and
+    // we are not going to guess which.
+    if (found.length || graders.length) return false;
+  }
+
+  return true;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// '8' and '8.0' are the same grade; '8' and '8.5' are not.
+function sameGrade(a: string, b: string): boolean {
+  const n = (s: string) => Number(String(s).trim().replace(/^#/, ''));
+  const x = n(a), y = n(b);
+  return Number.isFinite(x) && Number.isFinite(y) && x === y;
+}
+
+// ——— The live shelf ————————————————————————————————————————————
+
+// One listing that is for sale right now, from /marketplace/{card_id}.
+//
+// Not the same thing as a pricing record. There is no `date`, because the
+// listing has not ended; there IS a `condition`, which the pricing endpoint
+// never gives us; and an auction carries the two facts that make it worth
+// watching — what it is bid to, and when it closes.
+export type MarketRecord = {
+  title: string | null;
+  price: number | null;
+  source: string;
+  // 'search' is neither: it is a link to an eBay results page CardSight
+  // returns when it has no individual listing to show. It has no price and
+  // must never be counted as inventory.
+  listing_type: 'auction' | 'fixed' | 'search';
+  url: string | null;
+  image_url: string | null;
+  condition: string | null;
+  end_date?: string | null;
+  bid_count?: number | null;
+};
+
+export type MarketBucket = { company: string | null; grade: string | null; records: MarketRecord[] };
+
+type MarketplaceResponse = {
+  raw?: { count: number; records: MarketRecord[] };
+  graded?: Array<{
+    company_name: string;
+    grades: Array<{ grade_value: string; grade_id: string; count: number; records: MarketRecord[] }>;
+  }>;
+};
+
+// What is actually for sale, right now.
+//
+// The live picture used to be inferred from the pricing endpoint: a `fixed`
+// record seen in a recent crawl was treated as a listing still standing. That
+// is a reasonable guess and this is the fact — CardSight publishes the live
+// shelf directly, and it comes with a condition on each listing and, on the
+// auctions, a bid count and a closing time. An auction closing in two days
+// with four bids on it is the only forward-looking number available anywhere
+// in this API; everything else describes what already happened.
+//
+// The one thing it does NOT carry is how long a listing has been up, because
+// there are no repeat sightings in a snapshot of the present. That clock still
+// comes from the pricing archive — see activeListings().
+export async function fetchMarketplace(
+  cardId: string,
+  opts: { gradeId?: string; includeAutographs?: boolean } = {},
+): Promise<MarketBucket[]> {
+  const res = await call<MarketplaceResponse>(`/marketplace/${cardId}`, {
+    listing_type: 'both',
+    grade_id: opts.gradeId,
+  });
+
+  const clean = (records: MarketRecord[] | undefined): MarketRecord[] =>
+    (records ?? []).filter(r =>
+      r.listing_type !== 'search' &&
+      Number.isFinite(Number(r.price)) && Number(r.price) > 0 &&
+      (opts.includeAutographs || !isAutographTitle(r.title)) &&
+      !isQualifiedGrade(r.title) &&
+      !isReprintTitle(r.title) &&
+      !isLotTitle(r.title));
+
+  const buckets: MarketBucket[] = [];
+  const raw = clean(res.raw?.records);
+  if (raw.length) buckets.push({ company: null, grade: null, records: raw });
+  for (const c of res.graded ?? []) {
+    for (const g of c.grades ?? []) {
+      const records = clean(g.records);
+      if (records.length) buckets.push({ company: c.company_name, grade: g.grade_value, records });
+    }
+  }
+  return buckets;
+}
+
+// The live records for one grade, using the same widening rules as comps: an
+// exact bucket if there is one, otherwise nothing. Guidance for a seller has
+// to be about their grade, not a neighbouring one.
+export function marketBucket(
+  buckets: MarketBucket[],
+  company: string,
+  grade: string,
+): MarketRecord[] {
+  const graded = !!company && company.toLowerCase() !== 'raw' && !!grade;
+  if (!graded) {
+    return buckets.find(b => b.company === null)?.records ?? [];
+  }
+  const c = company.trim().toLowerCase();
+  const g = String(grade).trim();
+  return buckets.find(b =>
+    (b.company ?? '').toLowerCase() === c && String(b.grade ?? '').trim() === g,
+  )?.records ?? [];
+}
+
+// Condition as CardSight reports it, in words a person uses.
+export function conditionLabel(c: string | null | undefined): string | null {
+  if (!c || c === 'UNKNOWN') return null;
+  return c.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, m => m.toUpperCase());
 }

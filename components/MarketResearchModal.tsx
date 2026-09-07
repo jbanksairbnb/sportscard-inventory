@@ -318,7 +318,23 @@ function CompsPanel({ comps, onImportHistory, importing, imported }: {
   );
 }
 
-// The live Buy-It-Now shelf — deliberately below the sold stats and outside the
+// "2d 4h", or "ended" for one the crawl caught on its way out.
+function endsIn(iso: string | null): string {
+  if (!iso) return '—';
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return '—';
+  if (ms <= 0) return 'ending';
+  const h = Math.floor(ms / 3_600_000);
+  return h < 24 ? `ends in ${h}h` : `ends in ${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+function closingSoon(iso: string | null): boolean {
+  if (!iso) return false;
+  const ms = Date.parse(iso) - Date.now();
+  return Number.isFinite(ms) && ms > 0 && ms < 24 * 3_600_000;
+}
+
+// The live shelf — deliberately below the sold stats and outside the
 // comps table, because none of it is evidence of value.
 //
 // It answers the seller's question instead of the collector's: not "what is
@@ -337,7 +353,8 @@ function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['acti
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <strong style={{ color: 'var(--plum)', fontSize: 12.5 }}>Live market</strong>
         <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-          {active.n} listed now · not comps
+          {active.n} asking{active.liveConfirmed > 0 && ` (${active.liveConfirmed} confirmed live)`}
+          {active.auctions.length > 0 && ` · ${active.auctions.length} at auction`} · not comps
         </span>
         {premium !== null && (
           <span className="chip" style={{
@@ -348,14 +365,16 @@ function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['acti
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 8 }}>
-        <Stat label="Cheapest ask" value={fmtMoney(active.stats.min)} />
-        <Stat label="Median ask" value={fmtMoney(active.stats.median)} />
-        <Stat label="Highest ask" value={fmtMoney(active.stats.max)} />
-        {active.stale.n > 0 && (
-          <Stat label="Unsold 14d+" value={`${active.stale.n} of ${active.n}`} warn />
-        )}
-      </div>
+      {active.stats && (
+        <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 8 }}>
+          <Stat label="Cheapest ask" value={fmtMoney(active.stats.min)} />
+          <Stat label="Median ask" value={fmtMoney(active.stats.median)} />
+          <Stat label="Highest ask" value={fmtMoney(active.stats.max)} />
+          {active.stale.n > 0 && (
+            <Stat label="Unsold 14d+" value={`${active.stale.n} of ${active.n}`} warn />
+          )}
+        </div>
+      )}
 
       {/* Three prices a seller can actually act on. */}
       <div style={{
@@ -402,10 +421,48 @@ function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['acti
         </div>
       )}
 
-      <button type="button" onClick={() => setOpen(o => !o)} className="btn btn-ghost btn-sm"
-        style={{ fontSize: 11 }}>
-        {open ? 'Hide listings' : `Show all ${active.n} listings`}
-      </button>
+      {/* The only forward-looking thing on this page. A sold comp says what the
+          card fetched last month; an auction with bids on it and two days to
+          run is demand still being decided, and it is the one number here that
+          will be different tomorrow. Worth a diary entry either way — as a
+          buyer or as someone about to list against it. */}
+      {active.auctions.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)', marginBottom: 4 }}>
+            Auctions running now
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {active.auctions.slice(0, 5).map((a, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', fontSize: 11.5 }}>
+                <span className="mono" style={{ fontWeight: 700, color: 'var(--orange)', minWidth: 72 }}>
+                  {fmtMoney(a.price)}
+                </span>
+                <span className="mono" style={{ color: 'var(--ink-mute)', minWidth: 60 }}>
+                  {a.bidCount === null ? '—' : `${a.bidCount} bid${a.bidCount === 1 ? '' : 's'}`}
+                </span>
+                <span className="mono" style={{ color: closingSoon(a.endDate) ? 'var(--rust)' : 'var(--ink-soft)', minWidth: 84 }}>
+                  {endsIn(a.endDate)}
+                </span>
+                {a.url
+                  ? <a href={a.url} target="_blank" rel="noreferrer" style={{ color: 'var(--plum)', flex: '1 1 200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title || 'view'}</a>
+                  : <span style={{ color: 'var(--ink-soft)' }}>{a.title || '—'}</span>}
+              </div>
+            ))}
+          </div>
+          {active.auctions.length > 5 && (
+            <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 3 }}>
+              +{active.auctions.length - 5} more running.
+            </div>
+          )}
+        </div>
+      )}
+
+      {active.n > 0 && (
+        <button type="button" onClick={() => setOpen(o => !o)} className="btn btn-ghost btn-sm"
+          style={{ fontSize: 11 }}>
+          {open ? 'Hide listings' : `Show all ${active.n} listings`}
+        </button>
+      )}
 
       {open && (
         <div style={{ overflowX: 'auto', marginTop: 8 }}>
@@ -414,6 +471,7 @@ function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['acti
               <tr style={{ textAlign: 'left', color: 'var(--ink-mute)' }}>
                 <th style={detailTh}>Ask</th>
                 <th style={detailTh}>Grade</th>
+                <th style={detailTh}>Condition</th>
                 <th style={detailTh}>On the market</th>
                 <th style={detailTh}>Listing</th>
               </tr>
@@ -430,8 +488,15 @@ function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['acti
                   <td className="mono" style={detailTd}>
                     {[l.company, l.grade].filter(Boolean).join(' ') || '—'}
                   </td>
+                  <td className="mono" style={{ ...detailTd, color: 'var(--ink-soft)' }}>
+                    {l.condition ?? '—'}
+                  </td>
                   <td className="mono" style={{ ...detailTd, color: l.staleDays && l.staleDays >= 14 ? 'var(--rust)' : undefined }}>
-                    {l.staleDays === null ? 'just seen' : `${l.staleDays}d unsold`}
+                    {l.staleDays === null ? 'just listed' : `${l.staleDays}d unsold`}
+                    {/* Confirmed against today's shelf, versus last seen in a
+                        crawl and assumed to still be up. Different confidence,
+                        so they should not look the same. */}
+                    {l.confirmed && <span style={{ color: 'var(--ink-mute)' }}> · live</span>}
                   </td>
                   <td style={{ ...detailTd, maxWidth: 300 }}>
                     {l.url
