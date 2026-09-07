@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import {
   AnalysisRow, AnalysisSnapshot, ValueHistoryRow,
   normalizeAnalysis, contentHash, trendFromRows, cardValueKey, dedupeByPosition,
-  cardsightDedupeKey,
+  cardsightDedupeKey, dataPointHasUserContent, analysisFromDataPoints,
 } from '@/lib/cardValueHistory';
 import { insertValueHistoryRow } from '@/lib/recordValueMark';
 import type { CompsResponse } from '@/app/api/cardsight/comps/route';
@@ -867,21 +867,6 @@ function collapseImportedMonths(rows: ValueHistoryRow[]): ValueHistoryRow[] {
   return out.reverse();
 }
 
-// Whether a stored comp row carries anything the owner actually entered.
-// Mirrors rowHasUserContent, which decides what commitHistory puts into a
-// snapshot: the two have to agree, or an analysis restored from its session
-// would hash differently from the same analysis committed the normal way.
-// Pre-populated source / grade defaults don't count — that's scaffolding from
-// the modal opening, not data the user committed.
-function dpHasUserContent(d: DataPointRow): boolean {
-  if (d.price !== null && d.price !== undefined) return true;
-  if (d.weight_pct !== null && d.weight_pct !== undefined) return true;
-  if ((d.url || '').trim()) return true;
-  if ((d.notes || '').trim()) return true;
-  if (d.source === 'other' && (d.source_label || '').trim()) return true;
-  return false;
-}
-
 function sourceDisplay(s: SourceValue, label: string | null): string {
   if (s === 'other') return label?.trim() || 'Other';
   const found = RESEARCH_SOURCES.find(x => x.value === s);
@@ -997,14 +982,14 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       const empties = ownAll.filter(s => {
         if ((s.notes || '').trim()) return false;
         const dps = s.market_research_data_points || [];
-        return dps.every(d => !dpHasUserContent(d));
+        return dps.every(d => !dataPointHasUserContent(d));
       });
       if (empties.length > 0) {
         await supabase.from('market_research_sessions').delete().in('id', empties.map(s => s.id));
       }
       const own = ownAll.filter(s => !empties.includes(s));
       const others = all.filter(s => s.user_id !== user.id
-        && (s.market_research_data_points || []).some(d => dpHasUserContent(d)));
+        && (s.market_research_data_points || []).some(d => dataPointHasUserContent(d)));
 
       // Always open with a blank form. The user's latest analysis (if any) is
       // surfaced as a "Use most recent analysis" link, and the full archive is
@@ -1584,20 +1569,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // same value, so a card whose history is already correct never offers this.
   const sessionAnalysis = useMemo(() => {
     if (!latestSession || latestSession.session.market_value === null) return null;
-    const rows: AnalysisRow[] = (latestSession.data_points || [])
-      .filter(dpHasUserContent)
-      .map(d => ({
-        position: d.position,
-        source: d.source,
-        source_label: d.source === 'other' ? (d.source_label || '').trim() || null : null,
-        grade_company: d.grade_company,
-        grade_value: d.grade_value,
-        sale_date: d.sale_date,
-        price: d.price,
-        weight_pct: d.weight_pct,
-        url: (d.url || '').trim() || null,
-        notes: (d.notes || '').trim() || null,
-      }));
+    const rows = analysisFromDataPoints(latestSession.data_points || []);
     const notesText = (latestSession.session.notes || '').trim() || null;
     const value = latestSession.session.market_value;
     const normalized = normalizeAnalysis(rows, notesText, value);
@@ -1804,7 +1776,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
           // the card surfaces the analysis, and pulling it into the form for
           // editing stays a deliberate click.
           const saved = (latestSession.data_points || [])
-            .filter(dpHasUserContent)
+            .filter(dataPointHasUserContent)
             .sort((a, b) => a.position - b.position);
           const when = new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString();
           const sessionNotes = (latestSession.session.notes || '').trim();

@@ -167,3 +167,59 @@ export function trendFromRows(rows: { market_value: number; created_at: string }
   const pct = previous !== 0 ? (delta / previous) * 100 : null;
   return { direction, latest, previous, delta, pct };
 }
+
+// Rebuilding an analysis from its saved session ------------------------------
+//
+// A research session stores its comps as `market_research_data_points`; a price
+// history mark stores the same comps inside `snapshot.rows`. Turning the former
+// into the latter is what both restore paths do — the per-card button in the
+// research modal and the bulk pass over a whole collection.
+//
+// They have to agree with commitHistory on which rows belong in a snapshot and
+// how each field is normalized, because `content_hash` over the result is what
+// decides whether an analysis is already charted. A disagreement of a single
+// trimmed string would make every already-correct card look unrestored and
+// write a duplicate mark. Hence one implementation, here, rather than three.
+
+// The subset of a stored comp row this needs. Structural, so both the modal's
+// richer DataPointRow and a bare select() satisfy it.
+export type StoredDataPoint = {
+  position: number;
+  source: string;
+  source_label: string | null;
+  grade_company: string | null;
+  grade_value: string | null;
+  sale_date: string | null;
+  price: number | null;
+  weight_pct: number | null;
+  url: string | null;
+  notes: string | null;
+};
+
+// Whether a stored comp carries anything the owner actually entered. Mirrors
+// the research modal's rowHasUserContent: pre-populated source and grade
+// defaults are scaffolding from the modal opening, not committed data.
+export function dataPointHasUserContent(d: StoredDataPoint): boolean {
+  if (d.price !== null && d.price !== undefined) return true;
+  if (d.weight_pct !== null && d.weight_pct !== undefined) return true;
+  if ((d.url || '').trim()) return true;
+  if ((d.notes || '').trim()) return true;
+  if (d.source === 'other' && (d.source_label || '').trim()) return true;
+  return false;
+}
+
+// The comps of a saved session, in the shape a snapshot stores them.
+export function analysisFromDataPoints(dps: StoredDataPoint[]): AnalysisRow[] {
+  return dps.filter(dataPointHasUserContent).map(d => ({
+    position: d.position,
+    source: d.source,
+    source_label: d.source === 'other' ? (d.source_label || '').trim() || null : null,
+    grade_company: d.grade_company,
+    grade_value: d.grade_value,
+    sale_date: d.sale_date,
+    price: d.price,
+    weight_pct: d.weight_pct,
+    url: (d.url || '').trim() || null,
+    notes: (d.notes || '').trim() || null,
+  }));
+}
