@@ -9,7 +9,6 @@ import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 import ValueSetModal, { type SweepTarget } from '@/components/ValueSetModal';
-import RestoreAnalysesModal from '@/components/RestoreAnalysesModal';
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
@@ -724,7 +723,6 @@ export default function SetEditorPage() {
 
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
   const [valueSetOpen, setValueSetOpen] = useState(false);
-  const [restoreOpen, setRestoreOpen] = useState(false);
   const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
   const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
 
@@ -1955,10 +1953,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                   ⇊ Value graded cards
                 </button>
               )}
-              <button type="button" onClick={() => setRestoreOpen(true)} className="btn btn-ghost btn-sm"
-                title="Put saved analyses back on their cards' price charts, across your whole collection">
-                ⟲ Restore price history
-              </button>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                 Appends a blank row to the end of the table — fill in any fields you want.
               </span>
@@ -2090,12 +2084,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           // A commit may have just added a history point — refresh trend badges.
           loadValueTrends();
         }}
-      />
-      <RestoreAnalysesModal
-        open={restoreOpen}
-        onClose={() => setRestoreOpen(false)}
-        userId={userId || ''}
-        onDone={() => loadValueTrends()}
       />
       <ValueSetModal
         open={valueSetOpen}
