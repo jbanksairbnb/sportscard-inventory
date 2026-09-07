@@ -898,6 +898,14 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // Immutable committed-analysis log for this card (newest first) — powers the
   // price-history list, the sparkline, and the up/down trend badge.
   const [valueHistory, setValueHistory] = useState<ValueHistoryRow[]>([]);
+  // Marks and drafts that belong to this card number and year but were filed
+  // under a different brand or grade variant — see OrphanRecoveryPanel. They
+  // are never blended into the history above: an exact key is what stops a raw
+  // copy inheriting its PSA sibling's prices, and that stays exact.
+  const [orphanMarks, setOrphanMarks] = useState<ValueHistoryRow[]>([]);
+  const [orphanSessions, setOrphanSessions] = useState<SessionRow[]>([]);
+  const [recovering, setRecovering] = useState<string | null>(null);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
   // When the working draft was seeded from a prior history entry, remember it
   // so the next commit records the lineage.
   const [derivedFromId, setDerivedFromId] = useState<string | null>(null);
@@ -962,8 +970,13 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       const { data: matches, error } = await q;
       if (error) console.warn('[research] load error:', error.message);
       type SessionWithDP = SessionRow & { market_research_data_points: DataPointRow[] };
-      const all = ((matches || []) as unknown as SessionWithDP[]).filter(matchesCard);
+      const everything = (matches || []) as unknown as SessionWithDP[];
+      const all = everything.filter(matchesCard);
       const ownAll = all.filter(s => s.user_id === user.id);
+      // Drafts on this card number and year that the identity key no longer
+      // matches. The garbage collector below never sees them, so they are
+      // safe — just invisible until the recovery panel offers them back.
+      setOrphanSessions(everything.filter(s => s.user_id === user.id && !matchesCard(s)));
       // Garbage-collect: silently delete the user's own sessions that have no
       // notes AND every data point lacks user-entered content (price, weight,
       // URL, row note, or custom-source label). Pre-populated source / grade
@@ -1014,7 +1027,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
 
       // Immutable committed-analysis history for this card, keyed by the same
       // identity tuple used for sessions above.
-      setValueHistory(await fetchValueHistory(supabase, user.id));
+      const history = await fetchValueHistory(supabase, user.id);
+      setValueHistory(history.matched);
+      setOrphanMarks(history.orphans);
+      setRecoverError(null);
 
       // Community sessions — show last 10 from other users on this card.
       const labeledCommunity: CommunitySession[] = others.slice(0, 10).map(s => ({
@@ -1029,6 +1045,119 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, card.year, card.brand, card.card_number, card.player, card.grade, card.grading_company, card.raw_grade]);
+
+  // The orphans, grouped by the identity they were actually filed under, so
+  // the panel can say "these 7 are under PSA 8" rather than listing 7 rows.
+  const orphanVariants = useMemo(() => {
+    type Variant = {
+      key: string;
+      brand: string | null;
+      grading_company: string | null;
+      grade: string | null;
+      raw_grade: string | null;
+      marks: ValueHistoryRow[];
+      sessions: SessionRow[];
+      latest: string;          // ISO date of the most recent thing in here
+      latestValue: number | null;
+    };
+    const by = new Map<string, Variant>();
+    const put = (
+      r: { card_brand: string | null; card_grading_company: string | null;
+           card_grade: string | null; card_raw_grade: string | null },
+      when: string, value: number | null,
+      into: 'marks' | 'sessions', row: never,
+    ) => {
+      const key = cardValueKey({
+        year: card.year, brand: r.card_brand, card_number: card.card_number,
+        grade: r.card_grade, grading_company: r.card_grading_company, raw_grade: r.card_raw_grade,
+      });
+      let v = by.get(key);
+      if (!v) {
+        v = {
+          key, brand: r.card_brand, grading_company: r.card_grading_company,
+          grade: r.card_grade, raw_grade: r.card_raw_grade,
+          marks: [], sessions: [], latest: when, latestValue: value,
+        };
+        by.set(key, v);
+      }
+      (v[into] as unknown[]).push(row);
+      if (when > v.latest) { v.latest = when; v.latestValue = value; }
+    };
+    for (const m of orphanMarks) {
+      put(m, m.created_at, m.market_value, 'marks', m as never);
+    }
+    for (const ss of orphanSessions) {
+      put(ss, ss.updated_at || ss.created_at, ss.market_value, 'sessions', ss as never);
+    }
+    return [...by.values()].sort((a, b) => b.latest.localeCompare(a.latest));
+  }, [orphanMarks, orphanSessions, card.year, card.card_number]);
+
+  // Re-file one variant's analyses onto the card as it is described now.
+  //
+  // This rewrites the identity columns and nothing else — the value, the
+  // comps and the date all stand. It is the one repair the app offers on
+  // otherwise-immutable marks, and it exists because the identity key spans
+  // six fields (two of them set-level), so editing a set's Year or Brand
+  // silently detaches every analysis in it at once.
+  async function recoverVariant(v: { key: string; marks: ValueHistoryRow[]; sessions: SessionRow[] }) {
+    if (!userId) return;
+    setRecovering(v.key);
+    setRecoverError(null);
+    const supabase = createClient();
+    const identity = {
+      card_brand: card.brand,
+      card_grade: card.grade,
+      card_grading_company: card.grading_company,
+      card_raw_grade: card.raw_grade,
+    };
+    try {
+      if (v.marks.length) {
+        const { error } = await supabase.from('card_value_history')
+          .update(identity).in('id', v.marks.map(m => m.id)).eq('user_id', userId);
+        if (error) throw new Error(error.message);
+
+        // A machine-imported mark carries an idempotency key naming the card
+        // it was filed under, so re-filing leaves that key asserting something
+        // about a different card — and the next import of that month would not
+        // recognise this row and would add a second copy, which is exactly the
+        // duplicate-bars bug the key exists to prevent. Re-point each key at
+        // the card it now belongs to. A collision means the target card really
+        // does already hold that month, so this row is a genuine duplicate:
+        // keep it (marks are not ours to delete) but stop it guarding a month
+        // it no longer represents.
+        const newKey = cardValueKey({
+          year: card.year, brand: card.brand, card_number: card.card_number,
+          grade: card.grade, grading_company: card.grading_company, raw_grade: card.raw_grade,
+        });
+        for (const m of v.marks) {
+          if (!m.dedupe_key) continue;
+          const parts = m.dedupe_key.split(':');
+          const rekeyed = parts.length === 3 ? `${parts[0]}:${newKey}:${parts[2]}` : null;
+          const res = await supabase.from('card_value_history')
+            .update({ dedupe_key: rekeyed }).eq('id', m.id).eq('user_id', userId);
+          if (res.error?.code === '23505') {
+            await supabase.from('card_value_history')
+              .update({ dedupe_key: null }).eq('id', m.id).eq('user_id', userId);
+          }
+        }
+      }
+      if (v.sessions.length) {
+        const { error } = await supabase.from('market_research_sessions')
+          .update(identity).in('id', v.sessions.map(x => x.id)).eq('user_id', userId);
+        if (error) throw new Error(error.message);
+      }
+      // Re-read rather than patching state: the recovered marks have to go
+      // through collapseImportedMonths and the trend maths like any others.
+      const history = await fetchValueHistory(supabase, userId);
+      setValueHistory(history.matched);
+      setOrphanMarks(history.orphans);
+      setOrphanSessions(prev => prev.filter(x => !v.sessions.some(y => y.id === x.id)));
+    } catch (e) {
+      setRecoverError((e as Error).message);
+    } finally {
+      setRecovering(null);
+    }
+  }
 
   const totals = useMemo(() => {
     let weight = 0;
@@ -1243,15 +1372,28 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // and manual value marks alike, since both are marks on the same series. Year
   // + card_number narrow it server-side; `matchesCard` applies the rest of the
   // identity tuple exactly, the same way the session lookup above does.
-  async function fetchValueHistory(supabase: ReturnType<typeof createClient>, uid: string): Promise<ValueHistoryRow[]> {
+  async function fetchValueHistory(
+    supabase: ReturnType<typeof createClient>, uid: string,
+  ): Promise<{ matched: ValueHistoryRow[]; orphans: ValueHistoryRow[] }> {
     let q = supabase.from('card_value_history').select('*')
       .eq('user_id', uid)
       .order('created_at', { ascending: false });
     if (card.year !== null) q = q.eq('card_year', card.year); else q = q.is('card_year', null);
     if (card.card_number) q = q.eq('card_number', card.card_number); else q = q.is('card_number', null);
     const { data, error } = await q;
-    if (error) { console.warn('[research] value history load error:', error.message); return []; }
-    return collapseImportedMonths(((data || []) as unknown as ValueHistoryRow[]).filter(matchesCard));
+    if (error) {
+      setHistoryError(error.message);
+      return { matched: [], orphans: [] };
+    }
+    const rows = (data || []) as unknown as ValueHistoryRow[];
+    // Everything here is already this year + card number. What separates the
+    // two piles is the rest of the identity tuple — brand and the grade
+    // variant — so an orphan is a mark on THIS card recorded while one of
+    // those fields read differently. See the recovery panel.
+    return {
+      matched: collapseImportedMonths(rows.filter(matchesCard)),
+      orphans: rows.filter(r => !matchesCard(r)),
+    };
   }
 
   // Record an immutable snapshot of the current analysis — but only when it
@@ -1518,6 +1660,63 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
         </div>
 
         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px' }}>{INSTRUCTIONS}</p>
+        {/* Analyses that belong to this card but were filed under a different
+            brand or grade. The identity key spans six fields — two of them
+            (year, brand) taken from the SET, not the row — so editing a set's
+            Year or Brand silently detaches every analysis it contains at once,
+            and the work looks lost when it is only mislabelled. Nothing here
+            is blended into the history above; it is offered back explicitly. */}
+        {orphanVariants.length > 0 && (
+          <div style={{
+            padding: '11px 14px', background: 'var(--cream)', border: '1.5px solid var(--orange)',
+            borderRadius: 8, marginBottom: 14,
+          }}>
+            <div style={{ fontSize: 12.5, color: 'var(--plum)', fontWeight: 700, marginBottom: 3 }}>
+              Earlier analyses for this card, filed under a different variant
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--ink-soft)', lineHeight: 1.55, marginBottom: 9, maxWidth: 620 }}>
+              Same year and card number, different brand or grade — so they stopped matching
+              this card when one of those fields changed. Nothing was deleted. Moving them here
+              keeps every value, comp and date exactly as recorded; only the label changes.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {orphanVariants.map(v => {
+                const label = [
+                  v.brand,
+                  v.grading_company && v.grade ? `${v.grading_company} ${v.grade}` : (v.raw_grade || 'raw'),
+                ].filter(Boolean).join(' · ');
+                const counts = [
+                  v.marks.length ? `${v.marks.length} mark${v.marks.length === 1 ? '' : 's'}` : '',
+                  v.sessions.length ? `${v.sessions.length} draft${v.sessions.length === 1 ? '' : 's'}` : '',
+                ].filter(Boolean).join(' · ');
+                return (
+                  <div key={v.key} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                    padding: '7px 10px', background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6,
+                  }}>
+                    <span className="mono" style={{ fontSize: 12, color: 'var(--plum)', fontWeight: 700 }}>
+                      {label || '(no brand or grade)'}
+                    </span>
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+                      {counts}
+                      {v.latestValue !== null && <> · latest {fmtMoney(v.latestValue)}</>}
+                      {' '}· {new Date(v.latest).toLocaleDateString()}
+                    </span>
+                    <button type="button" onClick={() => recoverVariant(v)} disabled={recovering !== null}
+                      className="btn btn-primary btn-sm" style={{ fontSize: 11, marginLeft: 'auto' }}>
+                      {recovering === v.key ? 'Moving…' : `Move to ${conditionLabel}`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {recoverError && (
+              <div style={{ fontSize: 11.5, color: 'var(--rust)', fontWeight: 600, marginTop: 8 }}>
+                Couldn&rsquo;t move those analyses: {recoverError}
+              </div>
+            )}
+          </div>
+        )}
         {latestSession && !sessionId && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
             <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
