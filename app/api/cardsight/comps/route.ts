@@ -55,6 +55,20 @@ export type CompRow = {
   notes: string;
   weight_pct: number;
   listing_type: 'auction' | 'fixed';
+  // Which dropdown value the row should carry, so the Source column says where
+  // the sale happened and whether it was an auction or a Buy-It-Now.
+  source: 'cardsight_auction' | 'cardsight_bin' | 'other';
+  // Only set when the marketplace isn't one our source list covers; the modal
+  // shows it as a free-text label alongside 'other'.
+  source_label: string | null;
+};
+
+// One month of sold comps, ready to store as a value-history mark.
+export type HistoryPoint = {
+  month: string;              // YYYY-MM
+  asOf: string;               // YYYY-MM-DD, the month's most recent sale
+  stats: CompStats;
+  rows: CompRow[];
 };
 
 export type CompsResponse = {
@@ -64,6 +78,10 @@ export type CompsResponse = {
   rows: CompRow[];
   stats: CompStats | null;
   monthly: Array<{ month: string; stats: CompStats }> | null;
+  // Per-month medians we can write into card_value_history. Looser than
+  // `monthly` (which gates on density before drawing a trend) because a
+  // two-sale month is still a real data point once its sample size is shown.
+  history: HistoryPoint[];
   ask: CompStats | null;        // Buy-It-Now asking prices, for reference only
   lastSale: string | null;
   truncated: boolean;
@@ -96,12 +114,24 @@ function equalWeights(n: number): number[] {
 // widens they differ, and that difference is exactly what the user needs to
 // see to weight the row honestly.
 function toRow(r: TaggedRecord, weight: number, tierNote: string): CompRow {
+  // Every record CardSight returns today is from eBay, but `source` is a field
+  // on the record rather than a constant, so map it instead of assuming. An
+  // unrecognized marketplace falls back to the free-text source so a future
+  // one shows up honestly rather than being mislabelled as eBay.
+  const ebay = (r.source ?? '').toLowerCase() === 'ebay';
+  const source = ebay
+    ? (r.listing_type === 'fixed' ? 'cardsight_bin' as const : 'cardsight_auction' as const)
+    : 'other' as const;
   return {
     price: Number(r.price),
     sale_date: r.date.slice(0, 10),
     grade_company: r.company,
     grade_value: r.grade,
     url: r.url ?? '',
+    source,
+    source_label: source === 'other'
+      ? `CardSight · ${r.source} ${r.listing_type === 'fixed' ? 'Buy-It-Now' : 'auction'}`
+      : null,
     // The listing title is the audit trail: it's how a user spots that a comp
     // is an autograph, a reprint, or a trimmed card that shouldn't count.
     notes: [tierNote, r.title].filter(Boolean).join(' · '),
@@ -164,6 +194,33 @@ async function gradeIdFor(
     return null;   // pricing still works unfiltered
   }
   return read();
+}
+
+// Group sold comps into per-month medians we can store as value marks.
+//
+// Each point is dated to the month's most recent sale rather than to the day
+// the import ran, so the resulting price history is a real timeline instead of
+// a stack of marks all sharing today's date.
+//
+// Two sales is the floor. A single sale is a data point, not a median, and
+// writing it into a price history gives a lone eBay result the authority of a
+// monthly market value.
+function buildHistory(records: TaggedRecord[], tierNote: string): HistoryPoint[] {
+  const byMonth = new Map<string, TaggedRecord[]>();
+  for (const r of records) {
+    const m = r.date.slice(0, 7);
+    if (!byMonth.has(m)) byMonth.set(m, []);
+    byMonth.get(m)!.push(r);
+  }
+  const out: HistoryPoint[] = [];
+  for (const [month, rs] of byMonth) {
+    if (rs.length < 2) continue;
+    const s = stats(rs);
+    if (!s) continue;
+    const asOf = rs.map(r => r.date.slice(0, 10)).sort().at(-1)!;
+    out.push({ month, asOf, stats: s, rows: rs.map(r => toRow(r, 0, tierNote)) });
+  }
+  return out.sort((a, b) => a.month.localeCompare(b.month));
 }
 
 export async function POST(req: NextRequest) {
@@ -235,7 +292,7 @@ export async function POST(req: NextRequest) {
   if (!cardId) {
     return NextResponse.json<CompsResponse>({
       matched: null, tier: null, bucketLabel: null, rows: [], stats: null,
-      monthly: null, ask: null, lastSale: null, truncated: false,
+      monthly: null, history: [], ask: null, lastSale: null, truncated: false,
       note: 'This card is not in the CardSight catalog, so there are no comps to pull. Their pre-war coverage in particular has gaps.',
     });
   }
@@ -263,6 +320,9 @@ export async function POST(req: NextRequest) {
       rows: [],
       stats: stats(raw),
       monthly: monthlySeries(raw),
+      // No stored history for ungraded cards: a month's median across unknown
+      // conditions isn't a value, it's an average of different cards.
+      history: [],
       ask: stats(rawAsk),
       lastSale: comps.lastSale,
       truncated: comps.truncated,
@@ -280,9 +340,11 @@ export async function POST(req: NextRequest) {
   try {
     comps = await fetchComps(cardId, { listingType, gradeId: gradeId ?? undefined });
     if (gradeId) {
-      // Buy-It-Now asks for the same grade. Never mixed into the rows: an ask
-      // is what a seller hopes for, not what a card fetched, and it runs
-      // meaningfully higher. Context only.
+      // Buy-It-Now asks for the same grade. These become rows too — the
+      // Source column names them as Buy-It-Now so they're distinguishable —
+      // but they arrive weighted at zero, because an ask is what a seller
+      // hoped for rather than what the card fetched and runs meaningfully
+      // higher (13% on a PSA 9 Griffey). Visible as context, not counted.
       askComps = await fetchComps(cardId, { listingType: 'fixed', gradeId });
     }
   } catch (e) {
@@ -309,21 +371,38 @@ export async function POST(req: NextRequest) {
   if (!selection || !selection.records.length) {
     return NextResponse.json<CompsResponse>({
       matched, tier: null, bucketLabel: null, rows: [], stats: null,
-      monthly: null, ask: null, lastSale: comps.lastSale, truncated: comps.truncated,
+      monthly: null, history: [], ask: null, lastSale: comps.lastSale, truncated: comps.truncated,
       note: `No graded sales found for this card in CardSight's window (their archive currently reaches back about five months).`,
     });
   }
 
-  // Prefill the ten most recent comps. More than that and the table stops
-  // being reviewable, and the older tail is the least comparable anyway.
-  const take = selection.records.slice(0, 10);
-  const weights = equalWeights(take.length);
   const tierNote = selection.tier === 'exact' ? '' : `widened to ${selection.bucketLabel}`;
-  const rows = take.map((r, i) => toRow(r, weights[i], tierNote));
-
-  // Stats use every comp in the selected bucket, not just the ten shown —
-  // the median of 108 sales is a better anchor than the median of 10.
   const askSelection = askComps ? selectComps(askComps.buckets, company, String(body.grade), 3) : null;
+
+  // Prefill the ten most recent sold comps. More than that and the table stops
+  // being reviewable, and the older tail is the least comparable anyway.
+  const sold = selection.records.slice(0, 10);
+  // A handful of asks for context. Fewer, because they don't carry weight.
+  const asks = (askSelection?.records ?? []).slice(0, 3);
+
+  // Sold comps carry the whole 100%. Asks come in at zero so the default
+  // valuation stays bid-side while the seller can still see what people are
+  // asking — and re-weight them if they disagree.
+  const weights = equalWeights(sold.length);
+  const rows = [
+    ...sold.map((r, i) => toRow(r, weights[i], tierNote)),
+    ...asks.map(r => toRow(r, 0, [tierNote, 'asking price, not a sale'].filter(Boolean).join(' · '))),
+  ];
+  // Unless there were no sales at all, in which case asks are all we have and
+  // an unweighted table would be useless.
+  if (!sold.length && asks.length) {
+    const askWeights = equalWeights(asks.length);
+    rows.forEach((r, i) => { r.weight_pct = askWeights[i]; });
+  }
+
+  // Monthly medians of the SOLD comps, for storing as value history. Two sales
+  // is the floor: one sale is a single data point wearing the word "median".
+  const history = buildHistory(selection.records, tierNote);
 
   return NextResponse.json<CompsResponse>({
     matched,
@@ -332,6 +411,7 @@ export async function POST(req: NextRequest) {
     rows,
     stats: stats(selection.records),
     monthly: monthlySeries(selection.records),
+    history,
     ask: askSelection ? stats(askSelection.records) : null,
     lastSale: comps.lastSale,
     truncated: comps.truncated,
