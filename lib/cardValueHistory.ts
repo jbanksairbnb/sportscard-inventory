@@ -47,6 +47,10 @@ export type ValueHistoryRow = {
   // the price history CardSight has for the card, and dated to that month's
   // last sale rather than to the day they were imported.
   mark_kind: 'research' | 'manual' | 'cardsight';
+  // Idempotency key for machine-imported marks, so re-running an import is a
+  // no-op rather than a second copy. Null on marks a person made — two
+  // analyses of the same card on the same day are both real.
+  dedupe_key: string | null;
   source_session_id: string | null;
   derived_from_id: string | null;
   created_at: string;
@@ -75,6 +79,16 @@ export function cardValueKey(p: CardKeyParts): string {
     norm(p.grade),
     norm(p.raw_grade),
   ].join('|');
+}
+
+// Idempotency key for one imported month of CardSight comps.
+//
+// MUST stay byte-identical to public.cardsight_dedupe_key() in migration
+// 20260908_cardsight_history_dedupe.sql — the unique index is what actually
+// prevents duplicates, and a key the database computes differently would let
+// every already-imported month import a second time.
+export function cardsightDedupeKey(p: CardKeyParts, month: string): string {
+  return `cardsight:${cardValueKey(p)}:${month}`;
 }
 
 // Stable normalized fingerprint of an analysis, used to answer "did anything
