@@ -248,12 +248,14 @@ function CompsPanel({ comps, onImportHistory, importing, imported }: {
       {s ? (
         <>
           <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 6 }}>
-            <Stat label="Listings (30d)" value={String(s.n)} warn={thin} />
-            <Stat label="Wtd median" value={fmtMoney(s.median)} />
-            <Stat label="Wtd mean" value={fmtMoney(s.mean)} />
+            <Stat
+              label={comps.saleWindowDays ? `Sales (${comps.saleWindowDays}d)` : 'Sales (archive)'}
+              value={String(s.n)} warn={thin}
+            />
+            <Stat label="Median" value={fmtMoney(s.median)} />
+            <Stat label="Mean" value={fmtMoney(s.mean)} />
             <Stat label="Middle 50%" value={`${fmtMoney(s.p25)} – ${fmtMoney(s.p75)}`} />
             <Stat label="Range" value={`${fmtMoney(s.min)} – ${fmtMoney(s.max)}`} />
-            {comps.ask && <Stat label="Asking (BIN)" value={fmtMoney(comps.ask.median)} />}
           </div>
 
           {/* The longer view. Unlike the stats above — which are the 30-day
@@ -290,13 +292,15 @@ function CompsPanel({ comps, onImportHistory, importing, imported }: {
           </button>
           <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
             {imported === null
-              ? 'One mark per month, dated to the month\u2019s end, with its sales stored.'
+              ? 'One mark per month of completed sales, dated to the month\u2019s end.'
               : imported === 0
                 ? 'Already saved — nothing new to add.'
                 : `Saved ${imported} month${imported === 1 ? '' : 's'}.`}
           </span>
         </div>
       )}
+
+      {comps.active && <ActiveMarketPanel active={comps.active} />}
 
       {comps.note && (
         <div style={{ marginTop: 8, fontSize: 11.5, color: thin ? 'var(--rust)' : 'var(--ink-soft)', lineHeight: 1.5 }}>
@@ -306,6 +310,124 @@ function CompsPanel({ comps, onImportHistory, importing, imported }: {
       {comps.lastSale && (
         <div className="mono" style={{ marginTop: 6, fontSize: 10.5, color: 'var(--ink-mute)' }}>
           Last sale {new Date(comps.lastSale).toLocaleDateString()} · CardSight&rsquo;s archive currently reaches back about five months.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The live Buy-It-Now shelf — deliberately below the sold stats and outside the
+// comps table, because none of it is evidence of value.
+//
+// It answers the seller's question instead of the collector's: not "what is
+// this worth" but "if I listed it tomorrow, what am I up against, and what
+// price has the market already walked past?" The unsold-days figure is the
+// sharpest thing here — an ask we have watched sit for weeks is a price buyers
+// have declined, which no amount of sold data tells you.
+function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['active']> }) {
+  const [open, setOpen] = useState(false);
+  const g = active.guidance;
+  const premium = active.premiumPct;
+  return (
+    <div style={{
+      marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+        <strong style={{ color: 'var(--plum)', fontSize: 12.5 }}>Live market</strong>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+          {active.n} listed now · not comps
+        </span>
+        {premium !== null && (
+          <span className="chip" style={{
+            fontSize: 10, background: 'var(--paper)', border: '1px solid var(--rule)', color: 'var(--ink-soft)',
+          }}>
+            asks run {premium >= 0 ? '+' : ''}{premium.toFixed(0)}% vs sold
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 8 }}>
+        <Stat label="Cheapest ask" value={fmtMoney(active.stats.min)} />
+        <Stat label="Median ask" value={fmtMoney(active.stats.median)} />
+        <Stat label="Highest ask" value={fmtMoney(active.stats.max)} />
+        {active.stale.n > 0 && (
+          <Stat label="Unsold 14d+" value={`${active.stale.n} of ${active.n}`} warn />
+        )}
+      </div>
+
+      {/* Three prices a seller can actually act on. */}
+      <div style={{
+        display: 'flex', gap: 0, flexWrap: 'wrap', border: '1px solid var(--rule)',
+        borderRadius: 6, overflow: 'hidden', marginBottom: 8,
+      }}>
+        {([
+          ['Price to sell', g.priceToMove, 'At or under the shelf, near what the card actually fetches'],
+          ['Fair value', g.fairValue, 'The median of completed sales'],
+          ['Patient ask', g.topOfMarket, 'Where the optimists are listed — reachable, expect to wait'],
+        ] as const).map(([label, value, hint]) => (
+          <div key={label} title={hint} style={{
+            flex: '1 1 130px', padding: '7px 10px', background: 'var(--paper)',
+            borderRight: '1px solid var(--rule)',
+          }}>
+            <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)' }}>
+              {label}
+            </div>
+            <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--plum)' }}>
+              {value === null ? '—' : fmtMoney(value)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {active.stale.n > 0 && (
+        <div style={{ fontSize: 11.5, color: 'var(--rust)', lineHeight: 1.5, marginBottom: 6 }}>
+          {active.stale.n === 1 ? 'One ask has' : `${active.stale.n} asks have`} sat unsold for
+          {' '}{active.stale.maxDaysListed} days or more
+          {active.stale.median !== null && <> (median {fmtMoney(active.stale.median)})</>} — prices
+          buyers have already passed on.
+        </div>
+      )}
+
+      <button type="button" onClick={() => setOpen(o => !o)} className="btn btn-ghost btn-sm"
+        style={{ fontSize: 11 }}>
+        {open ? 'Hide listings' : `Show all ${active.n} listings`}
+      </button>
+
+      {open && (
+        <div style={{ overflowX: 'auto', marginTop: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--ink-mute)' }}>
+                <th style={detailTh}>Ask</th>
+                <th style={detailTh}>Grade</th>
+                <th style={detailTh}>On the market</th>
+                <th style={detailTh}>Listing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {active.listings.map((l, i) => (
+                <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
+                  <td className="mono" style={{ ...detailTd, fontWeight: 700, color: 'var(--orange)' }}>
+                    {fmtMoney(l.price)}
+                    {l.priceCut > 0 && (
+                      <span style={{ fontWeight: 400, color: 'var(--ink-mute)' }}> ↓{fmtMoney(l.priceCut)}</span>
+                    )}
+                  </td>
+                  <td className="mono" style={detailTd}>
+                    {[l.company, l.grade].filter(Boolean).join(' ') || '—'}
+                  </td>
+                  <td className="mono" style={{ ...detailTd, color: l.staleDays && l.staleDays >= 14 ? 'var(--rust)' : undefined }}>
+                    {l.staleDays === null ? 'just seen' : `${l.staleDays}d unsold`}
+                  </td>
+                  <td style={{ ...detailTd, maxWidth: 300 }}>
+                    {l.url
+                      ? <a href={l.url} target="_blank" rel="noreferrer" style={{ color: 'var(--plum)' }}>{l.title || 'view'}</a>
+                      : <span style={{ color: 'var(--ink-soft)' }}>{l.title || '—'}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -1452,7 +1574,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               <button type="button" onClick={pullComps} disabled={compsLoading}
                 className="btn btn-ghost btn-sm"
                 title={cardIsGraded
-                  ? 'Fill the table with the last 30 days of auctions and Buy-It-Now asks at this grade'
+                  ? 'Fill the table with recent completed sales at this grade, and show the live asks separately'
                   : 'Ungraded card — shows the sold price range, not comps'}>
                 {compsLoading ? 'Pulling…' : cardIsGraded ? '⇩ Pull comps' : '⇩ Pull price range'}
               </button>

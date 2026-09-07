@@ -2,18 +2,21 @@ import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import {
+  activeListings,
   fetchComps,
   groupByMonth,
   isAutographTitle,
-  LISTING_WEIGHT,
+  isCompletedSale,
+  isQualifiedGrade,
   monthEndDate,
   monthlySeries,
   resolveCard,
   selectComps,
+  stats,
   ungradedRecords,
-  weightedStats,
   withinDays,
   fetchGradeCatalog,
+  type ActiveListing,
   type CompStats,
   type MatchTier,
   type MonthPoint,
@@ -34,12 +37,23 @@ export const runtime = 'nodejs';
 // reaches the cards an earlier resolver got wrong without a mass backfill.
 const CARDSIGHT_RESOLVER_VERSION = 2;
 
-// How far back a comp may come from. A comp is an answer to "what is this card
-// worth now", and a five-month-old sale answers a different question — so the
-// prefilled table is deliberately a recent-activity window, not the archive.
-// The archive still feeds the monthly trend line and the stored price history,
-// where age is the point rather than a problem.
-const COMP_WINDOW_DAYS = 30;
+// How far back a comp may come from, widest last.
+//
+// 30 days is the answer to "what is this card worth now", and it is where we
+// start. But completed sales are much rarer than they look once asks are
+// excluded — the 1961 Mantle PSA 6 had three auctions in five months and none
+// at all in the last 30 days — so holding the window shut would leave most
+// vintage cards with an empty table. We step outward instead, and say which
+// window the numbers came from.
+const SALE_WINDOWS = [30, 90, 365] as const;
+
+// Enough sales to stop widening. Below this the next window is worth the extra
+// staleness; a single sale is a data point, not a market.
+const ENOUGH_SALES = 3;
+
+// The live market is only the live market. An ask last seen months ago says
+// nothing about what is for sale today.
+const ACTIVE_WINDOW_DAYS = 45;
 
 // Ceiling on prefilled rows. Past a dozen the table stops being something a
 // person reviews and re-weights, which is the whole exercise.
@@ -92,6 +106,32 @@ export type HistoryPoint = {
   rows: CompRow[];
 };
 
+// What the card is currently listed for, and what that implies for a seller.
+//
+// Asks are NOT evidence of value — they are what sellers hoped for, and this
+// card's own data shows how far that can drift. They answer a different and
+// genuinely useful question: if you were selling tomorrow, what would you be
+// competing against, and what have buyers already refused?
+export type ActiveMarket = {
+  n: number;
+  stats: CompStats;
+  listings: Array<ActiveListing & { staleDays: number | null }>;
+  // Asks we have watched go unsold across at least two crawls. The clearest
+  // signal on the page: a price the market has already declined.
+  stale: { n: number; median: number | null; maxDaysListed: number };
+  // Median ask against median sale. Above zero means sellers are asking more
+  // than the card fetches — normal, but the size of the gap is the story.
+  premiumPct: number | null;
+  guidance: {
+    // Undercut the cheapest live ask; the fastest honest sale.
+    priceToMove: number | null;
+    // What comparable cards have actually fetched.
+    fairValue: number | null;
+    // Where the optimists are. Reachable, but expect to wait.
+    topOfMarket: number | null;
+  };
+};
+
 export type CompsResponse = {
   matched: null | { name: string; release: string; set: string; year: string };
   tier: MatchTier | null;
@@ -104,6 +144,11 @@ export type CompsResponse = {
   // two-sale month is still a real data point once its sample size is shown.
   history: HistoryPoint[];
   ask: CompStats | null;        // Buy-It-Now asking prices, for reference only
+  // The live Buy-It-Now market. Separate from `rows` on purpose: these are not
+  // comps and must never reach the valuation.
+  active: ActiveMarket | null;
+  // Which window `rows` and `stats` were drawn from, in days.
+  saleWindowDays: number | null;
   lastSale: string | null;
   truncated: boolean;
   note: string | null;
@@ -251,7 +296,7 @@ function buildHistory(records: TaggedRecord[], tierNote: string): HistoryPoint[]
     // month before, no rolling window. A monthly price series that borrowed
     // from its neighbours would smooth away the movement it exists to show.
     if (rs.length < 2) continue;
-    const s = weightedStats(rs);
+    const s = stats(rs);
     if (!s) continue;
     const asOf = rs.map(r => r.date.slice(0, 10)).sort().at(-1)!;
     out.push({
@@ -338,7 +383,8 @@ export async function POST(req: NextRequest) {
   if (!cardId) {
     return NextResponse.json<CompsResponse>({
       matched: null, tier: null, bucketLabel: null, rows: [], stats: null,
-      monthly: null, history: [], ask: null, lastSale: null, truncated: false,
+      monthly: null, history: [], ask: null, active: null, saleWindowDays: null,
+      lastSale: null, truncated: false,
       note: 'This card is not in the CardSight catalog, so there are no comps to pull. Their pre-war coverage in particular has gaps.',
     });
   }
@@ -363,16 +409,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: (e as Error).message }, { status: 502 });
     }
     const raw = ungradedRecords(comps.buckets);
-    const rawAsk = raw.filter(r => r.listing_type === 'fixed');
+    const rawSales = raw.filter(isCompletedSale);
     return NextResponse.json<CompsResponse>({
       matched, tier: 'ungraded', bucketLabel: 'ungraded sales',
       rows: [],
-      stats: weightedStats(withinDays(raw, COMP_WINDOW_DAYS)),
-      monthly: monthlySeries(raw),
+      stats: stats(withinDays(rawSales, SALE_WINDOWS[1])),
+      monthly: monthlySeries(rawSales),
       // No stored history for ungraded cards: a month's median across unknown
       // conditions isn't a value, it's an average of different cards.
       history: [],
-      ask: weightedStats(withinDays(rawAsk, COMP_WINDOW_DAYS)),
+      ask: null,
+      active: buildActiveMarket(
+        raw.map(r => ({ ...r, company: '', grade: '' })),
+        '', '', stats(withinDays(rawSales, SALE_WINDOWS[1])),
+      ),
+      saleWindowDays: SALE_WINDOWS[1],
       lastSale: comps.lastSale,
       truncated: comps.truncated,
       note: 'Ungraded sales carry no condition data, and condition drives most of the spread you see here. Treat this as a range to judge against, not as comps.',
@@ -417,44 +468,121 @@ export async function POST(req: NextRequest) {
   if (!selection || !selection.records.length) {
     return NextResponse.json<CompsResponse>({
       matched, tier: null, bucketLabel: null, rows: [], stats: null,
-      monthly: null, history: [], ask: null, lastSale: comps.lastSale, truncated: comps.truncated,
+      monthly: null, history: [], ask: null, active: null, saleWindowDays: null,
+      lastSale: comps.lastSale, truncated: comps.truncated,
       note: `No graded sales found for this card in CardSight's window (their archive currently reaches back about five months).`,
     });
   }
 
   const tierNote = selection.tier === 'exact' ? '' : `widened to ${selection.bucketLabel}`;
 
-  // The comps table is a recent-activity window: completed auctions and
-  // Buy-It-Now asks from the last 30 days, most recent first.
-  const inWindow = withinDays(selection.records, COMP_WINDOW_DAYS);
-  const recent = inWindow.slice(0, MAX_COMP_ROWS);
-  const trimmed = inWindow.length - recent.length;   // in-window but past the row cap
-  const older = selection.records.length - inWindow.length;
+  // Completed sales only. A Buy-It-Now record is a live ask, not a sale, and
+  // pricing a card off what nobody has paid is how a $1,890 asking price
+  // becomes a $1,890 "market value". See isCompletedSale().
+  //
+  // Qualified slabs come out too: "PSA 6 OC" sits in the PSA 6 bucket and
+  // trades nowhere near it. See isQualifiedGrade().
+  const comparable = selection.records.filter(r => !isQualifiedGrade(r.title));
+  const qualifiedOut = selection.records.length - comparable.length;
+  const sales = comparable.filter(isCompletedSale);
 
-  // Auctions carry twice the weight of asks. Both are evidence; only one of
-  // them is a transaction. See LISTING_WEIGHT.
-  const weights = proportionalWeights(recent.map(r => LISTING_WEIGHT[r.listing_type] ?? 1));
-  const rows = recent.map((r, i) => toRow(r, weights[i], tierNote));
+  // Step the window out until there are enough sales to say something.
+  let saleWindowDays: number | null = null;
+  let recent: TaggedRecord[] = [];
+  for (const days of SALE_WINDOWS) {
+    recent = withinDays(sales, days);
+    saleWindowDays = days;
+    if (recent.length >= ENOUGH_SALES) break;
+  }
+  if (!recent.length && sales.length) {
+    // Nothing even in a year, but the archive holds something. Show it and say so.
+    recent = sales;
+    saleWindowDays = null;
+  }
+  const shown = recent.slice(0, MAX_COMP_ROWS);
+  const trimmed = recent.length - shown.length;
 
-  // Monthly values across the whole archive, for storing as price history.
-  const history = buildHistory(selection.records, tierNote);
+  // Equal weights: every row is now a completed sale, so none outranks another
+  // on listing type. The user re-weights for condition and eye appeal.
+  const weights = proportionalWeights(shown.map(() => 1));
+  const rows = shown.map((r, i) => toRow(r, weights[i], tierNote));
 
-  const soldCount = recent.filter(r => r.listing_type === 'auction').length;
-  const askCount = recent.length - soldCount;
+  // Monthly medians across the whole archive, for storing as price history.
+  const history = buildHistory(sales, tierNote);
+
+  const saleStats = stats(shown);
+  const active = buildActiveMarket(comparable, company, String(body.grade), saleStats);
 
   return NextResponse.json<CompsResponse>({
     matched,
     tier: selection.tier,
     bucketLabel: selection.bucketLabel,
     rows,
-    stats: weightedStats(recent),
-    monthly: monthlySeries(selection.records),
+    stats: saleStats,
+    monthly: monthlySeries(sales),
     history,
-    ask: weightedStats(recent.filter(r => r.listing_type === 'fixed')),
+    ask: active?.stats ?? null,
+    active,
+    saleWindowDays,
     lastSale: comps.lastSale,
     truncated: comps.truncated,
-    note: compsNote(recent.length, soldCount, askCount, older, trimmed),
+    note: compsNote(shown.length, saleWindowDays, trimmed, sales.length, active?.n ?? 0, qualifiedOut),
   });
+}
+
+// Build the live Buy-It-Now picture for the grade we matched on.
+function buildActiveMarket(
+  buckets: TaggedRecord[],
+  company: string,
+  grade: string,
+  saleStats: CompStats | null,
+): ActiveMarket | null {
+  const asks = activeListings(buckets, company, grade)
+    .filter(l => withinDays([{ date: l.lastSeen }], ACTIVE_WINDOW_DAYS).length > 0);
+  if (!asks.length) return null;
+
+  const askStats = stats(asks.map(l => ({ price: l.price })));
+  if (!askStats) return null;
+
+  // "Stale" needs two sightings: one crawl tells us a listing exists, two tell
+  // us it survived the gap between them without selling.
+  const staleList = asks.filter(l => l.sightings > 1 && l.daysListed >= 14);
+  const staleStats = stats(staleList.map(l => ({ price: l.price })));
+
+  const premiumPct = saleStats && saleStats.median > 0
+    ? ((askStats.median - saleStats.median) / saleStats.median) * 100
+    : null;
+
+  return {
+    n: asks.length,
+    stats: askStats,
+    listings: asks.map(l => ({ ...l, staleDays: l.sightings > 1 ? l.daysListed : null })),
+    stale: {
+      n: staleList.length,
+      median: staleStats?.median ?? null,
+      maxDaysListed: staleList.reduce((m, l) => Math.max(m, l.daysListed), 0),
+    },
+    premiumPct,
+    guidance: {
+      // Undercutting the cheapest ask only sells the card if the shelf is
+      // priced near what the card actually fetches. When every live ask sits
+      // above the last sale — the 1961 Mantle's cheapest is $1,500 against a
+      // $1,152 sale — beating the shelf still leaves you above the market, so
+      // the clearing price wins. Rounded to a figure a person would type.
+      priceToMove: roundPrice(
+        saleStats ? Math.min(askStats.min * 0.97, saleStats.median) : askStats.min * 0.97,
+      ),
+      fairValue: saleStats ? roundPrice(saleStats.median) : null,
+      topOfMarket: roundPrice(askStats.p75),
+    },
+  };
+}
+
+// Round to a figure a seller would actually list at.
+function roundPrice(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const step = n >= 1000 ? 25 : n >= 200 ? 5 : 1;
+  return Math.round(n / step) * step;
 }
 
 // What to say about the sample above the table. The counts matter more than
@@ -462,24 +590,33 @@ export async function POST(req: NextRequest) {
 // deserves to be read differently from one standing on twelve auctions, and
 // only the breakdown tells the user which they have.
 function compsNote(
-  total: number, sold: number, asks: number, older: number, trimmed: number,
+  shown: number, windowDays: number | null, trimmed: number,
+  totalSales: number, activeAsks: number, qualifiedOut: number,
 ): string | null {
-  // Say what isn't on the table as well as what is. A user who can see two
-  // listings and is told nothing about the twelve behind them has no way to
-  // know whether the sample is the market or a slice of it.
-  const outside = older > 0
-    ? ` ${older} older listing${older === 1 ? '' : 's'} sit${older === 1 ? 's' : ''} outside the window — they still feed the monthly history below.`
+  const qualified = qualifiedOut > 0
+    ? ` ${qualifiedOut} qualified slab${qualifiedOut === 1 ? '' : 's'} (OC, MC, ST…) set aside — same grade number, different card.`
     : '';
-  const capped = trimmed > 0
-    ? ` ${trimmed} more in the window ${trimmed === 1 ? 'is' : 'are'} not shown; the stats above cover the ${total} listed.`
+  const live = activeAsks
+    ? ` ${activeAsks} Buy-It-Now ask${activeAsks === 1 ? '' : 's'} are listed right now — those are in the live-market panel, not here, because an ask is not a sale.`
     : '';
-  if (!total) {
-    return `No listings in the last ${COMP_WINDOW_DAYS} days.${outside || ' CardSight\u2019s archive reaches back about five months.'}`;
+
+  if (!shown) {
+    return `No completed sales for this card in CardSight's archive — only asking prices.${qualified}${live} Their sold data covers auctions; eBay's completed Buy-It-Now sales are not in it.`;
   }
-  const parts = [
-    sold ? `${sold} completed auction${sold === 1 ? '' : 's'}` : '',
-    asks ? `${asks} Buy-It-Now ask${asks === 1 ? '' : 's'}` : '',
-  ].filter(Boolean).join(' and ');
-  const thin = total < 3 ? ' Thin sample — weight accordingly.' : '';
-  return `Last ${COMP_WINDOW_DAYS} days: ${parts}. Auctions are weighted double, because an ask is what a seller wanted, not what the card fetched.${thin}${capped}${outside}`;
+
+  const when = windowDays === null
+    ? 'across the whole archive (nothing in the last year)'
+    : windowDays === SALE_WINDOWS[0]
+      ? `in the last ${windowDays} days`
+      : `in the last ${windowDays} days — the ${SALE_WINDOWS[0]}-day window held too few to judge`;
+
+  const capped = trimmed > 0
+    ? ` ${trimmed} more sale${trimmed === 1 ? '' : 's'} in the window ${trimmed === 1 ? 'is' : 'are'} not shown.`
+    : '';
+  const thin = shown < ENOUGH_SALES
+    ? ` Only ${shown} sale${shown === 1 ? '' : 's'} — thin, weight accordingly.`
+    : '';
+  const depth = totalSales > shown ? ` ${totalSales} sales sit in the archive overall and all of them feed the monthly history below.` : '';
+
+  return `${shown} completed auction sale${shown === 1 ? '' : 's'} ${when}.${thin}${qualified}${capped}${live}${depth}`;
 }

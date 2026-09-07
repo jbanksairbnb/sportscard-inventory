@@ -54,19 +54,26 @@ export type CompBucket = {
   records: CardSightRecord[];
 };
 
-// How much a listing type counts toward a blended value.
+// `auction` is the only listing type that records a completed sale.
 //
-// An `auction` record is a card that changed hands: their timestamps cluster
-// at 00:00-04:00 UTC, which is eBay's auction-close window. A `fixed` record
-// is an ASK observed by a crawler — those timestamps cluster at 09:00-13:00
-// UTC, a daily sweep, and the same listing reappears month after month while
-// it fails to sell. Asks still carry information (they bound the top of the
-// market and they're all you have on a quiet card), just less of it, so a
-// completed auction counts double.
-export const LISTING_WEIGHT: Record<CardSightRecord['listing_type'], number> = {
-  auction: 2,
-  fixed: 1,
-};
+// Measured on 335 records for the 1961 Topps Mantle #300: 84% of `fixed`
+// timestamps land in a 09:00-13:00 UTC band, against 1% of `auction` ones —
+// auctions cluster at 00:00-03:00, which is when eBay auctions close in US
+// evening hours. `fixed` timestamps are a crawler's sweep, not a sale.
+//
+// The re-sightings settle it. Thirty of that card's 150 distinct asks appear
+// more than once, a median of 33 days apart and up to 132; one PSA 6 shows
+// $1,890 on 25 July and $1,890 again on 11 August. A sold listing cannot be
+// observed four months later at a different price.
+//
+// The record carries no sold/active flag either — only date, price,
+// listing_type, source, title and url — so a Buy-It-Now that DID sell is
+// indistinguishable from one still sitting there. eBay has those completed
+// BIN sales; this API does not expose them. Valuation therefore runs on
+// auctions alone, and the asks are reported separately as the live market.
+export function isCompletedSale(r: Pick<CardSightRecord, 'listing_type'>): boolean {
+  return r.listing_type === 'auction';
+}
 
 // A record that remembers which bucket it came from. Once the ladder widens,
 // the comps no longer share the card's own grade, and a row labelled with the
@@ -300,19 +307,21 @@ export async function fetchComps(
     limit: MAX_RECORDS,
   });
 
-  const clean = (records: CardSightRecord[], listingAware: boolean): CardSightRecord[] => {
-    const kept = opts.includeAutographs ? records : records.filter(r => !isAutographTitle(r.title));
-    return listingAware ? collapseRelistings(kept) : kept;
-  };
+  // Autographs out; everything else is handed over intact. Repeat sightings of
+  // one ask used to be collapsed here, but the sighting history is now the
+  // evidence behind "listed 33 days, still unsold" — see activeListings() —
+  // and asks no longer reach the valuation, so there is nothing to protect.
+  const clean = (records: CardSightRecord[]): CardSightRecord[] =>
+    opts.includeAutographs ? records : records.filter(r => !isAutographTitle(r.title));
 
   const buckets: CompBucket[] = [];
   if (res.raw?.records?.length) {
-    const records = clean(res.raw.records, true);
+    const records = clean(res.raw.records);
     if (records.length) buckets.push({ company: null, grade: null, records });
   }
   for (const company of res.graded ?? []) {
     for (const g of company.grades ?? []) {
-      const records = clean(g.records ?? [], true);
+      const records = clean(g.records ?? []);
       if (records.length) {
         buckets.push({ company: company.company_name, grade: g.grade_value, records });
       }
@@ -343,6 +352,28 @@ export function isAutographTitle(title: string | null | undefined): boolean {
   return AUTOGRAPH_TITLE.test(title ?? '');
 }
 
+// A qualified grade is not the grade.
+//
+// PSA appends a qualifier when one flaw holds a card back — OC off-centre, MC
+// miscut, ST stain, PD print defect, MK marks, OF out of focus — and the slab
+// still reads "PSA 6". It trades nothing like a clean PSA 6, and the pricing
+// response gives us the number without the qualifier, so the two land in the
+// same bucket. On the 1961 Mantle #300 that inverted the whole picture: two of
+// the three PSA 6 "sales" were OC copies at $555 and $625 against a clean one
+// at $1,152, which would have set this card's fair value at $625 while the
+// cheapest ask on the board was $1,250.
+//
+// The title is the only place the qualifier survives. `(?!\.)` is what keeps
+// "PSA 7 St. Louis Cardinals" out of it — ST is a real qualifier, but not when
+// it is the abbreviation for Saint. Audited over 3,289 live titles: 36 flagged,
+// every one a genuine qualifier.
+const QUALIFIED_GRADE =
+  /\((?:oc|mc|st|pd|mk|of)\)|\b(?:psa|sgc|bgs)\s*\d+(?:\.\d)?\s*\(?\s*(?:oc|mc|st|pd|mk|of)\b(?!\.)|\bqualifier\b/i;
+
+export function isQualifiedGrade(title: string | null | undefined): boolean {
+  return QUALIFIED_GRADE.test(title ?? '');
+}
+
 // Collapse repeat sightings of one unsold listing down to its latest price.
 //
 // Their crawler re-observes active Buy-It-Now listings on a roughly monthly
@@ -359,21 +390,84 @@ export function isAutographTitle(title: string | null | undefined): boolean {
 // $355.12, then $285.30 a fortnight later, before finally selling at auction
 // for $257.37.
 //
-// Completed auctions are NEVER collapsed: a seller who reuses one title
-// template across listings really did sell three different copies, and those
-// are three real sales.
-function collapseRelistings(records: CardSightRecord[]): CardSightRecord[] {
-  const latest = new Map<string, CardSightRecord>();
-  const out: CardSightRecord[] = [];
-  for (const r of records) {
-    if (r.listing_type !== 'fixed') { out.push(r); continue; }
-    const k = (r.title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    // An untitled ask can't be matched to anything, so it stands on its own.
-    if (!k) { out.push(r); continue; }
-    const prev = latest.get(k);
-    if (!prev || r.date > prev.date) latest.set(k, r);
+// Split one title's sightings, oldest first, into runs of non-increasing price.
+// Each run is one listing's life; the last element is its current ask.
+function splitOnPriceRise(sightings: CardSightRecord[]): CardSightRecord[][] {
+  const sorted = sightings.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const runs: CardSightRecord[][] = [];
+  let run: CardSightRecord[] = [];
+  for (const r of sorted) {
+    if (run.length && Number(r.price) > Number(run[run.length - 1].price)) {
+      runs.push(run);
+      run = [];
+    }
+    run.push(r);
   }
-  return [...out, ...latest.values()];
+  if (run.length) runs.push(run);
+  return runs;
+}
+
+// One live Buy-It-Now, with how long it has been sitting there.
+//
+// The re-sightings we collapse above are the only clock we have on a listing:
+// seeing the same ask in two crawls a month apart is direct evidence it did
+// not sell in between. That makes an old, unsold ask the most informative
+// number on the page for someone deciding what to charge — it is a price the
+// market has already declined.
+export type ActiveListing = {
+  price: number;          // the current ask
+  title: string | null;
+  url: string | null;
+  company: string | null; // null for an ungraded listing
+  grade: string | null;
+  firstSeen: string;      // ISO date of the earliest sighting
+  lastSeen: string;
+  sightings: number;
+  daysListed: number;     // 0 when we have only ever seen it once
+  priceCut: number;       // how far the seller has come down since first seen
+};
+
+// Fold a bucket's raw ask records into the live listings they represent, and
+// keep the history: how many times we have seen each one and how long it has
+// been sitting there.
+export function activeListings(
+  records: CardSightRecord[],
+  company: string | null,
+  grade: string | null,
+): ActiveListing[] {
+  const groups = new Map<string, CardSightRecord[]>();
+  const singles: CardSightRecord[] = [];
+  for (const r of records) {
+    if (r.listing_type !== 'fixed') continue;
+    const k = (r.title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!k) { singles.push(r); continue; }
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(r);
+  }
+  const build = (run: CardSightRecord[]): ActiveListing => {
+    const first = run[0];
+    const last = run[run.length - 1];
+    const days = Math.max(0, Math.round(
+      (Date.parse(last.date) - Date.parse(first.date)) / 86400_000,
+    ));
+    return {
+      price: Number(last.price),
+      title: last.title,
+      url: last.url,
+      company,
+      grade,
+      firstSeen: first.date,
+      lastSeen: last.date,
+      sightings: run.length,
+      daysListed: days,
+      priceCut: Math.max(0, Number(first.price) - Number(last.price)),
+    };
+  };
+  const out = singles.map(r => build([r]));
+  for (const sightings of groups.values()) {
+    for (const run of splitOnPriceRise(sightings)) out.push(build(run));
+  }
+  return out.sort((a, b) => a.price - b.price);
 }
 
 // Records no older than `days`. The pricing endpoint takes a `period` and
@@ -523,49 +617,11 @@ export function stats(records: Array<{ price: number }>): CompStats | null {
   };
 }
 
-// A record carrying enough to be weighted. Loose on purpose so both raw
-// CardSightRecords and TaggedRecords satisfy it.
-type Weighable = { price: number; listing_type: CardSightRecord['listing_type'] };
-
-// Statistics that count a completed auction twice and an ask once.
+// Statistics over completed sales.
 //
-// Implemented by repeating each record LISTING_WEIGHT times before taking the
-// order statistics. With integer weights this is exact — no interpolation, no
-// approximation — and it keeps median/quartiles as real observed prices rather
-// than synthetic points between them.
-//
-// `n` reports the number of real records, not the expanded count: the user is
-// being told how many sales back the number, and inflating that to 34 when
-// there were 20 would misrepresent the sample.
-export function weightedStats(records: Weighable[]): CompStats | null {
-  const expanded: number[] = [];
-  let realCount = 0;
-  let weightSum = 0;
-  let weightedTotal = 0;
-  for (const r of records) {
-    const price = Number(r.price);
-    if (!Number.isFinite(price)) continue;
-    realCount += 1;
-    const w = LISTING_WEIGHT[r.listing_type] ?? 1;
-    weightSum += w;
-    weightedTotal += w * price;
-    for (let i = 0; i < w; i++) expanded.push(price);
-  }
-  if (!realCount) return null;
-  expanded.sort((a, b) => a - b);
-  const at = (q: number) => expanded[Math.min(expanded.length - 1, Math.floor(q * expanded.length))];
-  const mid = Math.floor(expanded.length / 2);
-  return {
-    n: realCount,
-    mean: weightedTotal / weightSum,
-    median: expanded.length % 2 ? expanded[mid] : (expanded[mid - 1] + expanded[mid]) / 2,
-    min: expanded[0],
-    max: expanded[expanded.length - 1],
-    p25: at(0.25),
-    p75: at(0.75),
-  };
-}
-
+// No listing-type weighting any more: everything that reaches here is an
+// auction, because that is the only kind of record that represents a sale.
+// See isCompletedSale().
 // The last calendar day of a YYYY-MM, as YYYY-MM-DD — never in the future.
 //
 // Monthly marks are stamped to the close of the month they describe, so the
@@ -603,11 +659,11 @@ export type MonthPoint = { month: string; monthEnd: string; stats: CompStats };
 // So: return a series only if enough months clear `minPerBucket`, and let the
 // caller fall back to a single aggregate when this returns null.
 export function monthlySeries(
-  records: Array<Weighable & { date: string }>,
+  records: Array<{ price: number; date: string }>,
   { minPerBucket = 4, minBuckets = 3 }: { minPerBucket?: number; minBuckets?: number } = {},
 ): MonthPoint[] | null {
   const points = groupByMonth(records)
     .filter(([, rs]) => rs.length >= minPerBucket)
-    .map(([month, rs]) => ({ month, monthEnd: monthEndDate(month), stats: weightedStats(rs)! }));
+    .map(([month, rs]) => ({ month, monthEnd: monthEndDate(month), stats: stats(rs)! }));
   return points.length >= minBuckets ? points : null;
 }
