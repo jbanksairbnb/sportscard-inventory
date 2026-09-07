@@ -1717,21 +1717,74 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
             )}
           </div>
         )}
-        {latestSession && !sessionId && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
-              {/* The draft is picked by most-recently-updated, so date it that way —
-                  `created_at` would show when the session was first opened, which
-                  on a resumed analysis is not the day the work was done. */}
-              You analyzed this card on <strong>{new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString()}</strong>
-              {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}.
-            </span>
-            <button type="button" onClick={loadFromLatest}
-              className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11 }}>
-              ↳ Use most recent analysis
-            </button>
-          </div>
-        )}
+        {latestSession && !sessionId && (() => {
+          // The form deliberately opens blank so a new analysis never starts
+          // half-filled. The cost was that a card with saved work looked exactly
+          // like one with none — the only tell was a ghost button, which reads as
+          // "your research is gone". So show the saved rows right here: opening
+          // the card surfaces the analysis, and pulling it into the form for
+          // editing stays a deliberate click.
+          const saved = (latestSession.data_points || [])
+            .filter(d => d.price !== null || d.weight_pct !== null || (d.url || '').trim() || (d.notes || '').trim())
+            .sort((a, b) => a.position - b.position);
+          const when = new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString();
+          const sessionNotes = (latestSession.session.notes || '').trim();
+          return (
+            <div style={{ padding: '10px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+                  {/* The draft is picked by most-recently-updated, so date it that way —
+                      `created_at` would show when the session was first opened, which
+                      on a resumed analysis is not the day the work was done. */}
+                  You analyzed this card on <strong>{when}</strong>
+                  {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}
+                  {saved.length > 0 ? <> · {saved.length} {saved.length === 1 ? 'comp' : 'comps'}</> : null}.
+                </span>
+                <button type="button" onClick={loadFromLatest}
+                  className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11 }}>
+                  ↳ Use most recent analysis
+                </button>
+              </div>
+              {saved.length > 0 && (
+                <div style={{ overflowX: 'auto', marginTop: 8 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <tbody>
+                      {saved.map(d => (
+                        <tr key={d.id} style={{ borderTop: '1px solid var(--rule)' }}>
+                          <td style={{ padding: '4px 8px 4px 0', color: 'var(--ink-soft)' }}>
+                            {sourceDisplay(d.source, d.source_label)}
+                          </td>
+                          <td style={{ padding: '4px 8px', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                            {[d.grade_company, d.grade_value].filter(Boolean).join(' ') || d.grade_condition || '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                            {d.sale_date ? new Date(`${d.sale_date}T00:00:00`).toLocaleDateString() : '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {d.price !== null ? fmtMoney(d.price) : '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                            {d.weight_pct !== null ? `${d.weight_pct}%` : '—'}
+                          </td>
+                          <td style={{ padding: '4px 0 4px 8px', color: 'var(--ink-mute)', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {d.url
+                              ? <a href={d.url} target="_blank" rel="noreferrer" style={{ color: 'var(--ink-mute)' }}>{d.notes?.trim() || 'listing'}</a>
+                              : (d.notes || '')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {sessionNotes && (
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
+                  {sessionNotes}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {loading ? (
           <div style={{ padding: 30, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
