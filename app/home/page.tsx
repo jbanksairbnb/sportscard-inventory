@@ -279,12 +279,12 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
 
   return (
     <section>
-      <div ref={coverContainerRef} className="halftone"
+      <div ref={coverContainerRef} className="halftone cover-banner"
         onPointerDown={onCoverPointerDown}
         onPointerMove={onCoverPointerMove}
         onPointerUp={onCoverPointerUp}
         style={{
-          position: 'relative', height: 360,
+          position: 'relative',
           background: cover ? undefined : 'linear-gradient(135deg, #3d1f4a 0%, #2a1434 40%, #1f5a50 100%)',
           borderBottom: '3px solid var(--plum)', overflow: 'hidden',
           cursor: adjustingCover ? (dragStartRef.current ? 'grabbing' : 'grab') : 'default',
@@ -315,10 +315,13 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
              laid on the site's sunburst-and-halftone backdrop.
 
              It's authored at 3200x720 with everything important inside the
-             middle 80% and clear of the bottom 130px, so object-fit:cover can
-             trim the sides on a narrow window or the top and bottom on a wide
-             one without cutting a card in half — and so the avatar and name
-             block that overlap this box don't land on a face. */
+             middle 80% and clear of the bottom 130px. The frame holds that
+             same 40:9 ratio (.cover-banner), so across the normal range of
+             window widths object-fit:cover just scales this image — the crop
+             never changes. Only past the frame's min/max height clamps does
+             cover start trimming, and then only the sides or the top and
+             bottom margins the art leaves free — and the avatar and name
+             block that overlap this box still don't land on a face. */
           /* eslint-disable-next-line @next/next/no-img-element */
           <img src="/home-banner.jpg" alt=""
             style={{

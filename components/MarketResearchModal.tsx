@@ -7,11 +7,17 @@ import {
   normalizeAnalysis, contentHash, trendFromRows, cardValueKey, dedupeByPosition,
 } from '@/lib/cardValueHistory';
 import { insertValueHistoryRow } from '@/lib/recordValueMark';
+import type { CompsResponse } from '@/app/api/cardsight/comps/route';
 
 // Sources we offer in the dropdown. 'other' lets the user free-form a label.
 export const RESEARCH_SOURCES = [
   { value: 'ebay_sold_auction', label: 'eBay Sold Auctions' },
   { value: 'ebay_sold_bin', label: 'eBay Sold Buy-It-Now' },
+  // Auto-pulled comps get their own source rather than reusing the eBay
+  // values. They ARE eBay sales, but the provenance matters: a row the user
+  // found and vetted is a different claim from one a machine dropped in, and
+  // conflating them would hide which is which on a saved analysis.
+  { value: 'cardsight_auction', label: 'CardSight (sold auction)' },
   { value: 'vcp', label: 'VCP' },
   { value: 'card_ladder', label: 'Card Ladder' },
   { value: 'beckett', label: 'Beckett' },
@@ -21,7 +27,10 @@ type SourceValue = (typeof RESEARCH_SOURCES)[number]['value'];
 
 // Grading company + grade are tracked as two fields so the future pricing
 // model can group cleanly (e.g. all "PSA 8" comps from anywhere).
-const GRADING_COMPANIES = ['Raw', 'PSA', 'SGC', 'BGS', 'CSG', 'Other'] as const;
+// BVG, CGC and TAG are here because a pulled comp can legitimately carry one:
+// when the exact grade is thin we widen across graders on a comparable scale,
+// and a row whose company isn't in this list would render as an empty select.
+const GRADING_COMPANIES = ['Raw', 'PSA', 'SGC', 'BGS', 'BVG', 'CGC', 'CSG', 'TAG', 'Other'] as const;
 type GradingCompany = (typeof GRADING_COMPANIES)[number];
 
 const RAW_GRADES = ['GEM MINT', 'MINT', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'GD', 'FR', 'PR'];
@@ -191,6 +200,92 @@ function rowsFromSnapshot(snap: AnalysisSnapshot, defaults: { company: string; g
 
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
+}
+
+// Summary of a CardSight pull: what it matched, how comparable the comps are,
+// and the shape of the sale prices behind them.
+//
+// The sample size is given as much room as the median deliberately. In our
+// era a specific grade often has only a handful of sales in CardSight's whole
+// window — a 1968 Ryan PSA 6 had exactly one — and a median of n=1 presented
+// like a market price is the failure mode this panel exists to prevent.
+function CompsPanel({ comps }: { comps: CompsResponse }) {
+  const s = comps.stats;
+  const tierLabel: Record<string, string> = {
+    exact: 'exact grade match',
+    'same-grade': 'same grade, different grader',
+    'adjacent-grade': 'within a half grade',
+    ungraded: 'ungraded sales',
+  };
+  const thin = !!s && s.n < 5;
+  return (
+    <div style={{
+      border: '1.5px solid var(--rule)', borderRadius: 8, padding: '12px 14px',
+      background: 'var(--paper)', marginBottom: 16, fontSize: 12.5,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <strong style={{ color: 'var(--plum)' }}>CardSight comps</strong>
+        {comps.matched && (
+          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+            {comps.matched.year} {comps.matched.release} · {comps.matched.set} · {comps.matched.name}
+          </span>
+        )}
+        {comps.tier && (
+          <span className="chip chip-gold" style={{ fontSize: 10 }}>
+            {tierLabel[comps.tier] ?? comps.tier}
+          </span>
+        )}
+      </div>
+
+      {s ? (
+        <>
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 6 }}>
+            <Stat label="Sales" value={String(s.n)} warn={thin} />
+            <Stat label="Median" value={fmtMoney(s.median)} />
+            <Stat label="Mean" value={fmtMoney(s.mean)} />
+            <Stat label="Middle 50%" value={`${fmtMoney(s.p25)} – ${fmtMoney(s.p75)}`} />
+            <Stat label="Range" value={`${fmtMoney(s.min)} – ${fmtMoney(s.max)}`} />
+            {comps.ask && <Stat label="Asking (BIN)" value={fmtMoney(comps.ask.median)} />}
+          </div>
+
+          {/* Only rendered when the data can support buckets — see
+              monthlySeries(). A card with one sale a month gets no chart. */}
+          {comps.monthly && (
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--rule)' }}>
+              {comps.monthly.map(m => (
+                <span key={m.month} className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                  {m.month} <strong style={{ color: 'var(--plum)' }}>{fmtMoney(m.stats.median)}</strong>
+                  <span style={{ color: 'var(--ink-mute)' }}> ({m.stats.n})</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ color: 'var(--ink-mute)' }}>No sales found.</div>
+      )}
+
+      {comps.note && (
+        <div style={{ marginTop: 8, fontSize: 11.5, color: thin ? 'var(--rust)' : 'var(--ink-soft)', lineHeight: 1.5 }}>
+          {comps.note}
+        </div>
+      )}
+      {comps.lastSale && (
+        <div className="mono" style={{ marginTop: 6, fontSize: 10.5, color: 'var(--ink-mute)' }}>
+          Last sale {new Date(comps.lastSale).toLocaleDateString()} · CardSight&rsquo;s archive currently reaches back about five months.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <div>
+      <div className="mono" style={{ fontSize: 10, letterSpacing: '0.06em', color: 'var(--ink-mute)', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: warn ? 'var(--rust)' : 'var(--plum)' }}>{value}</div>
+    </div>
+  );
 }
 
 function trendArrow(dir: 'up' | 'down' | 'flat'): string {
@@ -397,6 +492,14 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // so the next commit records the lineage.
   const [derivedFromId, setDerivedFromId] = useState<string | null>(null);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
+  // CardSight comp pull — result of the last "Pull comps" click, kept so the
+  // stats panel survives after the rows have been edited.
+  const [comps, setComps] = useState<CompsResponse | null>(null);
+  const [compsLoading, setCompsLoading] = useState(false);
+  const [compsError, setCompsError] = useState<string | null>(null);
+  const cardIsGraded = !!card.grading_company
+    && card.grading_company.toLowerCase() !== 'raw'
+    && !!card.grade;
 
   // Keep the ref in lockstep with the state so both reads see the same session.
   function setActiveSession(id: string | null) {
@@ -481,6 +584,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setDerivedFromId(null);
       setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
       setNotes('');
+      // A pull belongs to the card it was fetched for — leaving the panel up
+      // across a reopen would show one card's comps above another's table.
+      setComps(null);
+      setCompsError(null);
       setAutoSaveTick('idle');
       setHistoryError(null);
       if (own.length > 0) {
@@ -539,6 +646,54 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   }
   function addRow() {
     setRows(prev => [...prev, emptyRow(prev.length, cardDefaults)]);
+  }
+
+  // Pull comps from CardSight and drop them in as weighted rows.
+  //
+  // This REPLACES the current rows rather than appending. Appending would
+  // silently break the 100% total the user may have already balanced, and
+  // half-pulled tables are confusing; a fresh pull is a fresh starting point
+  // they then adjust. Existing analyses are untouched — they live in the
+  // history list, and the user has to click to load one.
+  async function pullComps() {
+    setCompsLoading(true);
+    setCompsError(null);
+    try {
+      const res = await fetch('/api/cardsight/comps', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          year: card.year,
+          brand: card.brand,
+          number: card.card_number,
+          player: card.player,
+          grading_company: card.grading_company ?? (card.raw_grade ? 'Raw' : null),
+          grade: card.grade,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setCompsError(data?.error || 'Could not reach CardSight'); return; }
+      const payload = data as CompsResponse;
+      setComps(payload);
+      if (payload.rows.length) {
+        setRows(payload.rows.map((r, i) => ({
+          position: i,
+          source: 'cardsight_auction' as SourceValue,
+          source_label: '',
+          grade_company: r.grade_company,
+          grade_value: r.grade_value,
+          sale_date: r.sale_date,
+          price: String(r.price),
+          weight_pct: String(r.weight_pct),
+          url: r.url,
+          notes: r.notes,
+        })));
+      }
+    } catch {
+      setCompsError('Could not reach CardSight');
+    } finally {
+      setCompsLoading(false);
+    }
   }
   function removeRow(idx: number) {
     setRows(prev => prev.filter((_, i) => i !== idx).map((r, i) => ({ ...r, position: i })));
@@ -948,10 +1103,26 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
               <button type="button" onClick={addRow} className="btn btn-ghost btn-sm">+ Add row</button>
+              {/* Graded cards get rows; ungraded cards get the price range only,
+                  because CardSight publishes no condition on a raw sale and the
+                  spread between a beat-up copy and a clean one is most of the
+                  price. The label says which you'll get. */}
+              <button type="button" onClick={pullComps} disabled={compsLoading}
+                className="btn btn-ghost btn-sm"
+                title={cardIsGraded
+                  ? 'Fill the table with recent sold comps at this grade'
+                  : 'Ungraded card — shows the sold price range, not comps'}>
+                {compsLoading ? 'Pulling…' : cardIsGraded ? '⇩ Pull comps' : '⇩ Pull price range'}
+              </button>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                 Need at least one priced row. Save unlocks at total = 100%.
               </span>
             </div>
+
+            {compsError && (
+              <div style={{ fontSize: 12, color: 'var(--rust)', marginBottom: 12 }}>{compsError}</div>
+            )}
+            {comps && <CompsPanel comps={comps} />}
 
             <div style={{ marginBottom: 16 }}>
               <label className="input-label">Notes (private — only you see these)</label>
