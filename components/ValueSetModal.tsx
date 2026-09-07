@@ -3,19 +3,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { cardValueKey } from '@/lib/cardValueHistory';
-import type { CardDescriptor } from '@/components/MarketResearchModal';
 import type { ValuedCard } from '@/app/api/cardsight/value-set/route';
 import { recordSweepValueMark } from '@/lib/recordValueMark';
+import type { SweepTarget } from '@/lib/sweepTargets';
 
-// Price the graded cards you own in a set, in one pass.
+export type { SweepTarget };
+
+// Price the graded cards you own, in one pass.
 //
 // The research modal is a workbench: one card, comps you weight by hand. This
 // is the other half — a sweep that answers "what is all of this worth today"
 // and, more importantly, files a dated mark for each card so the collection
 // accumulates a price series instead of a scattering of the cards somebody
-// happened to open.
+// happened to open. The same component drives one set from the set editor and
+// the whole collection from the home page; only the targets differ.
 //
-// It never writes a value the owner hasn't seen. Every proposal is shown
+// It never writes a *value* the owner hasn't seen. Every proposal is shown
 // against the value already in the row, and anything thin or widened arrives
 // unticked, because a sweep that quietly overwrote hand-researched numbers
 // would destroy the work this app exists to keep.
@@ -25,34 +28,55 @@ import { recordSweepValueMark } from '@/lib/recordValueMark';
 // batch has to stay small enough to answer well inside the function timeout.
 const CHUNK = 40;
 
-export type SweepTarget = {
-  key: string;              // stable row handle
-  rowIndex: number;
-  descriptor: CardDescriptor;
-  label: string;            // what to show in the review table
-  currentValue: number | null;
-};
+// PostgREST caps an unbounded select at 1000 rows. A single set's history fits
+// under that; a collection's does not, and a truncated read would silently
+// drop the protections for whichever cards fell off the end.
+const HISTORY_PAGE = 1000;
 
 type Props = {
   open: boolean;
   onClose: () => void;
   userId: string;
   targets: SweepTarget[];
-  // Hand back the values the owner accepted, keyed by row index.
-  onApply: (values: Map<number, number>) => void;
+  heading?: string;
+  scopeNote?: string;
+  // What still needs doing after applying, if anything. The set editor hands
+  // values to an unsaved grid and needs a save; the collection sweep persists
+  // them itself and needs nothing.
+  valueNote?: string;
+  // Hand back the values the owner accepted. May persist them; the modal
+  // waits for it before reporting done.
+  onApply: (applied: Array<{ target: SweepTarget; value: number }>) => void | Promise<void>;
 };
 
 type Phase = 'idle' | 'running' | 'review' | 'applying' | 'done';
 
-export default function ValueSetModal({ open, onClose, userId, targets, onApply }: Props) {
+// A price good enough to stand on its own: a clean median, off enough sales,
+// at the grade actually asked for. Anything below this bar wants a human eye
+// before it becomes either a value or a mark.
+function isClean(r: ValuedCard): boolean {
+  return r.reason === 'ok' && r.value !== null && !r.bucketLabel;
+}
+
+export default function ValueSetModal({
+  open, onClose, userId, targets, heading, scopeNote, valueNote, onApply,
+}: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [done, setDone] = useState(0);
   const [results, setResults] = useState<Map<string, ValuedCard>>(new Map());
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [applied, setApplied] = useState<{ values: number; marks: number } | null>(null);
+  const [markProgress, setMarkProgress] = useState(0);
+  const [applied, setApplied] = useState<{ values: number; marks: number; already: number } | null>(null);
 
   const byKey = useMemo(() => new Map(targets.map(t => [t.key, t])), [targets]);
+  // A collection-wide sweep spans sets, and "#18 · Don Drysdale" means nothing
+  // without saying which set it came from. One set needs no such column.
+  const multiSet = useMemo(() => new Set(targets.map(t => t.setSlug)).size > 1, [targets]);
+
+  // A long run is minutes of API calls. The owner has to be able to call it
+  // off and keep what has already priced.
+  const stopRef = useRef(false);
 
   // Cards the owner has already valued themselves — a saved research analysis
   // or a value typed in by hand.
@@ -74,22 +98,31 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
     let cancelled = false;
     (async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from('card_value_history')
-        .select('card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
-        .eq('user_id', userId)
-        .in('mark_kind', ['research', 'manual'])
-        .order('created_at', { ascending: false });
-      if (cancelled) return;
-      if (error || !data) {
-        // Failing open would let the sweep overwrite hand-made values silently,
-        // so fail closed instead: no protections, but nothing is pre-ticked
-        // that the owner has not seen, which is already the modal's contract.
-        return;
+      const rows: Array<Record<string, unknown>> = [];
+      for (let from = 0; ; from += HISTORY_PAGE) {
+        const { data, error } = await supabase
+          .from('card_value_history')
+          .select('card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
+          .eq('user_id', userId)
+          .in('mark_kind', ['research', 'manual'])
+          .order('created_at', { ascending: false })
+          // Ties on created_at would order differently on each page request,
+          // which is how a paged read silently loses rows at a boundary.
+          .order('id', { ascending: false })
+          .range(from, from + HISTORY_PAGE - 1);
+        if (cancelled) return;
+        if (error || !data) {
+          // Failing open would let the sweep overwrite hand-made values silently,
+          // so fail closed instead: no protections, but nothing is pre-ticked
+          // that the owner has not seen, which is already the modal's contract.
+          return;
+        }
+        rows.push(...(data as Array<Record<string, unknown>>));
+        if (data.length < HISTORY_PAGE) break;
       }
       // Newest first, so the first hit per identity is the current one.
       const latest = new Map<string, { value: number; at: string }>();
-      for (const r of data as Array<Record<string, unknown>>) {
+      for (const r of rows) {
         const k = cardValueKey({
           year: r.card_year as number | null, brand: r.card_brand as string | null,
           card_number: r.card_number as string | null, grade: r.card_grade as string | null,
@@ -116,9 +149,11 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
     setPhase('running');
     setError(null);
     setDone(0);
+    stopRef.current = false;
     const acc = new Map<string, ValuedCard>();
 
     for (let i = 0; i < targets.length; i += CHUNK) {
+      if (stopRef.current) break;
       const slice = targets.slice(i, i + CHUNK);
       try {
         const res = await fetch('/api/cardsight/value-set', {
@@ -140,8 +175,8 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
         if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
         for (const r of (json.results ?? []) as ValuedCard[]) acc.set(r.key, r);
       } catch (e) {
-        // Keep whatever the earlier chunks produced — a set that priced 80 of
-        // 200 cards is still 80 cards priced.
+        // Keep whatever the earlier chunks produced — a collection that priced
+        // 80 of 200 cards is still 80 cards priced.
         setError((e as Error).message);
         break;
       }
@@ -149,15 +184,15 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
       setResults(new Map(acc));
     }
 
-    // Pre-tick only what needs no judgement: a clean median off enough sales,
-    // at the exact grade, that actually differs from what's already there.
+    // Pre-tick only what needs no judgement: a clean median that actually
+    // differs from what's already there.
     const pre = new Set<string>();
     for (const [k, r] of acc) {
       const t = byKey.get(k);
-      if (r.reason !== 'ok' || r.value === null || r.bucketLabel) continue;
+      if (!isClean(r)) continue;
       // The owner's own analysis stands until they replace it themselves.
       if (ownMarksRef.current.has(k)) continue;
-      if (t?.currentValue != null && Math.abs(t.currentValue - r.value) < 0.005) continue;
+      if (t?.currentValue != null && Math.abs(t.currentValue - r.value!) < 0.005) continue;
       pre.add(k);
     }
     setResults(new Map(acc));
@@ -165,17 +200,47 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
     setPhase('review');
   }
 
+  // Which cards get a dated mark. Ticking governs the Value column; marking is
+  // a separate question, because a mark is an observation rather than an
+  // override. It appends to an immutable log, is keyed to one mark per card
+  // per day, and never touches a value or an earlier analysis — so every clean
+  // price is worth recording, including one the owner declined to adopt and
+  // one that came back identical to last week's. A flat market is data; a gap
+  // in the series reads as missing data instead.
+  //
+  // Thin and widened prices are the exception: those are marked only when the
+  // owner ticked them, which is them vouching for the number.
+  const markable = useMemo(() => {
+    const out = new Set<string>();
+    for (const [k, r] of results) if (isClean(r)) out.add(k);
+    for (const k of chosen) if (results.get(k)?.value != null) out.add(k);
+    return out;
+  }, [results, chosen]);
+
   async function apply() {
     setPhase('applying');
-    const values = new Map<number, number>();
-    let marks = 0;
+    setMarkProgress(0);
 
+    const accepted: Array<{ target: SweepTarget; value: number }> = [];
     for (const k of chosen) {
       const r = results.get(k);
       const t = byKey.get(k);
       if (!r || !t || r.value === null) continue;
-      values.set(t.rowIndex, r.value);
-      const { ok } = await recordSweepValueMark(userId, {
+      accepted.push({ target: t, value: r.value });
+    }
+
+    // Values first: it is the change the owner is watching for, and the marks
+    // below take a round trip each.
+    await onApply(accepted);
+
+    let marks = 0;
+    let already = 0;
+    let n = 0;
+    for (const k of markable) {
+      const r = results.get(k);
+      const t = byKey.get(k);
+      if (!r || !t || r.value === null) continue;
+      const { ok, duplicate } = await recordSweepValueMark(userId, {
         year: t.descriptor.year,
         brand: t.descriptor.brand,
         card_number: t.descriptor.card_number,
@@ -190,10 +255,11 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
         bucketLabel: r.bucketLabel, viaSearch: r.viaSearch,
       });
       if (ok) marks++;
+      if (duplicate) already++;
+      setMarkProgress(++n);
     }
 
-    onApply(values);
-    setApplied({ values: values.size, marks });
+    setApplied({ values: accepted.length, marks, already });
     setPhase('done');
   }
 
@@ -205,7 +271,7 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
 
   return (
     <div
-      onClick={onClose}
+      onClick={phase === 'running' || phase === 'applying' ? undefined : onClose}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(42,20,52,0.55)', zIndex: 60,
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '4vh 16px', overflowY: 'auto',
@@ -215,36 +281,48 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
         onClick={e => e.stopPropagation()}
         style={{
           background: 'var(--paper)', border: '2px solid var(--plum)', borderRadius: 10,
-          width: '100%', maxWidth: 940, boxShadow: '0 10px 30px rgba(42,20,52,0.3)',
+          width: '100%', maxWidth: 980, boxShadow: '0 10px 30px rgba(42,20,52,0.3)',
         }}
       >
         <div style={{
           padding: '14px 18px', borderBottom: '1.5px solid var(--rule)',
           display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
         }}>
-          <strong style={{ color: 'var(--plum)', fontSize: 16 }}>Value the graded cards you own</strong>
+          <strong style={{ color: 'var(--plum)', fontSize: 16 }}>
+            {heading || 'Value the graded cards you own'}
+          </strong>
           <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
-            {targets.length} card{targets.length === 1 ? '' : 's'} — CardSight&rsquo;s sold data covers
-            graded cards, so raw copies and cards you don&rsquo;t own are left out
+            {targets.length} card{targets.length === 1 ? '' : 's'}
+            {scopeNote ? ` — ${scopeNote}` : ' — CardSight’s sold data covers graded cards, so raw copies and cards you don’t own are left out'}
           </span>
           <button type="button" onClick={onClose} className="btn btn-ghost btn-sm"
+            disabled={phase === 'running' || phase === 'applying'}
             style={{ marginLeft: 'auto', fontSize: 12 }}>Close</button>
         </div>
 
         <div style={{ padding: 18 }}>
           {phase === 'idle' && (
             <>
-              <p style={{ fontSize: 14, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px', maxWidth: 620 }}>
+              <p style={{ fontSize: 14, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px', maxWidth: 640 }}>
                 Each graded card gets the median of its completed sales from the last 30 days —
                 the same figure the research modal computes, from the same comps. You&rsquo;ll see
                 every proposal against the value already in the row before anything changes.
               </p>
-              <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 16px', maxWidth: 620 }}>
-                Applying also files a dated mark per card, so the price history builds
-                whether or not you ever open that card again. CardSight&rsquo;s own archive only
-                reaches back about five months, so marks taken now are the only long-run
-                history this collection will ever have.
+              <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 12px', maxWidth: 640 }}>
+                Applying files a dated mark for every clean price — including the ones you
+                decline and the ones that came back unchanged, because a flat market is data
+                and a gap in the series is not. Marks never touch a value or an earlier
+                analysis, and re-running on the same day won&rsquo;t double-count.
+                CardSight&rsquo;s own archive only reaches back about five months, so marks
+                taken now are the only long-run history this collection will ever have.
               </p>
+              {targets.length > CHUNK * 3 && (
+                <p style={{ fontSize: 12.5, color: 'var(--ink-mute)', lineHeight: 1.6, margin: '0 0 16px', maxWidth: 640 }}>
+                  This is a big run — roughly {Math.ceil(targets.length / CHUNK)} batches. Cards
+                  CardSight has never been asked about need a catalog lookup each, so leave the
+                  tab open; you can stop partway and keep what has priced so far.
+                </p>
+              )}
               <button type="button" onClick={run} className="btn btn-primary"
                 style={{ fontSize: 13 }}>
                 Price {targets.length} card{targets.length === 1 ? '' : 's'}
@@ -263,9 +341,15 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                   background: 'var(--orange)', transition: 'width 240ms ease',
                 }} />
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 8 }}>
-                Cards CardSight has never been asked about need a catalog lookup each, so the
-                first run on a new set is the slow one.
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: 11.5 }}
+                  onClick={() => { stopRef.current = true; }}>
+                  Stop and review what&rsquo;s priced
+                </button>
+                <span style={{ fontSize: 11.5, color: 'var(--ink-mute)' }}>
+                  Cards CardSight has never been asked about need a catalog lookup each, so the
+                  first run on a new set is the slow one.
+                </span>
               </div>
             </div>
           )}
@@ -285,6 +369,9 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                   <strong style={{ color: 'var(--plum)' }}>{chosen.size}</strong> selected
                   {chosen.size > 0 && <> · ${total.toFixed(2)}</>}
                 </span>
+                <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                  <strong style={{ color: 'var(--teal)' }}>{markable.size}</strong> will be marked
+                </span>
                 <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
                   onClick={() => setChosen(new Set(rows.filter(x => x.r!.value !== null).map(x => x.t.key)))}>
                   Select all priced
@@ -298,6 +385,7 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                   <thead>
                     <tr style={{ textAlign: 'left', color: 'var(--ink-mute)', background: 'var(--cream)' }}>
                       <th style={th}></th>
+                      {multiSet && <th style={th}>Set</th>}
                       <th style={th}>Card</th>
                       <th style={{ ...th, textAlign: 'right' }}>Current</th>
                       <th style={{ ...th, textAlign: 'right' }}>Proposed</th>
@@ -323,6 +411,11 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                                 return next;
                               })} />
                           </td>
+                          {multiSet && (
+                            <td style={{ ...td, color: 'var(--ink-mute)', fontSize: 11.5, maxWidth: 160 }}>
+                              {t.setTitle || t.setSlug}
+                            </td>
+                          )}
                           <td style={{ ...td, maxWidth: 250 }}>
                             <div style={{ color: 'var(--ink)' }}>{t.label}</div>
                             {r!.matched && (
@@ -354,6 +447,7 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
                               mine ? 'kept — your own analysis' : '',
                               r!.bucketLabel ? `widened to ${r!.bucketLabel}` : '',
                               r!.viaSearch ? 'title-matched comps' : '',
+                              markable.has(t.key) && !chosen.has(t.key) ? 'marked, value unchanged' : '',
                               r!.note ?? '',
                             ].filter(Boolean).join(' · ') || '—'}
                           </td>
@@ -365,12 +459,18 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
               </div>
 
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
-                <button type="button" onClick={apply} disabled={!chosen.size || phase === 'applying'}
+                <button type="button" onClick={apply} disabled={!markable.size || phase === 'applying'}
                   className="btn btn-primary" style={{ fontSize: 13 }}>
-                  {phase === 'applying' ? 'Applying…' : `Apply ${chosen.size} value${chosen.size === 1 ? '' : 's'}`}
+                  {phase === 'applying'
+                    ? `Filing marks… ${markProgress} of ${markable.size}`
+                    : chosen.size
+                      ? `Apply ${chosen.size} value${chosen.size === 1 ? '' : 's'}`
+                      : `File ${markable.size} mark${markable.size === 1 ? '' : 's'}`}
                 </button>
                 <span style={{ fontSize: 11.5, color: 'var(--ink-mute)' }}>
-                  Writes the Value column and files one dated mark per card.
+                  {chosen.size
+                    ? `Writes the Value column for the ${chosen.size} ticked, and files ${markable.size} dated mark${markable.size === 1 ? '' : 's'} to price history.`
+                    : `Nothing ticked, so no value changes — just ${markable.size} dated mark${markable.size === 1 ? '' : 's'} to price history.`}
                 </span>
               </div>
             </>
@@ -379,12 +479,12 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
           {phase === 'done' && applied && (
             <div>
               <div style={{ fontSize: 15, color: 'var(--plum)', fontWeight: 700, marginBottom: 8 }}>
-                {applied.values} value{applied.values === 1 ? '' : 's'} updated
+                {applied.values} value{applied.values === 1 ? '' : 's'} updated · {applied.marks} mark{applied.marks === 1 ? '' : 's'} filed
               </div>
-              <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 560 }}>
-                {applied.marks} mark{applied.marks === 1 ? '' : 's'} filed to price history.
-                {applied.marks < applied.values && ' The rest were already marked today.'}
-                {' '}Remember to save the set to keep the new values.
+              <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 580 }}>
+                {applied.already > 0 && `${applied.already} card${applied.already === 1 ? ' was' : 's were'} already marked today, so ${applied.already === 1 ? 'it was' : 'they were'} left alone. `}
+                Price history is written straight to the database and is already saved.
+                {applied.values > 0 && valueNote ? ` ${valueNote}` : ''}
               </p>
               <button type="button" onClick={onClose} className="btn btn-primary" style={{ fontSize: 13 }}>Done</button>
             </div>
