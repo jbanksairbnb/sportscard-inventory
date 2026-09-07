@@ -7,7 +7,7 @@ import type { CardDescriptor } from '@/components/MarketResearchModal';
 import type { ValuedCard } from '@/app/api/cardsight/value-set/route';
 import { recordSweepValueMark } from '@/lib/recordValueMark';
 
-// Price every card in a set in one pass.
+// Price the graded cards you own in a set, in one pass.
 //
 // The research modal is a workbench: one card, comps you weight by hand. This
 // is the other half — a sweep that answers "what is all of this worth today"
@@ -222,9 +222,10 @@ export default function ValueSetModal({ open, onClose, userId, targets, onApply 
           padding: '14px 18px', borderBottom: '1.5px solid var(--rule)',
           display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
         }}>
-          <strong style={{ color: 'var(--plum)', fontSize: 16 }}>Value the whole set</strong>
+          <strong style={{ color: 'var(--plum)', fontSize: 16 }}>Value the graded cards you own</strong>
           <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
-            {targets.length} card{targets.length === 1 ? '' : 's'} with enough detail to look up
+            {targets.length} card{targets.length === 1 ? '' : 's'} — CardSight&rsquo;s sold data covers
+            graded cards, so raw copies and cards you don&rsquo;t own are left out
           </span>
           <button type="button" onClick={onClose} className="btn btn-ghost btn-sm"
             style={{ marginLeft: 'auto', fontSize: 12 }}>Close</button>
