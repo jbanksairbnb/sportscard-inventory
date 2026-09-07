@@ -13,11 +13,13 @@ import type { CompsResponse } from '@/app/api/cardsight/comps/route';
 export const RESEARCH_SOURCES = [
   { value: 'ebay_sold_auction', label: 'eBay Sold Auctions' },
   { value: 'ebay_sold_bin', label: 'eBay Sold Buy-It-Now' },
-  // Auto-pulled comps get their own source rather than reusing the eBay
+  // Auto-pulled comps get their own sources rather than reusing the eBay
   // values. They ARE eBay sales, but the provenance matters: a row the user
   // found and vetted is a different claim from one a machine dropped in, and
-  // conflating them would hide which is which on a saved analysis.
-  { value: 'cardsight_auction', label: 'CardSight (sold auction)' },
+  // conflating them would hide which is which on a saved analysis. The two
+  // values keep the ask/bid split visible in the table itself.
+  { value: 'cardsight_auction', label: 'CardSight · eBay auction' },
+  { value: 'cardsight_bin', label: 'CardSight · eBay Buy-It-Now' },
   { value: 'vcp', label: 'VCP' },
   { value: 'card_ladder', label: 'Card Ladder' },
   { value: 'beckett', label: 'Beckett' },
@@ -209,7 +211,12 @@ function fmtMoney(n: number): string {
 // era a specific grade often has only a handful of sales in CardSight's whole
 // window — a 1968 Ryan PSA 6 had exactly one — and a median of n=1 presented
 // like a market price is the failure mode this panel exists to prevent.
-function CompsPanel({ comps }: { comps: CompsResponse }) {
+function CompsPanel({ comps, onImportHistory, importing, imported }: {
+  comps: CompsResponse;
+  onImportHistory: () => void;
+  importing: boolean;
+  imported: number | null;
+}) {
   const s = comps.stats;
   const tierLabel: Record<string, string> = {
     exact: 'exact grade match',
@@ -263,6 +270,24 @@ function CompsPanel({ comps }: { comps: CompsResponse }) {
         </>
       ) : (
         <div style={{ color: 'var(--ink-mute)' }}>No sales found.</div>
+      )}
+
+      {/* Storing history is only offered when there are months worth storing:
+          each point is a median of at least two sold comps. */}
+      {comps.history.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button type="button" onClick={onImportHistory} disabled={importing}
+            className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+            {importing ? 'Saving…' : `↳ Save ${comps.history.length} month${comps.history.length === 1 ? '' : 's'} to price history`}
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
+            {imported === null
+              ? 'One mark per month, dated to that month\u2019s last sale.'
+              : imported === 0
+                ? 'Already saved — nothing new to add.'
+                : `Saved ${imported} month${imported === 1 ? '' : 's'}.`}
+          </span>
+        </div>
       )}
 
       {comps.note && (
@@ -497,6 +522,8 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   const [comps, setComps] = useState<CompsResponse | null>(null);
   const [compsLoading, setCompsLoading] = useState(false);
   const [compsError, setCompsError] = useState<string | null>(null);
+  const [importingHistory, setImportingHistory] = useState(false);
+  const [importedCount, setImportedCount] = useState<number | null>(null);
   const cardIsGraded = !!card.grading_company
     && card.grading_company.toLowerCase() !== 'raw'
     && !!card.grade;
@@ -588,6 +615,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       // across a reopen would show one card's comps above another's table.
       setComps(null);
       setCompsError(null);
+      setImportedCount(null);
       setAutoSaveTick('idle');
       setHistoryError(null);
       if (own.length > 0) {
@@ -648,6 +676,76 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setRows(prev => [...prev, emptyRow(prev.length, cardDefaults)]);
   }
 
+  // Import CardSight's monthly medians as value-history marks.
+  //
+  // Each month becomes one immutable mark dated to that month's most recent
+  // sale, so the price-history list and trend badge read as a real timeline
+  // rather than a stack of rows sharing today's date. Marks are tagged
+  // 'cardsight' so they stay distinguishable from the owner's own research and
+  // typed values — this is the market's number, not their judgement of it.
+  //
+  // Re-running is safe: months already imported for this card are skipped, so
+  // clicking twice, or coming back next month, only adds what's new.
+  async function importHistory() {
+    if (!userId || !comps?.history?.length) return;
+    setImportingHistory(true);
+    setCompsError(null);
+    try {
+      const already = new Set(
+        valueHistory
+          .filter(h => h.mark_kind === 'cardsight')
+          .map(h => h.created_at.slice(0, 7)),
+      );
+      const pending = comps.history.filter(p => !already.has(p.month));
+      if (!pending.length) { setImportedCount(0); return; }
+
+      const written: ValueHistoryRow[] = [];
+      for (const point of pending) {
+        const analysisRows: AnalysisRow[] = point.rows.map((r, i) => ({
+          position: i,
+          source: r.source,
+          source_label: r.source_label,
+          grade_company: r.grade_company || null,
+          grade_value: r.grade_value || null,
+          sale_date: r.sale_date || null,
+          price: r.price,
+          // The comps behind a median are evidence, not a weighting — the
+          // median already IS the value, so no row claims a share of it.
+          weight_pct: null,
+          url: r.url || null,
+          notes: r.notes || null,
+        }));
+        const value = Math.round(point.stats.median * 100) / 100;
+        const noteText = `CardSight median of ${point.stats.n} sold comps in ${point.month}`;
+        const snapshot: AnalysisSnapshot = { notes: noteText, market_value: value, rows: analysisRows };
+        const { row, error } = await insertValueHistoryRow({
+          user_id: userId,
+          card_year: card.year, card_brand: card.brand, card_number: card.card_number, card_player: card.player,
+          card_grade: card.grade, card_grading_company: card.grading_company, card_raw_grade: card.raw_grade,
+          listing_id: card.listing_id ?? null, set_slug: card.set_slug ?? null, set_card_number: card.set_card_number ?? null,
+          market_value: value,
+          content_hash: contentHash(normalizeAnalysis(analysisRows, noteText, value)),
+          snapshot,
+          mark_kind: 'cardsight' as const,
+          // Date the mark to the month it describes, not to the import.
+          created_at: `${point.asOf}T12:00:00.000Z`,
+          source_session_id: null,
+          derived_from_id: null,
+        });
+        if (error) { setCompsError(error); break; }
+        if (row) written.push(row);
+      }
+      if (written.length) {
+        setValueHistory(prev =>
+          [...written, ...prev].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+        );
+      }
+      setImportedCount(written.length);
+    } finally {
+      setImportingHistory(false);
+    }
+  }
+
   // Pull comps from CardSight and drop them in as weighted rows.
   //
   // This REPLACES the current rows rather than appending. Appending would
@@ -678,8 +776,8 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       if (payload.rows.length) {
         setRows(payload.rows.map((r, i) => ({
           position: i,
-          source: 'cardsight_auction' as SourceValue,
-          source_label: '',
+          source: r.source as SourceValue,
+          source_label: r.source_label ?? '',
           grade_company: r.grade_company,
           grade_value: r.grade_value,
           sale_date: r.sale_date,
@@ -1122,7 +1220,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
             {compsError && (
               <div style={{ fontSize: 12, color: 'var(--rust)', marginBottom: 12 }}>{compsError}</div>
             )}
-            {comps && <CompsPanel comps={comps} />}
+            {comps && (
+              <CompsPanel comps={comps} onImportHistory={importHistory}
+                importing={importingHistory} imported={importedCount} />
+            )}
 
             <div style={{ marginBottom: 16 }}>
               <label className="input-label">Notes (private — only you see these)</label>
@@ -1318,6 +1419,12 @@ function ValueHistoryList({ items, onUse }: {
               <span className="display" style={{ fontSize: 16, color: 'var(--orange)', fontWeight: 700 }}>
                 {fmtMoney(h.market_value)}
               </span>
+              {/* Imported market medians share this timeline with the owner's
+                  own analyses, so say which is which — one is what the market
+                  did, the other is what they concluded. */}
+              {h.mark_kind === 'cardsight' && (
+                <span className="chip chip-gold" style={{ fontSize: 9.5 }}>CardSight median</span>
+              )}
               {delta !== null && (
                 <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: trendColor(dir) }}>
                   {trendArrow(dir)}{' '}

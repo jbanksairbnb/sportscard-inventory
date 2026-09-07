@@ -42,8 +42,11 @@ export type ValueHistoryRow = {
   content_hash: string;
   snapshot: AnalysisSnapshot;
   // How this mark was produced: 'research' rows carry comps in snapshot.rows;
-  // 'manual' rows just record a number the owner typed (empty comp list).
-  mark_kind: 'research' | 'manual';
+  // 'manual' rows just record a number the owner typed (empty comp list);
+  // 'cardsight' rows are a month's median of sold comps, imported in bulk from
+  // the price history CardSight has for the card, and dated to that month's
+  // last sale rather than to the day they were imported.
+  mark_kind: 'research' | 'manual' | 'cardsight';
   source_session_id: string | null;
   derived_from_id: string | null;
   created_at: string;
