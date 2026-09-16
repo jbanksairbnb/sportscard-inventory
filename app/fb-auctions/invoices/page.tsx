@@ -68,7 +68,7 @@ type ClaimItemRow = {
 };
 
 type ClaimLotRow = { id: string; sale_id: string; lot_number: number | null };
-type SourceRef = { id: string; title: string | null; post_url: string | null };
+type SourceRef = { id: string; title: string | null; post_url: string | null; ends_at: string | null; created_at: string | null };
 
 // A single billable card on an invoice.
 type InvoiceLine = {
@@ -77,6 +77,7 @@ type InvoiceLine = {
   sourceId: string;
   sourceTitle: string;
   sourceUrl: string | null; // the sale's Facebook post URL, if saved
+  sourceDate: string | null; // when the sale happened (ended, else created)
   label: string; // composed card description
   tag: string | null; // seller's inventory tag
   amount: number;
@@ -93,6 +94,20 @@ type Invoice = {
   lines: InvoiceLine[];
   subtotal: number;
   paid: boolean;
+  // Span of the sales this invoice covers, in epoch ms — drives the date
+  // sorts. Null when none of the buyer's sales carry a usable date.
+  firstSaleAt: number | null;
+  lastSaleAt: number | null;
+};
+
+// How the invoice list is ordered. `amount` is the long-standing default.
+const SORTS = ['amount', 'newest', 'oldest', 'name'] as const;
+type Sort = typeof SORTS[number];
+const SORT_LABELS: Record<Sort, string> = {
+  amount: 'Amount (high → low)',
+  newest: 'Sale date (newest first)',
+  oldest: 'Sale date (oldest first)',
+  name: 'Customer (A → Z)',
 };
 
 const PAYMENT_STORAGE_KEY = 'sc_invoice_payment_default';
@@ -101,6 +116,58 @@ const DEFAULT_PAYMENT = 'PayPal G&S to: your-paypal@email.com\nVenmo: @your-venm
 function fmtMoney(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
+}
+
+// A sale's date: when it ended, falling back to when it was created for the
+// sales that were never given an end time.
+function saleDateOf(s: SourceRef | null | undefined): string | null {
+  return s?.ends_at || s?.created_at || null;
+}
+
+function saleTime(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function fmtDate(when: string | number | null): string {
+  const t = typeof when === 'number' ? when : saleTime(when);
+  if (t === null) return '';
+  return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Order the rendered list. Date sorts use the buyer's newest sale (newest
+// first) or oldest sale (oldest first); invoices with no usable date sort last
+// either way, and amount is the tie-breaker everywhere.
+function compareInvoices(a: Invoice, b: Invoice, sort: Sort): number {
+  if (sort === 'name') {
+    const n = a.name.localeCompare(b.name);
+    if (n !== 0) return n;
+  } else if (sort === 'newest' || sort === 'oldest') {
+    const ta = sort === 'newest' ? a.lastSaleAt : a.firstSaleAt;
+    const tb = sort === 'newest' ? b.lastSaleAt : b.firstSaleAt;
+    if (ta === null || tb === null) {
+      if (ta !== tb) return ta === null ? 1 : -1;
+    } else if (ta !== tb) {
+      return sort === 'newest' ? tb - ta : ta - tb;
+    }
+  }
+  return b.subtotal - a.subtotal;
+}
+
+// Record the span of sale dates an invoice covers, so the date sorts don't
+// have to re-walk every line.
+function stampSaleDates(inv: Invoice): void {
+  let first: number | null = null;
+  let last: number | null = null;
+  for (const l of inv.lines) {
+    const t = saleTime(l.sourceDate);
+    if (t === null) continue;
+    if (first === null || t < first) first = t;
+    if (last === null || t > last) last = t;
+  }
+  inv.firstSaleAt = first;
+  inv.lastSaleAt = last;
 }
 
 function cardSummary(r: ListingRef | null): string {
@@ -150,6 +217,16 @@ function bidderKeyOf(id: string | null | undefined, name: string | null | undefi
   return n ? `name:${n}` : null;
 }
 
+// One-line date summary for a buyer's card: a single date, or the span when
+// their wins came from sales on different days.
+function saleDateSummary(inv: Invoice): string {
+  const first = fmtDate(inv.firstSaleAt);
+  const last = fmtDate(inv.lastSaleAt);
+  if (!first && !last) return '';
+  if (!first || !last || first === last) return first || last;
+  return `${first} – ${last}`;
+}
+
 function fullAddress(b: Bidder | null): string {
   if (!b) return '';
   const parts = [
@@ -168,6 +245,7 @@ export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [tab, setTab] = useState<'open' | 'paid'>('open');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<Sort>('amount');
 
   // Per-invoice combined shipping, keyed by bidderKey (local to this session —
   // set when you generate the invoice to send, then mark it paid).
@@ -224,10 +302,19 @@ export default function InvoicesPage() {
         ...claims.map(c => c.listing_id),
       ].filter((v): v is string => !!v)));
 
-      const [aucRes, claimLotRes, listingRes] = await Promise.all([
-        auctionIds.length
-          ? supabase.from('fb_auctions').select('id, title, post_url').in('id', auctionIds)
-          : Promise.resolve({ data: [] as SourceRef[] }),
+      // Sale rows carry the date shown on each invoice. `ends_at` is a newer
+      // column, so fall back to created_at alone rather than losing the sale
+      // titles and post links entirely if the select can't resolve it.
+      async function fetchSources(table: 'fb_auctions' | 'fb_claim_sales', ids: string[]): Promise<SourceRef[]> {
+        if (!ids.length) return [];
+        const res = await supabase.from(table).select('id, title, post_url, ends_at, created_at').in('id', ids);
+        if (!res.error) return (res.data || []) as SourceRef[];
+        const fallback = await supabase.from(table).select('id, title, post_url, created_at').in('id', ids);
+        return ((fallback.data || []) as Omit<SourceRef, 'ends_at'>[]).map(r => ({ ...r, ends_at: null }));
+      }
+
+      const [auctionSources, claimLotRes, listingRes] = await Promise.all([
+        fetchSources('fb_auctions', auctionIds),
         claimLotIds.length
           ? supabase.from('fb_claim_sale_lots').select('id, sale_id, lot_number').in('id', claimLotIds)
           : Promise.resolve({ data: [] as ClaimLotRow[] }),
@@ -236,16 +323,14 @@ export default function InvoicesPage() {
           : Promise.resolve({ data: [] as ListingRef[] }),
       ]);
 
-      const auctionsById = new Map(((aucRes.data || []) as SourceRef[]).map(a => [a.id, a]));
+      const auctionsById = new Map(auctionSources.map(a => [a.id, a]));
       const claimLotsById = new Map(((claimLotRes.data || []) as ClaimLotRow[]).map(l => [l.id, l]));
       const listingsById = new Map(((listingRes.data || []) as ListingRef[]).map(l => [l.id, l]));
 
       // Resolve claim-sale titles from the lots' sale_ids.
       const saleIds = Array.from(new Set(((claimLotRes.data || []) as ClaimLotRow[]).map(l => l.sale_id)));
-      const { data: saleRows } = saleIds.length
-        ? await supabase.from('fb_claim_sales').select('id, title, post_url').in('id', saleIds)
-        : { data: [] as SourceRef[] };
-      const salesById = new Map(((saleRows || []) as SourceRef[]).map(s => [s.id, s]));
+      const saleRows = await fetchSources('fb_claim_sales', saleIds);
+      const salesById = new Map(saleRows.map(s => [s.id, s]));
 
       // Build invoices keyed by buyer, split into paid vs unpaid buckets.
       const byKey = new Map<string, { paid: Invoice; open: Invoice }>();
@@ -255,6 +340,7 @@ export default function InvoicesPage() {
           const mk = (paid: boolean): Invoice => ({
             bidderKey: `${key}:${paid ? 'paid' : 'open'}`,
             bidder, bidderId: id, name, fbHandle: handle, lines: [], subtotal: 0, paid,
+            firstSaleAt: null, lastSaleAt: null,
           });
           byKey.set(key, { paid: mk(true), open: mk(false) });
         }
@@ -274,6 +360,7 @@ export default function InvoicesPage() {
           sourceId: l.auction_id,
           sourceTitle: auctionsById.get(l.auction_id)?.title || 'Auction',
           sourceUrl: auctionsById.get(l.auction_id)?.post_url || null,
+          sourceDate: saleDateOf(auctionsById.get(l.auction_id)),
           label: cardSummary(listing),
           tag: listing?.tag_number || null,
           amount: l.current_bid || 0,
@@ -299,6 +386,7 @@ export default function InvoicesPage() {
           sourceId: lot?.sale_id || '',
           sourceTitle: sale?.title || 'Claim Sale',
           sourceUrl: sale?.post_url || null,
+          sourceDate: saleDateOf(sale),
           label: cardSummary(listing),
           tag: listing?.tag_number || null,
           amount: c.price || 0,
@@ -315,11 +403,11 @@ export default function InvoicesPage() {
         // so the rendered list and the copied invoice text stay consistent.
         open.lines.sort(compareInvoiceLines);
         paid.lines.sort(compareInvoiceLines);
+        stampSaleDates(open);
+        stampSaleDates(paid);
         if (open.lines.length) all.push(open);
         if (paid.lines.length) all.push(paid);
       }
-      // Sort each rendered list by amount owed/spent, biggest first.
-      all.sort((a, b) => b.subtotal - a.subtotal);
       setInvoices(all);
       setLoading(false);
     }
@@ -328,11 +416,13 @@ export default function InvoicesPage() {
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return invoices.filter(inv =>
-      inv.paid === (tab === 'paid') &&
-      (!q || inv.name.toLowerCase().includes(q) || (inv.fbHandle || '').toLowerCase().includes(q))
-    );
-  }, [invoices, tab, search]);
+    return invoices
+      .filter(inv =>
+        inv.paid === (tab === 'paid') &&
+        (!q || inv.name.toLowerCase().includes(q) || (inv.fbHandle || '').toLowerCase().includes(q))
+      )
+      .sort((a, b) => compareInvoices(a, b, sort));
+  }, [invoices, tab, search, sort]);
 
   const openInvoices = useMemo(() => invoices.filter(i => !i.paid), [invoices]);
   const summary = useMemo(() => {
@@ -484,13 +574,24 @@ export default function InvoicesPage() {
           <button onClick={() => setTab('paid')} className={`btn btn-sm ${tab === 'paid' ? 'btn-primary' : 'btn-ghost'}`}>
             Paid <span style={{ marginLeft: 6, opacity: 0.8 }}>{invoices.filter(i => i.paid).length}</span>
           </button>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search buyer…"
-            className="input-sc"
-            style={{ marginLeft: 'auto', minWidth: 200 }}
-          />
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label className="eyebrow" htmlFor="invoice-sort" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>Sort</label>
+            <select
+              id="invoice-sort"
+              value={sort}
+              onChange={e => setSort(e.target.value as Sort)}
+              style={{ padding: '4px 10px', fontSize: 12, fontWeight: 700, border: '1.5px solid var(--plum)', borderRadius: 100, background: 'var(--cream)', color: 'var(--plum)', fontFamily: 'var(--font-body)', cursor: 'pointer' }}
+            >
+              {SORTS.map(o => <option key={o} value={o}>{SORT_LABELS[o]}</option>)}
+            </select>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search buyer…"
+              className="input-sc"
+              style={{ minWidth: 200 }}
+            />
+          </div>
         </div>
 
         {tab === 'open' && (
@@ -553,16 +654,17 @@ function InvoiceCard({
 }) {
   // Group the buyer's lines by the sale they came from.
   const groups = useMemo(() => {
-    const m = new Map<string, { title: string; kind: 'auction' | 'claim'; sourceId: string; sourceUrl: string | null; lines: InvoiceLine[] }>();
+    const m = new Map<string, { title: string; kind: 'auction' | 'claim'; sourceId: string; sourceUrl: string | null; date: string | null; lines: InvoiceLine[] }>();
     for (const l of inv.lines) {
       const k = `${l.kind}:${l.sourceId}`;
-      if (!m.has(k)) m.set(k, { title: l.sourceTitle, kind: l.kind, sourceId: l.sourceId, sourceUrl: l.sourceUrl, lines: [] });
+      if (!m.has(k)) m.set(k, { title: l.sourceTitle, kind: l.kind, sourceId: l.sourceId, sourceUrl: l.sourceUrl, date: l.sourceDate, lines: [] });
       m.get(k)!.lines.push(l);
     }
     return Array.from(m.values()).sort((a, b) => a.title.localeCompare(b.title));
   }, [inv.lines]);
 
   const addr = fullAddress(inv.bidder);
+  const dateSummary = saleDateSummary(inv);
 
   return (
     <section className="panel-bordered" style={{ padding: '18px 22px', borderColor: inv.paid ? 'var(--rule)' : 'var(--orange)' }}>
@@ -578,8 +680,15 @@ function InvoiceCard({
           {inv.fbHandle && <span className="mono" style={{ fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>@{inv.fbHandle}</span>}
           {inv.paid && <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 8px', borderRadius: 100, background: 'var(--plum)', color: 'var(--cream)', textTransform: 'uppercase' }}>Paid</span>}
         </div>
-        <div className="mono" style={{ fontSize: 14, color: 'var(--orange)', fontWeight: 700 }}>
-          {inv.lines.length} item{inv.lines.length === 1 ? '' : 's'} · {fmtMoney(inv.subtotal)}
+        <div style={{ textAlign: 'right' }}>
+          <div className="mono" style={{ fontSize: 14, color: 'var(--orange)', fontWeight: 700 }}>
+            {inv.lines.length} item{inv.lines.length === 1 ? '' : 's'} · {fmtMoney(inv.subtotal)}
+          </div>
+          {dateSummary && (
+            <div className="mono" title="Sale date" style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 2 }}>
+              📅 {dateSummary}
+            </div>
+          )}
         </div>
       </div>
 
@@ -592,7 +701,9 @@ function InvoiceCard({
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-        {groups.map(g => (
+        {groups.map(g => {
+          const saleDate = fmtDate(g.date);
+          return (
           <div key={`${g.kind}:${g.sourceId}`} style={{ background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6, padding: '8px 10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
               {g.sourceUrl ? (
@@ -616,7 +727,10 @@ function InvoiceCard({
               ) : (
                 <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--plum)' }}>{g.kind === 'auction' ? '🔨' : '🎯'} {g.title}</span>
               )}
-              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{g.lines.length} item{g.lines.length === 1 ? '' : 's'}</span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+                {saleDate && <span title="Sale date">{saleDate} · </span>}
+                {g.lines.length} item{g.lines.length === 1 ? '' : 's'}
+              </span>
             </div>
             {g.lines.map(l => {
               const hasPhotos = !!(l.listing?.photos && l.listing.photos.length);
@@ -648,7 +762,8 @@ function InvoiceCard({
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {!inv.paid && (
