@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
 
@@ -29,6 +30,14 @@ type BidEventRow = {
   created_at: string;
 };
 
+type HistoricalRow = {
+  bidder_id: string | null;
+  bidder_name: string | null;
+  engagement_type: 'won' | 'bid' | 'tag_request';
+  occurred_at: string | null;
+  created_at: string;
+};
+
 type ClaimItemRow = {
   claim_buyer_id: string | null;
   claim_buyer_name: string | null;
@@ -37,9 +46,13 @@ type ClaimItemRow = {
 };
 
 type BidderStats = BidderRow & {
-  totalBids: number;      // every bid event this bidder placed
+  totalBids: number;      // every bid event this bidder placed, plus imported bids
   lotsBidOn: number;      // distinct auction lots they have bid on
-  leadingCount: number;   // auction lots where they're the current high bidder
+  // Lots where they hold the high bid on an auction that is still running.
+  // This used to count every lot they were attached to regardless of status,
+  // so it read identical to Won on any closed auction.
+  leadingCount: number;
+  lastBidAt: string | null;
   wonCount: number;       // auction lots ended/sold/paid (status sold or paid)
   paidCount: number;      // auction lots paid
   totalSpend: number;     // sum auction + claim paid
@@ -52,6 +65,22 @@ type BidderStats = BidderRow & {
   unpaidTotal: number;
 };
 
+function daysAgo(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return Math.floor((Date.now() - t) / 86_400_000);
+}
+
+// Recency now drives the tag-suggestion bands, so it is worth seeing here too.
+function fmtAgo(iso: string | null): string {
+  const d = daysAgo(iso);
+  if (d === null) return '—';
+  if (d <= 0) return 'today';
+  if (d === 1) return '1d';
+  return `${d}d`;
+}
+
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 }
@@ -62,9 +91,10 @@ export default function BiddersListPage() {
   const [bidders, setBidders] = useState<BidderRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
   const [bidEvents, setBidEvents] = useState<BidEventRow[]>([]);
+  const [historical, setHistorical] = useState<HistoricalRow[]>([]);
   const [claimItems, setClaimItems] = useState<ClaimItemRow[]>([]);
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims' | 'bids' | 'unpaid'>('bids');
+  const [sort, setSort] = useState<'name' | 'spend' | 'won' | 'claims' | 'bids' | 'unpaid' | 'recent'>('bids');
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -73,16 +103,30 @@ export default function BiddersListPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
       { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
-      const [bRes, lRes, cRes, eRes] = await Promise.all([
+      // Every one of these pages through fetchAll. Unbounded PostgREST queries
+      // stop at 1000 rows, and this seller is past that on bid events alone —
+      // the page was showing roughly two thirds of each bidder's real activity,
+      // and mis-ranking the heaviest bidders worst of all.
+      const [bRes, lotRows, claimRows, eventRows, histRows] = await Promise.all([
         supabase.from('fb_bidders').select('id, name, fb_handle, notes').eq('user_id', user.id).order('name'),
-        supabase.from('fb_auction_lots').select('bidder_id, bidder_name, current_bid, status').eq('user_id', user.id),
-        supabase.from('fb_claim_sale_items').select('claim_buyer_id, claim_buyer_name, price, claim_status').eq('user_id', user.id),
-        supabase.from('fb_auction_bid_events').select('lot_id, bidder_id, bidder_name, amount, created_at').eq('user_id', user.id),
+        fetchAll<LotRow>((from, to) => supabase.from('fb_auction_lots')
+          .select('bidder_id, bidder_name, current_bid, status').eq('user_id', user.id)
+          .order('id', { ascending: true }).range(from, to)),
+        fetchAll<ClaimItemRow>((from, to) => supabase.from('fb_claim_sale_items')
+          .select('claim_buyer_id, claim_buyer_name, price, claim_status').eq('user_id', user.id)
+          .order('id', { ascending: true }).range(from, to)),
+        fetchAll<BidEventRow>((from, to) => supabase.from('fb_auction_bid_events')
+          .select('lot_id, bidder_id, bidder_name, amount, created_at').eq('user_id', user.id)
+          .order('created_at', { ascending: true }).range(from, to)),
+        fetchAll<HistoricalRow>((from, to) => supabase.from('historical_transactions')
+          .select('bidder_id, bidder_name, engagement_type, occurred_at, created_at').eq('user_id', user.id)
+          .order('id', { ascending: true }).range(from, to)),
       ]);
       setBidders((bRes.data || []) as BidderRow[]);
-      setLots((lRes.data || []) as LotRow[]);
-      setClaimItems((cRes.data || []) as ClaimItemRow[]);
-      setBidEvents((eRes.data || []) as BidEventRow[]);
+      setLots(lotRows);
+      setClaimItems(claimRows);
+      setBidEvents(eventRows);
+      setHistorical(histRows);
       setLoading(false);
     }
     load();
@@ -133,17 +177,42 @@ export default function BiddersListPage() {
         eventsByName.set(k, arr);
       }
     }
+    const histByBidder = new Map<string, HistoricalRow[]>();
+    const histByName = new Map<string, HistoricalRow[]>();
+    for (const h of historical) {
+      if (h.bidder_id) {
+        const arr = histByBidder.get(h.bidder_id) || [];
+        arr.push(h);
+        histByBidder.set(h.bidder_id, arr);
+      } else if (h.bidder_name) {
+        const k = h.bidder_name.trim().toLowerCase();
+        const arr = histByName.get(k) || [];
+        arr.push(h);
+        histByName.set(k, arr);
+      }
+    }
     return bidders.map(b => {
       const nameKey = b.name.trim().toLowerCase();
       const myLots = [...(lotsByBidder.get(b.id) || []), ...(lotsByName.get(nameKey) || [])];
       const myClaims = [...(claimsByBuyer.get(b.id) || []), ...(claimsByName.get(nameKey) || [])];
       const myEvents = [...(eventsByBidder.get(b.id) || []), ...(eventsByName.get(nameKey) || [])];
-      const totalBids = myEvents.length;
+      const myHist = [...(histByBidder.get(b.id) || []), ...(histByName.get(nameKey) || [])];
+      // Imported history is engagement too — a bid you migrated in counts the
+      // same as one typed here, and leaving it out understated the bidders
+      // whose relationship with you predates the app.
+      const histBids = myHist.filter(h => h.engagement_type !== 'won').length;
+      const totalBids = myEvents.length + histBids;
       const lotsBidOn = new Set(myEvents.map(e => e.lot_id)).size;
+      let lastBidAt: string | null = null;
+      for (const e of myEvents) if (!lastBidAt || e.created_at > lastBidAt) lastBidAt = e.created_at;
+      for (const h of myHist) {
+        const when = h.occurred_at ? `${h.occurred_at}T00:00:00Z` : h.created_at;
+        if (when && (!lastBidAt || when > lastBidAt)) lastBidAt = when;
+      }
       let leadingCount = 0, wonCount = 0, paidCount = 0, totalSpend = 0;
       let unpaidCount = 0, unpaidTotal = 0;
       for (const l of myLots) {
-        leadingCount += 1;
+        if (l.status === 'open') leadingCount += 1;
         if (l.status === 'sold' || l.status === 'paid') wonCount += 1;
         if (l.status === 'paid') {
           paidCount += 1;
@@ -164,9 +233,11 @@ export default function BiddersListPage() {
           if (c.price) unpaidTotal += c.price;
         }
       }
-      return { ...b, totalBids, lotsBidOn, leadingCount, wonCount, paidCount, totalSpend, claimCount, claimPaidCount, unpaidCount, unpaidTotal };
+      // Imported wins settle as wins, so they belong in the Won column.
+      wonCount += myHist.filter(h => h.engagement_type === 'won').length;
+      return { ...b, totalBids, lotsBidOn, leadingCount, lastBidAt, wonCount, paidCount, totalSpend, claimCount, claimPaidCount, unpaidCount, unpaidTotal };
     });
-  }, [bidders, lots, claimItems, bidEvents]);
+  }, [bidders, lots, claimItems, bidEvents, historical]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -179,6 +250,11 @@ export default function BiddersListPage() {
       if (sort === 'bids') return b.totalBids - a.totalBids;
       if (sort === 'claims') return b.claimCount - a.claimCount;
       if (sort === 'unpaid') return b.unpaidTotal - a.unpaidTotal;
+      if (sort === 'recent') {
+        const ad = daysAgo(a.lastBidAt) ?? Number.MAX_SAFE_INTEGER;
+        const bd = daysAgo(b.lastBidAt) ?? Number.MAX_SAFE_INTEGER;
+        return ad - bd;
+      }
       return a.name.localeCompare(b.name);
     });
     return arr;
@@ -244,10 +320,10 @@ export default function BiddersListPage() {
             placeholder="Search bidders…"
             className="input-sc" style={{ flex: 1, minWidth: 240, maxWidth: 360, fontSize: 13 }} />
           <div style={{ display: 'flex', gap: 6 }}>
-            {(['bids', 'spend', 'unpaid', 'won', 'claims', 'name'] as const).map(opt => (
+            {(['bids', 'recent', 'spend', 'unpaid', 'won', 'claims', 'name'] as const).map(opt => (
               <button key={opt} onClick={() => setSort(opt)}
                 className={sort === opt ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
-                Sort: {opt === 'bids' ? '# bids' : opt === 'spend' ? '$ spent' : opt === 'unpaid' ? '$ unpaid' : opt === 'won' ? '# won' : opt === 'claims' ? '# claims' : 'A→Z'}
+                Sort: {opt === 'bids' ? '# bids' : opt === 'recent' ? 'last bid' : opt === 'spend' ? '$ spent' : opt === 'unpaid' ? '$ unpaid' : opt === 'won' ? '# won' : opt === 'claims' ? '# claims' : 'A→Z'}
               </button>
             ))}
           </div>
@@ -290,12 +366,13 @@ export default function BiddersListPage() {
                   <th style={{ padding: '10px 14px', textAlign: 'left' }}>FB Handle</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Total bids placed across all auctions">Bids</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Distinct lots this bidder has bid on">Lots</th>
-                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Lots where this bidder is currently the high bidder">Leading</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Lots where this bidder holds the high bid on an auction that is still open">Leading</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Won</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Claims</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>Paid</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Unpaid wins across all auctions + claim sales. Click the bidder to generate a combined invoice.">$ Unpaid</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right' }}>$ Spent</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right' }} title="Most recent bid, live or imported">Last bid</th>
                   <th style={{ padding: '10px 14px', textAlign: 'center', width: 36 }}></th>
                 </tr>
               </thead>
@@ -319,6 +396,9 @@ export default function BiddersListPage() {
                     </td>
                     <td style={{ padding: '10px 14px', textAlign: 'right', fontSize: 13, color: 'var(--orange)', fontWeight: 700 }}>
                       {s.totalSpend > 0 ? fmtMoney(s.totalSpend) : '—'}
+                    </td>
+                    <td className="mono" style={{ padding: '10px 14px', textAlign: 'right', fontSize: 11, color: daysAgo(s.lastBidAt) !== null && daysAgo(s.lastBidAt)! <= 60 ? 'var(--teal)' : 'var(--ink-mute)' }}>
+                      {fmtAgo(s.lastBidAt)}
                     </td>
                     <td style={{ padding: '6px 10px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                       <button type="button" onClick={() => handleDelete(s)} disabled={deletingIds.has(s.id)}
