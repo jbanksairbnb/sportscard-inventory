@@ -138,6 +138,11 @@ export default function FbAuctionsPage() {
   const [dupeWarnings, setDupeWarnings] = useState<Record<string, BidderRow[]>>({});
   const [historicalSales, setHistoricalSales] = useState<{ amount: number; occurred_at: string | null }[]>([]);
   const [historyLotId, setHistoryLotId] = useState<string | null>(null);
+  const [addBidLotId, setAddBidLotId] = useState<string | null>(null);
+  const [addBidAmount, setAddBidAmount] = useState('');
+  const [addBidName, setAddBidName] = useState('');
+  const [addBidSaving, setAddBidSaving] = useState(false);
+  const [addBidNote, setAddBidNote] = useState<string | null>(null);
   const [historyEvents, setHistoryEvents] = useState<BidHistoryEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -506,6 +511,78 @@ export default function FbAuctionsPage() {
     setSavingLots(prev => { const next = new Set(prev); next.delete(lotId); return next; });
   }
 
+  // Recording a bid explicitly, as one amount-and-bidder pair.
+  //
+  // The inline lot fields can only ever *infer* a bid from what changed, which
+  // is why a bid entered as two separate blurs could lose its bidder and a
+  // corrected typo could look like an extra bid. Here both halves arrive
+  // together, so there is nothing to infer and nothing to reconcile later.
+  async function submitAddBid(keepOpen: boolean) {
+    const lotId = addBidLotId;
+    if (!lotId || !userId) return;
+    const amount = addBidAmount.trim() === '' ? null : Number(addBidAmount.replace(/[^0-9.]/g, ''));
+    const name = addBidName.trim();
+    if (amount === null || Number.isNaN(amount)) { setAddBidNote('Enter a bid amount.'); return; }
+    if (!name) { setAddBidNote('Enter who placed the bid.'); return; }
+
+    let lotRef: LotRow | undefined;
+    let auctionForLot: AuctionRow | undefined;
+    for (const a of auctions) {
+      const l = a.fb_auction_lots.find(x => x.id === lotId);
+      if (l) { lotRef = l; auctionForLot = a; break; }
+    }
+    if (!lotRef || !auctionForLot) return;
+
+    setAddBidSaving(true);
+    const supabase = createClient();
+    const bidderId = await ensureBidderForLot(lotRef, name, null);
+    const err = await logBidEvent(supabase, {
+      userId, auctionId: auctionForLot.id, lotId,
+      amount, bidderId, bidderName: name, bidderFbHandle: null,
+    });
+    if (err) {
+      setAddBidSaving(false);
+      setAddBidNote(`Could not record the bid: ${err}`);
+      return;
+    }
+    // The high bid only moves when this bid actually beats it, so recording a
+    // losing bid from earlier in the thread cannot clobber the current leader.
+    const beatsCurrent = lotRef.current_bid == null || amount > lotRef.current_bid;
+    if (beatsCurrent) {
+      const { error } = await supabase.from('fb_auction_lots')
+        .update({ current_bid: amount, bidder_name: name, bidder_id: bidderId })
+        .eq('id', lotId);
+      if (!error) {
+        setAuctions(prev => prev.map(a => ({
+          ...a,
+          fb_auction_lots: a.fb_auction_lots.map(l => l.id === lotId
+            ? { ...l, current_bid: amount, bidder_name: name, bidder_id: bidderId } : l),
+        })));
+      }
+    }
+    const fresh = await fetchLotBidStats(supabase, [lotId]);
+    const stat = fresh.get(lotId);
+    if (stat) setLotStats(prev => { const next = new Map(prev); next.set(lotId, stat); return next; });
+    const recordedKey = bidderKey(bidderId, name);
+    if (recordedKey) {
+      setBidderKeysByLot(prev => {
+        const next = new Map(prev);
+        const set = new Set(next.get(lotId) || []);
+        set.add(recordedKey);
+        next.set(lotId, set);
+        return next;
+      });
+    }
+    setAddBidSaving(false);
+    setAddBidNote(beatsCurrent ? null : 'Recorded — below the current high bid, so the leader is unchanged.');
+    // Transcribing a comment thread means several bids in a row, so keep the
+    // dialog up and clear only the amount: the next bid is usually someone new
+    // at a higher number, but the lot is the same.
+    setAddBidAmount('');
+    if (keepOpen) setAddBidName('');
+    else { setAddBidLotId(null); setAddBidName(''); setAddBidNote(null); }
+  }
+
   async function openBidHistory(lotId: string) {
     setHistoryLotId(lotId);
     setHistoryEvents([]);
@@ -802,20 +879,37 @@ export default function FbAuctionsPage() {
                                 <div style={{ fontSize: 12, color: 'var(--plum)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {shortLotLabel(lot)}
                                 </div>
-                                {(() => {
-                                  const s = lotStats.get(lot.id);
-                                  if (!s || s.bid_count === 0) return null;
-                                  return (
-                                    <button type="button" onClick={() => openBidHistory(lot.id)}
-                                      className="mono" style={{
-                                        background: 'transparent', border: 0, padding: 0, marginTop: 2,
-                                        fontSize: 10, color: 'var(--teal)', fontWeight: 700, cursor: 'pointer',
-                                        textDecoration: 'underline', fontFamily: 'inherit',
-                                      }}>
-                                      🔨 {s.bid_count} bid{s.bid_count === 1 ? '' : 's'} · {s.unique_bidders} bidder{s.unique_bidders === 1 ? '' : 's'}
-                                    </button>
-                                  );
-                                })()}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                                  {(() => {
+                                    const s = lotStats.get(lot.id);
+                                    if (!s || s.bid_count === 0) return null;
+                                    return (
+                                      <button type="button" onClick={() => openBidHistory(lot.id)}
+                                        className="mono" style={{
+                                          background: 'transparent', border: 0, padding: 0,
+                                          fontSize: 10, color: 'var(--teal)', fontWeight: 700, cursor: 'pointer',
+                                          textDecoration: 'underline', fontFamily: 'inherit',
+                                        }}>
+                                        🔨 {s.bid_count} bid{s.bid_count === 1 ? '' : 's'} · {s.unique_bidders} bidder{s.unique_bidders === 1 ? '' : 's'}
+                                      </button>
+                                    );
+                                  })()}
+                                  <button type="button"
+                                    onClick={() => {
+                                      setAddBidLotId(lot.id);
+                                      setAddBidAmount('');
+                                      setAddBidName('');
+                                      setAddBidNote(null);
+                                    }}
+                                    title="Record a bid with its bidder in one step"
+                                    className="mono" style={{
+                                      background: 'transparent', border: 0, padding: 0,
+                                      fontSize: 10, color: 'var(--orange)', fontWeight: 700, cursor: 'pointer',
+                                      textDecoration: 'underline', fontFamily: 'inherit',
+                                    }}>
+                                    + bid
+                                  </button>
+                                </div>
                               </div>
                               <input type="text" inputMode="decimal"
                                 defaultValue={cur !== null && cur !== undefined ? String(cur) : ''}
@@ -871,6 +965,57 @@ export default function FbAuctionsPage() {
         )}
       </div>
 
+      {addBidLotId && (
+        <div onClick={() => setAddBidLotId(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(63, 27, 56, 0.55)', zIndex: 100,
+            display: 'grid', placeItems: 'center', padding: 20,
+          }}>
+          <div onClick={e => e.stopPropagation()} className="panel-bordered"
+            style={{ background: 'var(--cream)', maxWidth: 420, width: '100%' }}>
+            <div style={{ padding: '14px 18px', borderBottom: '2px solid var(--plum)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1 }}>Record a bid</div>
+              <button onClick={() => setAddBidLotId(null)} className="btn btn-ghost btn-sm">✕ Close</button>
+            </div>
+            <div style={{ padding: '16px 18px', display: 'grid', gap: 12 }}>
+              <label style={{ display: 'grid', gap: 4 }}>
+                <span className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-soft)' }}>Bid amount</span>
+                <input type="text" inputMode="decimal" autoFocus
+                  value={addBidAmount}
+                  onChange={e => { setAddBidAmount(e.target.value); setAddBidNote(null); }}
+                  placeholder="$"
+                  style={{ padding: '6px 10px', fontSize: 14, border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--paper)', color: 'var(--plum)', fontFamily: 'var(--font-body)' }} />
+              </label>
+              <label style={{ display: 'grid', gap: 4 }}>
+                <span className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-soft)' }}>Bidder</span>
+                <input type="text" list="fb-bidders-list"
+                  value={addBidName}
+                  onChange={e => { setAddBidName(e.target.value); setAddBidNote(null); }}
+                  onKeyDown={e => { if (e.key === 'Enter' && !addBidSaving) { e.preventDefault(); submitAddBid(true); } }}
+                  placeholder="Who placed it"
+                  style={{ padding: '6px 10px', fontSize: 14, border: '1.5px solid var(--plum)', borderRadius: 4, background: 'var(--paper)', color: 'var(--plum)', fontFamily: 'var(--font-body)' }} />
+              </label>
+              {addBidNote && (
+                <div style={{ fontSize: 11.5, color: 'var(--orange)', fontWeight: 600 }}>{addBidNote}</div>
+              )}
+              <div style={{ fontSize: 11, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
+                Every bid you record counts toward that bidder&apos;s ranking — enter the losing bids too, not
+                just the winner. The high bid only moves when this one beats it.
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => submitAddBid(true)} disabled={addBidSaving}
+                  className="btn btn-ghost btn-sm">
+                  {addBidSaving ? 'Saving…' : 'Add & keep going'}
+                </button>
+                <button onClick={() => submitAddBid(false)} disabled={addBidSaving}
+                  className="btn btn-primary btn-sm">
+                  {addBidSaving ? 'Saving…' : 'Add bid'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {historyLotId && (
         <div onClick={() => setHistoryLotId(null)}
           style={{

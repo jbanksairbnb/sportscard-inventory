@@ -13,6 +13,7 @@ import {
   type BidderRow as BidderSuggestionRow,
   type LiveActivity,
 } from '@/components/BidderSuggestions';
+import { loadBidderActivity } from '@/lib/bidderActivity';
 
 type Listing = {
   id: string;
@@ -162,107 +163,20 @@ function NewClaimSalePageInner() {
       if (!user) { router.push('/login'); return; }
       { const _ss = await getSellerStatus(supabase, user.id); if (!_ss.canSell) { router.replace('/marketplace'); return; } if (!_ss.termsAccepted) { router.replace('/seller-terms'); return; } }
       setUserId(user.id);
-      const [listRes, grpRes, tmplRes, biddersRes, lotsRes, eventsRes, claimsRes, historicalRes] = await Promise.all([
+      const [listRes, grpRes, tmplRes, bidderActivity] = await Promise.all([
         supabase.from('listings')
           .select('id, title, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number')
           .eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         supabase.from('fb_auction_templates').select('id, name, template_type, post_header, post_footer').eq('user_id', user.id),
-        supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', user.id),
-        supabase.from('fb_auction_lots')
-          .select('id, bidder_id, current_bid, status, listing:listings(year, brand, player)')
-          .eq('user_id', user.id)
-          .not('bidder_id', 'is', null),
-        supabase.from('fb_auction_bid_events')
-          .select('bidder_id, lot_id, amount, lot:fb_auction_lots(bidder_id, status, current_bid, listing:listings(year, brand, player))')
-          .eq('user_id', user.id)
-          .not('bidder_id', 'is', null),
-        supabase.from('fb_claim_sale_items')
-          .select('claim_buyer_id, price, claim_status, listing:listings(year, brand, player)')
-          .eq('user_id', user.id)
-          .not('claim_buyer_id', 'is', null),
-        supabase.from('historical_transactions')
-          .select('bidder_id, year, brand, player, amount, channel, engagement_type')
-          .eq('user_id', user.id)
-          .not('bidder_id', 'is', null),
+        loadBidderActivity(supabase, user.id),
       ]);
       const loadedListings = (listRes.data || []) as Listing[];
       setListings(loadedListings);
       setGroups((grpRes.data || []) as Group[]);
       setTemplates((tmplRes.data || []) as Template[]);
-      setBidders((biddersRes.data || []) as BidderSuggestionRow[]);
-      // Fold past auction lots, every individual bid, and claim items into a
-      // single activity stream. Pulling fb_auction_bid_events ensures every
-      // historical bidder is matched, not just the current high bidder.
-      type LotJoin = { id: string; bidder_id: string; current_bid: number | null; status: 'open' | 'sold' | 'no_sale' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null };
-      type EventJoin = { bidder_id: string; lot_id: string; amount: number | null; lot: { bidder_id: string | null; current_bid: number | null; status: 'open' | 'sold' | 'no_sale' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null } | null };
-      type ClaimJoin = { claim_buyer_id: string; price: number | null; claim_status: 'open' | 'claimed' | 'sold' | 'paid'; listing: { year: number | null; brand: string | null; player: string | null } | null };
-      const lotRows = (lotsRes.data || []) as unknown as LotJoin[];
-      const eventRows = (eventsRes?.data || []) as unknown as EventJoin[];
-      const claimRows = (claimsRes.data || []) as unknown as ClaimJoin[];
-
-      const seenPairs = new Set<string>();
-      const auctionActivity: LiveActivity[] = [];
-      for (const e of eventRows) {
-        const lot = e.lot;
-        if (!lot) continue;
-        const key = `${e.bidder_id}|${e.lot_id}`;
-        if (seenPairs.has(key)) continue;
-        seenPairs.add(key);
-        const isWinner = lot.bidder_id === e.bidder_id && (lot.status === 'sold' || lot.status === 'paid');
-        const isPaid = lot.bidder_id === e.bidder_id && lot.status === 'paid';
-        auctionActivity.push({
-          bidder_id: e.bidder_id,
-          source: 'auction' as const,
-          is_winner: isWinner,
-          is_paid: isPaid,
-          bid_amount: isPaid ? (lot.current_bid ?? null) : null,
-          listing_year: lot.listing?.year ?? null,
-          listing_brand: lot.listing?.brand ?? null,
-          listing_player: lot.listing?.player ?? null,
-        });
-      }
-      for (const l of lotRows) {
-        const key = `${l.bidder_id}|${l.id}`;
-        if (seenPairs.has(key)) continue;
-        seenPairs.add(key);
-        auctionActivity.push({
-          bidder_id: l.bidder_id,
-          source: 'auction' as const,
-          is_winner: l.status === 'sold' || l.status === 'paid',
-          is_paid: l.status === 'paid',
-          bid_amount: l.status === 'paid' ? (l.current_bid ?? null) : null,
-          listing_year: l.listing?.year ?? null,
-          listing_brand: l.listing?.brand ?? null,
-          listing_player: l.listing?.player ?? null,
-        });
-      }
-      type HistoricalRow = { bidder_id: string; year: number | null; brand: string | null; player: string | null; amount: number | null; channel: string | null; engagement_type: 'won' | 'bid' | 'tag_request' };
-      const historicalRows = (historicalRes?.data || []) as HistoricalRow[];
-      const liveActivity: LiveActivity[] = [
-        ...auctionActivity,
-        ...claimRows.map(c => ({
-          bidder_id: c.claim_buyer_id,
-          source: 'claim' as const,
-          is_winner: c.claim_status !== 'open',
-          is_paid: c.claim_status === 'paid',
-          bid_amount: c.price ?? null,
-          listing_year: c.listing?.year ?? null,
-          listing_brand: c.listing?.brand ?? null,
-          listing_player: c.listing?.player ?? null,
-        })),
-        ...historicalRows.map(h => ({
-          bidder_id: h.bidder_id,
-          source: (h.channel === 'fb_claim' ? 'claim' : 'auction') as 'auction' | 'claim',
-          is_winner: h.engagement_type === 'won',
-          is_paid: h.engagement_type === 'won',
-          bid_amount: h.engagement_type === 'won' ? h.amount : null,
-          listing_year: h.year,
-          listing_brand: h.brand,
-          listing_player: h.player,
-        })),
-      ];
-      setActivity(liveActivity);
+      setBidders(bidderActivity.bidders);
+      setActivity(bidderActivity.activity);
       // Pre-fill lots from ?listing_ids=... — one single-card lot per id.
       if (prefillIds.length > 0) {
         const valid = prefillIds.filter(id => loadedListings.some(l => l.id === id));

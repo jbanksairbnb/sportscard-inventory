@@ -15,50 +15,80 @@ export type LogBidEventInput = {
 // should surface failures so missed events get noticed (the table is the
 // source of truth for bidder analytics).
 //
-// Coalescing handles the form's two-blur pattern, where a single new bid is
-// entered as separate updates to the bid amount and the bidder name. Two
-// scenarios collapse into the existing event instead of inserting a new one:
+// The hard part is that the lot editor infers bids from field edits, so one
+// real bid can arrive as two calls (the amount blurs when focus moves to the
+// bidder field) and a typo fix arrives looking exactly like a new bid. Three
+// rules sort that out, applied in order:
 //
-//   1. Same amount, empty bidder slot being filled in (e.g. "$15 then Jason").
-//   2. Same amount, different bidder taking over (e.g. user typed $20 while
-//      the old bidder Jason was still in the name field, then changed the
-//      name to Jeff — Jeff's the real $20 bidder, not Jason).
+//   1. An existing event on this lot with NO bidder is the first half of the
+//      bid now being named — fill it in instead of inserting. This rule has no
+//      time limit, and that matters: the previous version only looked 2
+//      minutes back, so entering a batch of amounts and going back for the
+//      names afterwards stranded the amount-only rows permanently. 363 of this
+//      seller's 1558 recorded bids ended up orphaned that way, which is why
+//      the amount has to be allowed to match across any gap.
 //
-// A different amount always inserts (a same-bidder raise is a real new bid).
-const COALESCE_WINDOW_MS = 2 * 60 * 1000;
+//   2. A fresh event at the same amount, or at a LOWER one, is the same bid
+//      being corrected — the seller renaming the bidder, or fixing a typo.
+//      Bids never descend in an ascending auction, so a decrease is always a
+//      correction and must not count as another bid.
+//
+//   3. Anything else is a genuine new bid, including the same bidder raising
+//      their own bid.
+//
+// Rule 2 is time-boxed because an edit made days later is far more likely to
+// be a real bid than a correction.
+const CORRECTION_WINDOW_MS = 10 * 60 * 1000;
+
+type ExistingEvent = { id: string; amount: number | null; bidder_id: string | null; created_at: string };
 
 export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInput): Promise<string | null> {
   try {
-    const since = new Date(Date.now() - COALESCE_WINDOW_MS).toISOString();
-    const { data: recent } = await supabase
-      .from('fb_auction_bid_events')
-      .select('id, amount, bidder_id, bidder_name, bidder_fb_handle, created_at')
-      .eq('lot_id', args.lotId)
-      .gte('created_at', since)
-      .order('created_at', { ascending: false })
-      .limit(1);
-    const candidate = (recent && recent[0]) as { id: string; amount: number | null; bidder_id: string | null; bidder_name: string | null } | undefined;
-    const sameAmount = candidate
-      && ((candidate.amount ?? null) === (args.amount ?? null)
-        || candidate.amount == null
-        || args.amount == null);
-    if (candidate && sameAmount) {
-      // Same amount within the window — overwrite this event with whatever new
-      // values we have. Covers both filling in a missing bidder and replacing
-      // a phantom (old-bidder-at-new-amount) with the real winner.
+    // The most recent event on this lot, and the most recent one still missing
+    // a bidder. Both are cheap — ix_fb_auction_bid_events_lot covers them.
+    const [latestRes, unnamedRes] = await Promise.all([
+      supabase.from('fb_auction_bid_events')
+        .select('id, amount, bidder_id, created_at')
+        .eq('lot_id', args.lotId)
+        .order('created_at', { ascending: false }).limit(1),
+      supabase.from('fb_auction_bid_events')
+        .select('id, amount, bidder_id, created_at')
+        .eq('lot_id', args.lotId).is('bidder_id', null)
+        .order('created_at', { ascending: false }).limit(1),
+    ]);
+    const latest = (latestRes.data?.[0] ?? undefined) as ExistingEvent | undefined;
+    const unnamed = (unnamedRes.data?.[0] ?? undefined) as ExistingEvent | undefined;
+
+    let adopt: ExistingEvent | undefined;
+    // Rule 1 — claim the amount-only row this bid was entered as. Require the
+    // amounts to agree (or the row to have none) so a stale orphan can't
+    // swallow a genuinely different bid placed later.
+    if (args.bidderId && unnamed
+        && (unnamed.amount == null || args.amount == null || unnamed.amount === args.amount)) {
+      adopt = unnamed;
+    } else if (latest && Date.now() - Date.parse(latest.created_at) <= CORRECTION_WINDOW_MS) {
+      // Rule 2 — same amount means a re-attribution, lower means a typo fix.
+      const sameAmount = (latest.amount ?? null) === (args.amount ?? null)
+        || latest.amount == null || args.amount == null;
+      const corrected = latest.amount != null && args.amount != null && args.amount < latest.amount;
+      if (sameAmount || corrected) adopt = latest;
+    }
+
+    if (adopt) {
       const patch: Record<string, unknown> = {};
       if (args.amount != null) patch.amount = args.amount;
       if (args.bidderId !== undefined) patch.bidder_id = args.bidderId;
       if (args.bidderName) patch.bidder_name = args.bidderName;
       if (args.bidderFbHandle !== undefined) patch.bidder_fb_handle = args.bidderFbHandle;
       if (Object.keys(patch).length === 0) return null;
-      const { error } = await supabase.from('fb_auction_bid_events').update(patch).eq('id', candidate.id);
+      const { error } = await supabase.from('fb_auction_bid_events').update(patch).eq('id', adopt.id);
       if (error) {
         console.error('[fb_auction_bid_events] coalesce update failed:', error.message);
         return error.message;
       }
       return null;
     }
+
     const { error } = await supabase.from('fb_auction_bid_events').insert({
       user_id: args.userId,
       auction_id: args.auctionId,
