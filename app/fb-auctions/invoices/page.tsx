@@ -5,6 +5,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyListingSale } from '@/lib/listingStatusSync';
+import {
+  DEFAULT_INVOICE_MESSAGE,
+  INVOICE_MESSAGE_VARIABLES,
+  SAMPLE_INVOICE_INPUT,
+  invoiceMessageVars,
+  renderInvoiceMessage,
+  type InvoiceMessageInput,
+} from '@/lib/invoiceMessage';
 import SCLogo from '@/components/SCLogo';
 
 // ---------------------------------------------------------------------------
@@ -112,6 +120,9 @@ const SORT_LABELS: Record<Sort, string> = {
 
 const PAYMENT_STORAGE_KEY = 'sc_invoice_payment_default';
 const DEFAULT_PAYMENT = 'PayPal G&S to: your-paypal@email.com\nVenmo: @your-venmo';
+// The seller's own wording for the buyer message, remembered like the payment
+// instructions above.
+const MESSAGE_STORAGE_KEY = 'sc_invoice_message_template';
 
 function fmtMoney(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
@@ -252,6 +263,16 @@ export default function InvoicesPage() {
   const [shipping, setShipping] = useState<Record<string, string>>({});
   // Payment instructions default is shared across invoices and remembered.
   const [payment, setPayment] = useState<string>(DEFAULT_PAYMENT);
+  // The message template every invoice is rendered from — shared across
+  // invoices and remembered, same as the payment block.
+  const [template, setTemplate] = useState<string>(DEFAULT_INVOICE_MESSAGE);
+  const [editingTemplate, setEditingTemplate] = useState(false);
+  // One-off edits to a single buyer's message, keyed by bidderKey. These are
+  // local to the session: the template is what persists. `base` is the text the
+  // edit started from, so a later shipping change can be spotted and the buyer
+  // never gets a hand-edited message carrying a stale total.
+  const [drafts, setDrafts] = useState<Record<string, { text: string; base: string }>>({});
+  const [editingDraft, setEditingDraft] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [marking, setMarking] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<InvoiceLine | null>(null);
@@ -260,6 +281,8 @@ export default function InvoicesPage() {
     try {
       const saved = localStorage.getItem(PAYMENT_STORAGE_KEY);
       if (saved) setPayment(saved);
+      const savedMsg = localStorage.getItem(MESSAGE_STORAGE_KEY);
+      if (savedMsg) setTemplate(savedMsg);
     } catch {}
   }, []);
 
@@ -431,38 +454,71 @@ export default function InvoicesPage() {
     return { count: openInvoices.length, outstanding };
   }, [openInvoices]);
 
+  // Live preview for the template editor: the first open invoice if there is
+  // one (so the seller sees their real wording on real cards), otherwise a
+  // stand-in buyer.
+  const previewSubject = openInvoices[0]?.name || SAMPLE_INVOICE_INPUT.name;
+  const previewText = useMemo(() => {
+    const input = openInvoices[0]
+      ? messageInput(openInvoices[0])
+      : { ...SAMPLE_INVOICE_INPUT, payment };
+    return renderInvoiceMessage(template, invoiceMessageVars(input));
+    // messageInput reads the live shipping/payment state, so those belong in
+    // the dependency list even though the function identity isn't stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template, openInvoices, payment, shipping]);
+
   function shipValue(inv: Invoice): number {
     const raw = shipping[inv.bidderKey];
     const n = raw === undefined ? 0 : Number.parseFloat(raw);
     return Number.isFinite(n) ? n : 0;
   }
 
-  function invoiceText(inv: Invoice): string {
+  // Everything the message template can draw on for one buyer, already
+  // formatted. The lines are pre-sorted, so the text matches the card above it.
+  function messageInput(inv: Invoice): InvoiceMessageInput {
     const ship = shipValue(inv);
-    const total = inv.subtotal + ship;
-    // Group lines by their source so the buyer sees which auction each came from.
-    const groups = new Map<string, InvoiceLine[]>();
+    // One entry per source, keyed like the on-screen grouping — two sales that
+    // happen to share a title still count as two.
+    const seen = new Set<string>();
+    const saleTitles: string[] = [];
     for (const l of inv.lines) {
-      const k = `${l.kind}:${l.sourceId}:${l.sourceTitle}`;
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(l);
+      const k = `${l.kind}:${l.sourceId}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      saleTitles.push(l.sourceTitle);
     }
-    const blocks: string[] = [`Hi ${inv.name}!`, ''];
-    blocks.push(groups.size === 1
-      ? `Combined invoice for your wins on "${inv.lines[0].sourceTitle}":`
-      : `Here's your combined invoice across ${groups.size} sales:`);
-    blocks.push('');
-    // List just the card descriptions — no per-auction header line. Lines are
-    // already sorted by source then card, so the grouping order is preserved.
-    for (const l of inv.lines) blocks.push(`· ${l.label} — ${fmtMoney(l.amount)}`);
-    blocks.push('');
-    blocks.push(`Subtotal: ${fmtMoney(inv.subtotal)}`);
-    blocks.push(`Shipping: ${fmtMoney(ship)}`);
-    blocks.push(`Total:    ${fmtMoney(total)}`);
-    blocks.push('');
-    if (payment.trim()) { blocks.push(payment.trim()); blocks.push(''); }
-    blocks.push('Thanks!');
-    return blocks.join('\n');
+    return {
+      name: inv.name,
+      fbHandle: inv.fbHandle,
+      itemLines: inv.lines.map(l => `\u00b7 ${l.label} \u2014 ${fmtMoney(l.amount)}`),
+      saleTitles,
+      itemCount: inv.lines.length,
+      subtotal: fmtMoney(inv.subtotal),
+      shipping: fmtMoney(ship),
+      total: fmtMoney(inv.subtotal + ship),
+      payment,
+      address: fullAddress(inv.bidder),
+      saleDates: saleDateSummary(inv),
+    };
+  }
+
+  // The message as the template renders it, before any per-buyer hand-edit.
+  function renderedText(inv: Invoice): string {
+    return renderInvoiceMessage(template, invoiceMessageVars(messageInput(inv)));
+  }
+
+  // What actually gets copied: a hand-edited draft for this buyer if there is
+  // one, otherwise the template's output.
+  function invoiceText(inv: Invoice): string {
+    return drafts[inv.bidderKey]?.text ?? renderedText(inv);
+  }
+
+  // True once the numbers behind a hand-edited message have moved on — the
+  // seller changed shipping, or the template, after editing.
+  function draftIsStale(inv: Invoice): boolean {
+    const draft = drafts[inv.bidderKey];
+    return draft !== undefined && draft.base !== renderedText(inv);
   }
 
   async function copyInvoice(inv: Invoice) {
@@ -482,6 +538,38 @@ export default function InvoicesPage() {
   function savePayment(v: string) {
     setPayment(v);
     try { localStorage.setItem(PAYMENT_STORAGE_KEY, v); } catch {}
+  }
+
+  function saveTemplate(v: string) {
+    setTemplate(v);
+    try { localStorage.setItem(MESSAGE_STORAGE_KEY, v); } catch {}
+  }
+
+  function resetTemplate() {
+    if (!confirm('Restore the default invoice message? Your wording will be replaced.')) return;
+    saveTemplate(DEFAULT_INVOICE_MESSAGE);
+  }
+
+  // Show/hide one buyer's message box. No draft is recorded until something is
+  // actually typed, so just looking doesn't mark the invoice as edited.
+  function toggleMessage(inv: Invoice) {
+    setEditingDraft(k => (k === inv.bidderKey ? null : inv.bidderKey));
+  }
+
+  // Throw the hand-edits away and re-seed from the template — how you pick up
+  // a shipping change after editing.
+  function refreshDraft(inv: Invoice) {
+    const rendered = renderedText(inv);
+    setDrafts(d => ({ ...d, [inv.bidderKey]: { text: rendered, base: rendered } }));
+  }
+
+  // Drop a buyer's hand-edits so their message follows the template again.
+  function clearDraft(inv: Invoice) {
+    setDrafts(d => {
+      const next = { ...d };
+      delete next[inv.bidderKey];
+      return next;
+    });
   }
 
   // Mark a whole invoice paid: flip the underlying lots + claim items, then
@@ -559,6 +647,8 @@ export default function InvoicesPage() {
             One invoice per buyer, combining every unpaid win across all of your ended auctions and claim sales. Add combined
             shipping, copy the Messenger-ready text, then <strong>Mark paid</strong> — the cards move to Sold in My Listings and
             drop off the ended-auction outstanding totals automatically. Click any card description to check its photos.
+            The wording is yours: <strong>Edit invoice message</strong> below changes it for every invoice, and{' '}
+            <strong>Edit message</strong> on a buyer&rsquo;s card tweaks just theirs.
           </p>
         </section>
 
@@ -596,13 +686,34 @@ export default function InvoicesPage() {
 
         {tab === 'open' && (
           <div style={{ marginBottom: 18 }}>
-            <label className="input-label">Payment instructions (shared across invoices)</label>
-            <textarea
-              value={payment}
-              onChange={e => savePayment(e.target.value)}
-              rows={2}
-              style={{ width: '100%', maxWidth: 520, boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', background: 'var(--paper)', resize: 'vertical' }}
-            />
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
+              <div style={{ flex: '1 1 380px', maxWidth: 520 }}>
+                <label className="input-label">Payment instructions (shared across invoices)</label>
+                <textarea
+                  value={payment}
+                  onChange={e => savePayment(e.target.value)}
+                  rows={2}
+                  style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '8px 10px', fontFamily: 'var(--font-body)', fontSize: 13, color: 'var(--plum)', background: 'var(--paper)', resize: 'vertical' }}
+                />
+              </div>
+              <button
+                onClick={() => setEditingTemplate(v => !v)}
+                className={`btn btn-sm ${editingTemplate ? 'btn-primary' : 'btn-outline'}`}
+              >
+                ✏️ {editingTemplate ? 'Done editing message' : 'Edit invoice message'}
+              </button>
+            </div>
+
+            {editingTemplate && (
+              <MessageTemplateEditor
+                template={template}
+                onChange={saveTemplate}
+                onReset={resetTemplate}
+                preview={previewText}
+                isDefault={template === DEFAULT_INVOICE_MESSAGE}
+                previewSubject={previewSubject}
+              />
+            )}
           </div>
         )}
 
@@ -623,6 +734,19 @@ export default function InvoicesPage() {
                 total={inv.subtotal + shipValue(inv)}
                 onCopy={() => copyInvoice(inv)}
                 copied={copied === inv.bidderKey}
+                message={invoiceText(inv)}
+                editingMessage={editingDraft === inv.bidderKey}
+                edited={inv.bidderKey in drafts}
+                onEditMessage={() => toggleMessage(inv)}
+                onMessageChange={v => setDrafts(d => ({
+                  ...d,
+                  // The box was pre-filled from the template, so on the first
+                  // keystroke today's rendering is what the edit started from.
+                  [inv.bidderKey]: { text: v, base: d[inv.bidderKey]?.base ?? renderedText(inv) },
+                }))}
+                onResetMessage={() => clearDraft(inv)}
+                stale={draftIsStale(inv)}
+                onRefreshMessage={() => refreshDraft(inv)}
                 onCopyAddress={() => copyAddress(inv)}
                 onMarkPaid={() => markPaid(inv)}
                 marking={marking === inv.bidderKey}
@@ -638,8 +762,105 @@ export default function InvoicesPage() {
   );
 }
 
+// Editor for the shared invoice message. The template is plain text plus
+// {placeholders}; the preview below it re-renders on every keystroke so the
+// seller can see exactly what a buyer would receive.
+function MessageTemplateEditor({
+  template, onChange, onReset, preview, isDefault, previewSubject,
+}: {
+  template: string;
+  onChange: (v: string) => void;
+  onReset: () => void;
+  preview: string;
+  isDefault: boolean;
+  previewSubject: string;
+}) {
+  const boxRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+  // Drop a placeholder in at the cursor, so the seller doesn't have to type
+  // the braces or remember the exact spelling.
+  function insert(token: string) {
+    const el = boxRef.current;
+    if (!el) { onChange(`${template}${token}`); return; }
+    const start = el.selectionStart ?? template.length;
+    const end = el.selectionEnd ?? start;
+    onChange(template.slice(0, start) + token + template.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const at = start + token.length;
+      el.setSelectionRange(at, at);
+    });
+  }
+
+  return (
+    <div className="panel-bordered" style={{ padding: 16, marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>Invoice message</div>
+        <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+          Saved on this device and used for every invoice you copy.
+        </span>
+        <button
+          onClick={onReset}
+          disabled={isDefault}
+          className="btn btn-ghost btn-sm"
+          style={{ marginLeft: 'auto', fontSize: 11 }}
+        >
+          ↺ Reset to default
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+        <div>
+          <label className="input-label" htmlFor="invoice-template">Template</label>
+          <textarea
+            id="invoice-template"
+            ref={boxRef}
+            value={template}
+            onChange={e => onChange(e.target.value)}
+            rows={14}
+            spellCheck={false}
+            style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '10px 12px', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 12.5, lineHeight: 1.6, color: 'var(--plum)', background: 'var(--paper)', resize: 'vertical' }}
+          />
+          <div style={{ marginTop: 10 }}>
+            <div className="eyebrow" style={{ fontSize: 10.5, color: 'var(--orange)', fontWeight: 700, marginBottom: 6 }}>
+              Click to insert
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {INVOICE_MESSAGE_VARIABLES.map(v => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => insert(v.key)}
+                  title={v.desc}
+                  className="mono"
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 100, border: '1.5px solid var(--rule)', background: 'var(--cream)', color: 'var(--plum)', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  {v.key}
+                </button>
+              ))}
+            </div>
+            <p style={{ margin: '8px 0 0', fontSize: 11.5, color: 'var(--ink-mute)', lineHeight: 1.6 }}>
+              Hover a placeholder to see what it fills in. Anything else you type is sent as-is. A line
+              holding only placeholders that come back empty — like {'{payment}'} with no instructions saved — is
+              dropped rather than left blank.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="input-label">Preview — {previewSubject}</label>
+          <pre style={{ margin: 0, minHeight: 200, whiteSpace: 'pre-wrap', wordBreak: 'break-word', border: '1.5px solid var(--rule)', borderRadius: 6, padding: '10px 12px', fontFamily: 'var(--font-body)', fontSize: 13, lineHeight: 1.6, color: 'var(--plum)', background: 'var(--cream)' }}>
+            {preview}
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InvoiceCard({
   inv, shipping, onShipping, total, onCopy, copied, onCopyAddress, onMarkPaid, marking, onOpenPhotos,
+  message, editingMessage, edited, onEditMessage, onMessageChange, onResetMessage, stale, onRefreshMessage,
 }: {
   inv: Invoice;
   shipping: string;
@@ -647,6 +868,14 @@ function InvoiceCard({
   total: number;
   onCopy: () => void;
   copied: boolean;
+  message: string;
+  editingMessage: boolean;
+  edited: boolean;
+  onEditMessage: () => void;
+  onMessageChange: (v: string) => void;
+  onResetMessage: () => void;
+  stale: boolean;
+  onRefreshMessage: () => void;
   onCopyAddress: () => void;
   onMarkPaid: () => void;
   marking: boolean;
@@ -783,10 +1012,54 @@ function InvoiceCard({
             </div>
           </div>
 
+          {editingMessage && (
+            <div style={{ marginBottom: 12 }}>
+              <label className="input-label" htmlFor={`msg-${inv.bidderKey}`}>
+                Message to {inv.name} {edited && <span style={{ color: 'var(--orange)', fontWeight: 700 }}>· edited</span>}
+              </label>
+              <textarea
+                id={`msg-${inv.bidderKey}`}
+                value={message}
+                onChange={e => onMessageChange(e.target.value)}
+                rows={12}
+                style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid var(--plum)', borderRadius: 6, padding: '10px 12px', fontFamily: 'var(--font-body)', fontSize: 13, lineHeight: 1.6, color: 'var(--plum)', background: 'var(--paper)', resize: 'vertical' }}
+              />
+              {stale && (
+                <div style={{ marginTop: 8, padding: '8px 10px', border: '1.5px solid var(--orange)', borderRadius: 6, background: 'var(--cream)', fontSize: 12, color: 'var(--plum)', lineHeight: 1.6 }}>
+                  ⚠️ Shipping or the message template changed after you edited this. The text above still shows the
+                  old figures.{' '}
+                  <button
+                    onClick={onRefreshMessage}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--teal)', textDecoration: 'underline', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700 }}
+                  >
+                    Rebuild from the template
+                  </button>{' '}
+                  (your edits here are discarded).
+                </div>
+              )}
+              <p style={{ margin: '6px 0 0', fontSize: 11.5, color: 'var(--ink-mute)', lineHeight: 1.6 }}>
+                Edits here apply to this buyer only and last until you reload. To change the wording for
+                every invoice, use <strong>Edit invoice message</strong> at the top.
+              </p>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={onCopy} className="btn btn-primary btn-sm">
               {copied ? '✓ Copied!' : '📋 Copy invoice'}
             </button>
+            <button onClick={onEditMessage} className={`btn btn-sm ${editingMessage ? 'btn-outline' : 'btn-ghost'}`}>
+              {editingMessage
+                ? '▲ Hide message'
+                : edited
+                  ? `✏️ Edit message · edited${stale ? ' ⚠️' : ''}`
+                  : '✏️ Edit message'}
+            </button>
+            {edited && (
+              <button onClick={onResetMessage} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                ↺ Undo edits
+              </button>
+            )}
             <button onClick={onMarkPaid} disabled={marking} className="btn btn-ghost btn-sm">
               {marking ? 'Saving…' : `✓ Mark ${inv.lines.length} item${inv.lines.length === 1 ? '' : 's'} paid`}
             </button>
