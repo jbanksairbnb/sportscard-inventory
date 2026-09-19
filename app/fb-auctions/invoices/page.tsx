@@ -8,6 +8,7 @@ import { applyListingSale } from '@/lib/listingStatusSync';
 import {
   DEFAULT_INVOICE_MESSAGE,
   INVOICE_MESSAGE_VARIABLES,
+  LEGACY_FULL_NAME_MESSAGE,
   SAMPLE_INVOICE_INPUT,
   invoiceMessageVars,
   renderInvoiceMessage,
@@ -282,7 +283,15 @@ export default function InvoicesPage() {
       const saved = localStorage.getItem(PAYMENT_STORAGE_KEY);
       if (saved) setPayment(saved);
       const savedMsg = localStorage.getItem(MESSAGE_STORAGE_KEY);
-      if (savedMsg) setTemplate(savedMsg);
+      // A saved template that still matches the old full-name default was never
+      // actually edited, so move it onto the current default (first name only)
+      // instead of stranding it on the previous greeting.
+      if (savedMsg === LEGACY_FULL_NAME_MESSAGE) {
+        setTemplate(DEFAULT_INVOICE_MESSAGE);
+        try { localStorage.setItem(MESSAGE_STORAGE_KEY, DEFAULT_INVOICE_MESSAGE); } catch {}
+      } else if (savedMsg) {
+        setTemplate(savedMsg);
+      }
     } catch {}
   }, []);
 

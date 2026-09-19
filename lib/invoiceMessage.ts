@@ -10,9 +10,8 @@
 // templates in lib/fbAuctionText.ts.
 // ---------------------------------------------------------------------------
 
-// The stock wording — also what "Reset to default" restores. This reproduces
-// the message the tab produced before the template was editable.
-export const DEFAULT_INVOICE_MESSAGE = `Hi {name}!
+// The stock wording — also what "Reset to default" restores.
+export const DEFAULT_INVOICE_MESSAGE = `Hi {first_name}!
 
 {intro}
 
@@ -25,6 +24,11 @@ Total:    {total}
 {payment}
 
 Thanks!`;
+
+// The greeting used to open on the buyer's full name. A saved template still
+// matching this word for word was never edited by its owner, so it is migrated
+// to the current default rather than left behind on the old wording.
+export const LEGACY_FULL_NAME_MESSAGE = DEFAULT_INVOICE_MESSAGE.replace('{first_name}', '{name}');
 
 // Everything a message can be built from. Values are pre-formatted strings
 // (money already rendered as currency, lists already joined) so the template
@@ -43,6 +47,23 @@ export type InvoiceMessageInput = {
   saleDates: string;        // single date, or the span the wins came from
 };
 
+// The buyer's first name, for greetings that shouldn't read as a full legal
+// name. Facebook names arrive as free text, so this stays deliberately simple:
+// take the part before the first space, after handling the "Smith, John" form
+// that some address books produce. Anything it can't split — a single word, a
+// handle, a blank — comes back whole, so a greeting is never left empty.
+export function firstNameOf(name: string): string {
+  const trimmed = (name || '').trim().replace(/\s+/g, ' ');
+  if (!trimmed) return '';
+  const comma = trimmed.indexOf(',');
+  if (comma > 0) {
+    // "Smith, John" — the given name follows the comma.
+    const after = trimmed.slice(comma + 1).trim();
+    if (after) return after.split(' ')[0];
+  }
+  return trimmed.split(' ')[0];
+}
+
 // The opening sentence: one sale reads naturally with its title, several read
 // better as a count. Exposed as its own {intro} token so a seller who wants
 // their own wording can drop it and use {sale}/{sale_count} directly.
@@ -57,6 +78,7 @@ function introLine(input: InvoiceMessageInput): string {
 export function invoiceMessageVars(input: InvoiceMessageInput): Record<string, string> {
   return {
     name: input.name,
+    first_name: firstNameOf(input.name) || input.name,
     handle: input.fbHandle || '',
     intro: introLine(input),
     items: input.itemLines.join('\n'),
@@ -76,7 +98,8 @@ export function invoiceMessageVars(input: InvoiceMessageInput): Record<string, s
 // What the editor lists next to the template box. Kept beside the vars above so
 // the two can't drift apart.
 export const INVOICE_MESSAGE_VARIABLES: { key: string; desc: string }[] = [
-  { key: '{name}', desc: 'Buyer name' },
+  { key: '{name}', desc: 'Buyer name, as recorded (usually first and last)' },
+  { key: '{first_name}', desc: 'Buyer first name only' },
   { key: '{handle}', desc: 'Buyer Facebook handle' },
   { key: '{intro}', desc: 'Auto-worded opening line (names the sale, or counts them)' },
   { key: '{items}', desc: 'The cards, one per line, with prices' },
