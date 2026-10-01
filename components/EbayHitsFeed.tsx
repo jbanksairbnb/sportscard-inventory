@@ -66,12 +66,15 @@ function fmtTimeLeft(iso: string | undefined): string | null {
   return `${minutes}m`;
 }
 
-export default function EbayHitsFeed() {
+// `lockedSet` pins the feed to one set (used by the set page's eBay Search
+// modal): the picker is hidden and the search runs on mount, so the set page
+// gets exactly the homepage's needed-cards-in-target-condition search.
+export default function EbayHitsFeed({ lockedSet }: { lockedSet?: { slug: string; title: string } } = {}) {
   const [setOptions, setSetOptions] = useState<SetOption[]>([]);
   const [groupOptions, setGroupOptions] = useState<GroupOption[]>([]);
-  const [setsLoading, setSetsLoading] = useState(true);
+  const [setsLoading, setSetsLoading] = useState(!lockedSet);
   // Encoded selection: '' | `set:<slug>` | `group:<year>|<brand>`.
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState(lockedSet ? `set:${lockedSet.slug}` : '');
   const [auctionsOnly, setAuctionsOnly] = useState(false);
   const [sortBy, setSortBy] = useState<SortKey>('gmcards');
   const [searching, setSearching] = useState(false);
@@ -82,6 +85,7 @@ export default function EbayHitsFeed() {
   const [prioritySellerStats, setPrioritySellerStats] = useState<Record<string, { returned: number; matched: number }>>({});
 
   useEffect(() => {
+    if (lockedSet) return;
     const supabase = createClient();
     async function loadSets() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -134,6 +138,12 @@ export default function EbayHitsFeed() {
       setSetsLoading(false);
     }
     loadSets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (lockedSet) runSearch(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function runSearch(forceRefresh = false) {
@@ -194,7 +204,7 @@ export default function EbayHitsFeed() {
     }).catch(() => {});
   }
 
-  const selectedLabel = selected.startsWith('group:')
+  const selectedLabel = lockedSet ? lockedSet.title : selected.startsWith('group:')
     ? (groupOptions.find(g => `group:${g.key}` === selected)?.title || 'these sets')
     : (setOptions.find(s => `set:${s.slug}` === selected)?.title || 'this set');
 
@@ -227,12 +237,17 @@ export default function EbayHitsFeed() {
           the moment a search ran, so it only ever showed when it was least
           needed. */}
       <p style={{ margin: '0 0 8px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
-        Pick a set and search eBay for listings matching your unowned cards.
+        {lockedSet
+          ? `Searching eBay for listings matching the cards you still need in ${lockedSet.title}, in your target condition.`
+          : 'Pick a set and search eBay for listings matching your unowned cards.'}
       </p>
       <div className="panel" style={{ padding: 16, marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        {!lockedSet && (
         <label className="eyebrow" style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 700 }}>
           Search a set
         </label>
+        )}
+        {!lockedSet && (
         <select
           value={selected}
           onChange={e => { setSelected(e.target.value); setHits([]); setHasSearched(false); setError(''); }}
@@ -257,6 +272,7 @@ export default function EbayHitsFeed() {
             ))}
           </optgroup>
         </select>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--plum)', fontWeight: 600, cursor: 'pointer' }}>
           <input
             type="checkbox"
