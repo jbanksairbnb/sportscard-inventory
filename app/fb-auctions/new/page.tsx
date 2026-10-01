@@ -16,6 +16,7 @@ import {
   type BidderRow,
   type LiveActivity,
   type BidderSuggestion,
+  type SuggestionListing,
 } from '@/components/BidderSuggestions';
 import { loadBidderActivity } from '@/lib/bidderActivity';
 
@@ -38,6 +39,8 @@ type Listing = {
   status: string;
   source_set_slug: string | null;
   source_card_number: string | null;
+  listing_type: string | null;
+  set_slug: string | null;
 };
 
 type Template = {
@@ -171,6 +174,7 @@ function NewFbAuctionPageInner() {
   const [userId, setUserId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [listings, setListings] = useState<Listing[]>([]);
+  const [setMeta, setSetMeta] = useState<Record<string, { year: number | null; brand: string | null }>>({});
   const [templates, setTemplates] = useState<Template[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
 
@@ -271,12 +275,24 @@ function NewFbAuctionPageInner() {
       // the picker. id is the unique final sort key so the paged windows are
       // disjoint — created_at alone isn't guaranteed unique across windows.
       const [loadedListings, templatesRes, groupsRes, bidderActivity] = await Promise.all([
-        fetchAll<Listing>((from, to) => supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to)),
+        fetchAll<Listing>((from, to) => supabase.from('listings').select('id, title, description, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade, asking_price, photos, status, source_set_slug, source_card_number, listing_type, set_slug').eq('user_id', user.id).eq('status', 'active').order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to)),
         supabase.from('fb_auction_templates').select('*').eq('user_id', user.id).order('updated_at', { ascending: false }),
         supabase.from('fb_groups').select('id, name, url').eq('user_id', user.id).order('name'),
         loadBidderActivity(supabase, user.id),
       ]);
       setListings(loadedListings);
+      // Complete-set listings are saved without year/brand (they have no single
+      // card to describe), so pull those from the source set — otherwise the
+      // recommended bidder list has nothing to match on.
+      const setSlugs = Array.from(new Set(loadedListings.filter(l => l.listing_type === 'set' && l.set_slug).map(l => l.set_slug as string)));
+      if (setSlugs.length > 0) {
+        const { data: setRows } = await supabase.from('sets').select('slug, year, brand').eq('user_id', user.id).in('slug', setSlugs);
+        const meta: Record<string, { year: number | null; brand: string | null }> = {};
+        for (const r of (setRows || []) as Array<{ slug: string; year: number | string | null; brand: string | null }>) {
+          meta[r.slug] = { year: r.year ? Number(r.year) || null : null, brand: r.brand || null };
+        }
+        setSetMeta(meta);
+      }
       setTemplates((templatesRes.data || []) as Template[]);
       setGroups((groupsRes.data || []) as Group[]);
       // Apply ?listing_ids=... pre-selection.
@@ -384,9 +400,14 @@ function NewFbAuctionPageInner() {
   }, [type, listings, singleListingId, selectedListings]);
 
   const bidderSuggestions: BidderSuggestion[] = useMemo(() => {
-    const sel = suggestionListings.map(l => ({ id: l.id, year: l.year, brand: l.brand, player: l.player }));
+    const sel: SuggestionListing[] = suggestionListings.map(l => {
+      const sm = l.listing_type === 'set' && l.set_slug ? setMeta[l.set_slug] : undefined;
+      return l.listing_type === 'set'
+        ? { id: l.id, year: l.year ?? sm?.year ?? null, brand: l.brand ?? sm?.brand ?? null, player: null, matchBy: 'year-brand' as const }
+        : { id: l.id, year: l.year, brand: l.brand, player: l.player };
+    });
     return computeBidderSuggestions(sel, activity, bidders);
-  }, [suggestionListings, activity, bidders]);
+  }, [suggestionListings, activity, bidders, setMeta]);
 
   const canGenerate = type === 'single'
     ? !!templateId && !!singleListingId && singleAuctionTitle.trim().length > 0

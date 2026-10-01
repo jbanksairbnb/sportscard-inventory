@@ -30,6 +30,9 @@ export type SuggestionListing = {
   year: number | null;
   brand: string | null;
   player: string | null;
+  // Overrides the call-level matchBy for this listing — a complete-set listing
+  // has no player, so it matches on year + brand even in a mixed sale.
+  matchBy?: MatchBy;
 };
 
 // Which band a bidder falls in. Membership is about the bidder's own
@@ -101,9 +104,9 @@ function laterOf(a: string | null, b: string | null): string | null {
 // A listing matches past activity when it names the same player by surname, or
 // is any card within +/- 2 years (era interest, brand-independent).
 function activityMatches(
-  listing: SuggestionListing, a: LiveActivity, matchBy: MatchBy,
+  listing: SuggestionListing, a: LiveActivity, defaultMatchBy: MatchBy,
 ): boolean {
-  if (matchBy === 'year-brand') {
+  if ((listing.matchBy ?? defaultMatchBy) === 'year-brand') {
     // A whole set or lot has no single player, so interest is judged on the
     // product itself: the same brand, from the same era.
     const lb = normalizeBrand(listing.brand);
