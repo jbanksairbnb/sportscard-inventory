@@ -56,6 +56,14 @@ export type BidderSuggestion = {
   isBidBumper: boolean;
 };
 
+// 'player-or-era' (default): same player surname, or any card within +/- 2
+// years. 'year-brand': same brand AND within +/- 2 years — for complete sets.
+export type MatchBy = 'player-or-era' | 'year-brand';
+
+function normalizeBrand(b: string | null | undefined): string {
+  return (b ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 const YEAR_TOLERANCE = 2;
 const RECENT_DAYS = 60;
 const MIN_PRIORITY_BIDS = 5;
@@ -92,7 +100,17 @@ function laterOf(a: string | null, b: string | null): string | null {
 
 // A listing matches past activity when it names the same player by surname, or
 // is any card within +/- 2 years (era interest, brand-independent).
-function activityMatches(listing: SuggestionListing, a: LiveActivity): boolean {
+function activityMatches(
+  listing: SuggestionListing, a: LiveActivity, matchBy: MatchBy,
+): boolean {
+  if (matchBy === 'year-brand') {
+    // A whole set or lot has no single player, so interest is judged on the
+    // product itself: the same brand, from the same era.
+    const lb = normalizeBrand(listing.brand);
+    const ab = normalizeBrand(a.listing_brand);
+    return !!lb && lb === ab && listing.year !== null && a.listing_year !== null
+      && Math.abs(listing.year - a.listing_year) <= YEAR_TOLERANCE;
+  }
   if (playersMatch(listing.player, a.listing_player)) return true;
   return listing.year !== null && a.listing_year !== null
     && Math.abs(listing.year - a.listing_year) <= YEAR_TOLERANCE;
@@ -123,12 +141,14 @@ export function computeBidderSuggestions(
     now?: number;
     recentDays?: number;
     minPriorityBids?: number;
+    matchBy?: MatchBy;
   } = {},
 ): BidderSuggestion[] {
   if (listings.length === 0 || activity.length === 0) return [];
   const now = opts.now ?? Date.now();
   const recentDays = opts.recentDays ?? RECENT_DAYS;
   const minPriorityBids = opts.minPriorityBids ?? MIN_PRIORITY_BIDS;
+  const matchBy = opts.matchBy ?? 'player-or-era';
 
   const byId = new Map(bidders.map(b => [b.id, b]));
 
@@ -161,7 +181,7 @@ export function computeBidderSuggestions(
     if (!bidder) continue;
     let acc: Acc | undefined;
     for (const l of listings) {
-      if (!activityMatches(l, a)) continue;
+      if (!activityMatches(l, a, matchBy)) continue;
       if (!acc) {
         acc = matched.get(a.bidder_id);
         if (!acc) {
