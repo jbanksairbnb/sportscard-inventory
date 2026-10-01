@@ -25,6 +25,8 @@ import {
 import { collectRowImageUrls, pruneCardImages } from "@/lib/image-cleanup";
 import { BRANDS as BRAND_NAMES } from "@/lib/brands";
 import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listingTitle";
+import { BidderSuggestionsPanel, computeBidderSuggestions, type BidderRow, type LiveActivity } from '@/components/BidderSuggestions';
+import { loadBidderActivity } from '@/lib/bidderActivity';
 import { cropScanPadding } from "@/lib/scanAutoCrop";
 
 /* =====================  Constants  ===================== */
@@ -2122,6 +2124,8 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
         <ListCompleteSetModal
           setSlug={slug}
           setTitle={datasetTitle}
+          setYear={year ? Number(year) || null : null}
+          setBrand={brand || null}
           rows={rows}
           existing={existingSetListing}
           userId={userId}
@@ -2194,10 +2198,12 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
 // transaction. Saves into the same `listings` table with listing_type='set'
 // + set_slug pointer back to the seller's source set on their shelf.
 function ListCompleteSetModal({
-  setSlug, setTitle, rows, existing, userId, onCancel, onSaved,
+  setSlug, setTitle, setYear, setBrand, rows, existing, userId, onCancel, onSaved,
 }: {
   setSlug: string;
   setTitle: string;
+  setYear: number | null;
+  setBrand: string | null;
   rows: Array<Record<string, any>>;
   existing: { id: string; status: string; asking_price: number | null } | null;
   userId: string;
@@ -2217,6 +2223,25 @@ function ListCompleteSetModal({
   const [shipCost, setShipCost] = useState('10');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Recommended tag list: past bidders/buyers whose history matches this
+  // set's brand and year. Only shown once the seller has bidder history.
+  const [bidders, setBidders] = useState<BidderRow[]>([]);
+  const [activity, setActivity] = useState<LiveActivity[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    loadBidderActivity(createClient(), userId)
+      .then(r => { if (!cancelled) { setBidders(r.bidders); setActivity(r.activity); } })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [userId]);
+  const bidderSuggestions = useMemo(
+    () => computeBidderSuggestions(
+      [{ id: setSlug, year: setYear, brand: setBrand, player: null }],
+      activity, bidders, { matchBy: 'year-brand' },
+    ),
+    [setSlug, setYear, setBrand, activity, bidders],
+  );
 
   // Pull the user's default shipping + an existing listing's fields if
   // we're editing rather than creating fresh.
@@ -2382,6 +2407,18 @@ function ListCompleteSetModal({
               background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)',
               borderRadius: 8, padding: '8px 12px', fontSize: 13, color: 'var(--rust)', fontWeight: 600,
             }}>{error}</div>
+          )}
+
+          {(!setYear || !setBrand) ? (
+            <div style={{ fontSize: 12, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
+              Add a year and brand to this set (Edit set info) to get a recommended bidder tag list.
+            </div>
+          ) : (
+            <BidderSuggestionsPanel
+              suggestions={bidderSuggestions}
+              headline={`Suggested bidders for ${setYear} ${setBrand}`}
+              hint={`Past bidders and buyers of ${setBrand} cards within ±2 years of ${setYear}, banded by engagement.`}
+            />
           )}
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
