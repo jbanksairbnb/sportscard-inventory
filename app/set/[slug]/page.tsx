@@ -9,6 +9,7 @@ import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
 import ValueSetModal from '@/components/ValueSetModal';
+import EbayHitsFeed from '@/components/EbayHitsFeed';
 import { sweepTargetsForSet, sweepDescriptorForRow, type SweepTarget } from '@/lib/sweepTargets';
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
@@ -660,16 +661,9 @@ export default function SetEditorPage() {
       return next;
     });
   }
-  // Opens an eBay search for this set in a separate window. The title usually
-  // already carries the year and brand; add whichever is missing.
-  function openEbaySearch() {
-    const lc = datasetTitle.toLowerCase();
-    const parts = [datasetTitle];
-    if (year && !lc.includes(String(year))) parts.unshift(String(year));
-    if (brand && !lc.includes(brand.toLowerCase())) parts.splice(year && !lc.includes(String(year)) ? 1 : 0, 0, brand);
-    const q = parts.join(' ').replace(/\s+/g, ' ').trim();
-    window.open(`https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`, '_blank', 'noopener,noreferrer,width=1200,height=900');
-  }
+  // eBay Search runs the same needed-cards-in-target-condition search as the
+  // homepage feed, scoped to this set (see EbayHitsFeed lockedSet).
+  const [ebaySearchOpen, setEbaySearchOpen] = useState(false);
   const [autoNumOpen, setAutoNumOpen] = useState(false);
   const [autoNumPrefix, setAutoNumPrefix] = useState('');
   // Map of source_row_id → { id, status } for any non-removed listings
@@ -1560,8 +1554,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                 className={`btn btn-sm ${showNeededOnly ? 'btn-primary' : 'btn-ghost'}`}>
                 {showNeededOnly ? 'Showing: Needed' : 'Show Needed Only'}
               </button>
-              <button type="button" onClick={openEbaySearch}
-                title="Search eBay for this set in a new window"
+              <button type="button" onClick={() => setEbaySearchOpen(true)}
+                disabled={!slug || slug === 'new'}
+                title="Search eBay for the cards you still need in this set, in your target condition"
                 className="btn btn-sm btn-outline">
                 🔎 eBay Search
               </button>
@@ -2141,6 +2136,25 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
             setListSetOpen(false);
           }}
         />
+      )}
+
+      {ebaySearchOpen && (
+        <div onClick={() => setEbaySearchOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(42,20,52,0.82)',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '40px 20px', overflowY: 'auto',
+          }}>
+          <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+            style={{ width: '100%', maxWidth: 900, padding: 28, background: 'var(--cream)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+              <div className="display" style={{ fontSize: 22, color: 'var(--plum)', flex: 1 }}>eBay Search · {datasetTitle}</div>
+              <button type="button" onClick={() => setEbaySearchOpen(false)} className="btn btn-outline btn-sm">✕ Close</button>
+            </div>
+            <EbayHitsFeed lockedSet={{ slug, title: datasetTitle }} />
+          </div>
+        </div>
       )}
 
       {scansPickerOpen && (
