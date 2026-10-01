@@ -15,7 +15,6 @@ import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
 import { recordManualValueMark } from "@/lib/recordValueMark";
 import Thumb from "@/components/Thumb";
-import GenerateThumbnailsButton from "@/components/GenerateThumbnailsButton";
 import {
   uploadCardImageWithThumb,
   setImageStoragePath,
@@ -660,6 +659,16 @@ export default function SetEditorPage() {
       try { localStorage.setItem(TAG_VISIBLE_KEY, next ? '1' : '0'); } catch {}
       return next;
     });
+  }
+  // Opens an eBay search for this set in a separate window. The title usually
+  // already carries the year and brand; add whichever is missing.
+  function openEbaySearch() {
+    const lc = datasetTitle.toLowerCase();
+    const parts = [datasetTitle];
+    if (year && !lc.includes(String(year))) parts.unshift(String(year));
+    if (brand && !lc.includes(brand.toLowerCase())) parts.splice(year && !lc.includes(String(year)) ? 1 : 0, 0, brand);
+    const q = parts.join(' ').replace(/\s+/g, ' ').trim();
+    window.open(`https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`, '_blank', 'noopener,noreferrer,width=1200,height=900');
   }
   const [autoNumOpen, setAutoNumOpen] = useState(false);
   const [autoNumPrefix, setAutoNumPrefix] = useState('');
@@ -1518,9 +1527,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm btn-outline">
               Export CSV
             </button>
-            <GenerateThumbnailsButton
-              imageUrls={rows.flatMap((r) => [String(r["Image 1"] || ""), String(r["Image 2"] || "")]).filter(Boolean)}
-            />
             <button type="button" onClick={handleExportWantListPdf} disabled={!rows.length}
               className="btn btn-sm btn-outline"
               title="PDF want list with checkboxes — bring it to the card show">
@@ -1554,10 +1560,10 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
                 className={`btn btn-sm ${showNeededOnly ? 'btn-primary' : 'btn-ghost'}`}>
                 {showNeededOnly ? 'Showing: Needed' : 'Show Needed Only'}
               </button>
-              <button type="button" onClick={toggleTagColumn}
-                title="Show or hide the inventory Tag # column"
-                className={`btn btn-sm ${showTagColumn ? 'btn-primary' : 'btn-ghost'}`}>
-                🏷 {showTagColumn ? 'Tag # column on' : 'Show Tag # column'}
+              <button type="button" onClick={openEbaySearch}
+                title="Search eBay for this set in a new window"
+                className="btn btn-sm btn-outline">
+                🔎 eBay Search
               </button>
               <Link href={`/set/${encodeURIComponent(slug)}/view`} className="btn btn-sm btn-outline">
                 View Inventory
