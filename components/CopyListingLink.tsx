@@ -6,8 +6,11 @@ import React, { useState } from 'react';
 // seller can paste it into a Facebook post. Built from the current origin
 // at click time so it works on any deployment/preview domain.
 
+// Short form: the first 12 hex characters of the listing id (e.g.
+// /l/3f9a1c2b7d4e). The public page also still accepts the full id, so links
+// posted earlier keep working.
 export function listingPublicPath(id: string): string {
-  return `/l/${id}`;
+  return `/l/${id.replace(/-/g, '').slice(0, 12)}`;
 }
 
 export default function CopyListingLink({

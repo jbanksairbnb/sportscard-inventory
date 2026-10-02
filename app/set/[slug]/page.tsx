@@ -2237,6 +2237,8 @@ function ListCompleteSetModal({
   const ownedCount = rows.filter(r => String(r['Owned'] || '') === 'Yes').length;
   const totalRows = rows.length;
   const [title, setTitle2] = useState(existing ? '' : `${setTitle} — Complete Set`);
+  const [fbUrl, setFbUrl] = useState('');
+  const [fbUrlHadValue, setFbUrlHadValue] = useState(false);
   const [askingPrice, setAskingPrice] = useState<string>(existing?.asking_price != null ? String(existing.asking_price) : '');
   const [description, setDescription] = useState('');
   const [heroPhoto, setHeroPhoto] = useState<string>('');
@@ -2283,6 +2285,11 @@ function ListCompleteSetModal({
       if (ship[0]) { setShipLabel(ship[0].label); setShipCost(String(ship[0].cost)); }
       const photos = (data.photos as string[] | null) || [];
       if (photos[0]) setHeroPhoto(photos[0]);
+      // Separate, best-effort read so the editor still loads before the
+      // fb_post_url migration has been applied.
+      const { data: fb } = await supabase.from('listings').select('fb_post_url').eq('id', existing.id).maybeSingle();
+      const url = (fb as { fb_post_url?: string | null } | null)?.fb_post_url;
+      if (url) { setFbUrl(url); setFbUrlHadValue(true); }
     })();
   }, [existing]);
 
@@ -2329,6 +2336,7 @@ function ListCompleteSetModal({
       player: null,
       year: null,
       brand: null,
+      ...(fbUrl.trim() || fbUrlHadValue ? { fb_post_url: fbUrl.trim() || null } : {}),
     };
     if (existing) {
       const { data, error } = await supabase.from('listings').update(payload).eq('id', existing.id).select('id, status, asking_price').single();
@@ -2416,6 +2424,12 @@ function ListCompleteSetModal({
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4}
               placeholder={`e.g. ${totalRows === ownedCount ? 'Complete — all ' + totalRows + ' cards present.' : `Partial — ${ownedCount} of ${totalRows} cards. Missing #...`}`}
               style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.5 }} />
+          </div>
+
+          <div>
+            <label className="input-label">Facebook post link <span style={{ color: 'var(--ink-mute)', fontWeight: 600 }}>(optional — shown as a button on the public page)</span></label>
+            <input type="url" value={fbUrl} onChange={e => setFbUrl(e.target.value)}
+              placeholder="https://www.facebook.com/groups/…/posts/…" style={fieldStyle} />
           </div>
 
           <div style={{ display: 'flex', gap: 12 }}>

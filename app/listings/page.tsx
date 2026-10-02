@@ -90,6 +90,7 @@ type Listing = {
   source_set_slug: string | null;
   source_card_number: string | null;
   source_row_id: string | null;
+  fb_post_url?: string | null;
   created_at: string;
 };
 
@@ -673,6 +674,9 @@ function ListingsPageContent() {
       asking_price: editing.asking_price !== null && editing.asking_price !== undefined && String(editing.asking_price) !== '' ? Number(editing.asking_price) : null,
       cost: editing.cost !== null && editing.cost !== undefined && String(editing.cost) !== '' ? Number(editing.cost) : null,
       updated_at: new Date().toISOString(),
+      // Only sent once the seller has touched the field, so saves keep
+      // working before the fb_post_url migration has been applied.
+      ...(editing.fb_post_url !== undefined ? { fb_post_url: editing.fb_post_url?.trim() || null } : {}),
     };
     if (editing.id) {
       const { data, error } = await supabase.from('listings').update(payload).eq('id', editing.id).select().single();
@@ -2028,6 +2032,14 @@ function ListingEditor({
             <textarea value={draft.description || ''} onChange={e => set('description', e.target.value)}
               rows={3} placeholder="Additional details — centering, surface, any flaws, sale terms…"
               style={{ ...fieldStyle, resize: 'vertical' }} />
+          </div>
+          <div>
+            <div className="eyebrow" style={labelStyle}>Facebook post link (optional)</div>
+            <input type="url" value={draft.fb_post_url || ''} onChange={e => set('fb_post_url', e.target.value)}
+              placeholder="https://www.facebook.com/groups/…/posts/…" style={fieldStyle} />
+            <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 4 }}>
+              Shown as a &ldquo;View &amp; bid on Facebook&rdquo; button on this listing&apos;s public page.
+            </div>
           </div>
           <div>
             <div className="eyebrow" style={labelStyle}>Shipping Options</div>
