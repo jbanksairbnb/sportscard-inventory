@@ -1,0 +1,80 @@
+Sports Collective — eBay Marketplace Insights API — Production Access Application
+
+APPLICANT OVERVIEW
+Application / product name: Sports Collective
+Production URL: https://sports-collective.com
+Country of operation: United States
+Vertical: Sportscards / collectibles, vintage 1950s–1990s focus
+Business model: Subscription-based collector workspace plus a thin-fee on-platform marketplace (in development). The product is currently free during a closed pilot.
+Primary contact: [Your name], [Your email], [Phone if you want to include one]
+eBay Developer ID / App ID: [insert from your eBay Developer Account]
+
+PRODUCT DESCRIPTION
+Sports Collective is a dedicated workspace for vintage sportscard collectors. Members manage their card inventory at the set / checklist level, track which cards they own and which they are still chasing, capture cost and condition, attach scans, and run their selling activity (Facebook auctions, Facebook claim sales, and an on-platform marketplace) end to end inside one tool.
+
+The product was built to replace the spreadsheets, screenshots, and Facebook Messenger threads that vintage collectors and small-volume sellers use today. It is not a reseller or arbitrage tool — every primary feature is grounded in a real collector workflow: set tracking, want-list management, run-a-claim-sale, settle-with-buyer.
+
+WHERE EBAY DATA FITS IN
+Two existing surfaces in the product would benefit from access to eBay Marketplace Insights data:
+
+1. Set-level eBay Hits scan. Today this scans active eBay listings against a member's want list using the public Browse API. Adding sold-comp data would let us show the recent realized prices for the same card alongside each active listing, so members can value the listing before they click through.
+
+2. Per-card Research Prices modal. Collectors enter recent comparable sales, weight them, and arrive at a market value for a single card. We currently surface no pre-populated comps — the user types each one. Marketplace Insights would let us pre-fill recent eBay sold prices for the exact card (year + brand + card number + condition), with the seller able to edit, re-weight, or discard each one before computing their market value.
+
+WHY MARKETPLACE INSIGHTS SPECIFICALLY
+We are requesting access to the Marketplace Insights API because the use case requires recent sold (completed) listings, not just active inventory. Card prices in this market change weekly. We cannot provide a defensible market-value estimate from active listings alone (active prices are anchoring, not realized).
+
+HOW THE DATA WILL BE DISPLAYED
+- Inside the Research Prices modal, each sold comp is shown as one row, listing: sale date, sale price, condition / grade, source (clearly labeled "eBay sold"), and a deep link to the original eBay item page.
+- Each comp is editable by the user — they can drop one, change its weight, or override its condition before computing their market value.
+- No raw API responses are exposed in the UI. Sold data is never presented outside the context of the user's own card-research workflow.
+- eBay attribution ("Source: eBay Sold Listings") is shown next to each row, and the link back to the eBay item ID is preserved.
+- Sold comps are visible only inside the authenticated workspace. Non-members and unauthenticated visitors never see this data.
+
+WHAT THE DATA IS NOT USED FOR
+- We do not run an automated repricing engine, an arbitrage feed, or any kind of public pricing index.
+- We do not redistribute eBay data to third parties.
+- We do not display eBay sold data on any non-authenticated pages or to non-members.
+- We do not store sold-comp data beyond the cache window required to make the user experience responsive (see Data Handling below).
+
+TECHNICAL IMPLEMENTATION
+Hosting: Vercel (Next.js 16, edge + Node functions).
+Backend: Supabase (Postgres, Storage), with row-level-security policies scoping records to their owner.
+Auth: Each end user authenticates via Supabase Auth. No Marketplace Insights data is exposed to unauthenticated visitors.
+API access: OAuth 2.0 client-credentials flow against eBay's production endpoints; tokens stored server-side, never shipped to the browser.
+Endpoints used (intended): /buy/marketplace_insights/v1_beta/item_sales/search as the primary call. Browse API endpoints continue to be used for active listings.
+Search shape: q = "{year} {brand} #{card_number} {player}", with category_ids + condition + sold-within-N-days filters and aspect filters on Year + Set when available.
+Rate-limit posture: All calls are server-side and aggressively cached (see below). We will respect Application-level and User-level limits and back off on 429 responses with exponential retry.
+Error handling: Failed lookups degrade silently to "no comps found" in the UI. We do not retry into rate-limit storms.
+
+DATA HANDLING, RETENTION, AND PRIVACY
+Caching: Sold-comp results for a given (card, condition) tuple are cached for 24 hours to avoid hitting eBay on every modal open. Cached rows include only the public fields needed to render the row: item id, sold price, sold date, condition, image thumbnail URL, and deep link.
+Retention: Cached rows are evicted after 30 days. We do not maintain a permanent local mirror of eBay sold data.
+User data: Sports Collective member data (cost, profit, notes) is stored in Supabase under owner-only RLS policies. eBay sold-comp data sits alongside it but is not user-private — it is publicly available via eBay.
+No redistribution: eBay data is never exposed to anyone other than the authenticated end user who triggered the lookup.
+Compliance: We will publish a Privacy Policy and Terms of Use before opening the marketplace publicly. The eBay API Terms of Use will be linked from the developer-facing acknowledgment in our product, near the comp source label.
+
+ESTIMATED REQUEST VOLUME
+Pilot is currently in soft-launch with a hand-picked group of vintage collectors. Best-effort projections at three growth stages:
+
+Pilot today: 50–150 active members per month, ~200 Marketplace Insights calls per day on average, ~600 peak.
+Growth band: 1,000 active members per month, ~2,500 calls per day on average, ~8,000 peak.
+Mature: 10,000 active members per month, ~20,000 calls per day on average, ~60,000 peak.
+
+Volumes are demand-driven: a member opens the Research Prices modal, or requests a set-level eBay Hits scan. The 24-hour cache materially flattens the curve — repeat opens of the same card by the same or different members do not generate new calls.
+
+COMPLIANCE ACKNOWLEDGMENT
+- We agree to the eBay API License Agreement and Developer Program Policies as of the date of this application.
+- We will display the eBay attribution required for sold-comp data and preserve outbound links to the original eBay item.
+- We will not use Marketplace Insights data to power a public pricing index, an automated repricer, or any feature that competes with eBay's own pricing surfaces.
+- We will rate-limit ourselves below documented quotas, cache aggressively, and degrade silently on rate-limit responses.
+- We will respond to any policy changes or compliance reviews from eBay within 5 business days.
+
+CONTACT FOR FOLLOW-UP
+Primary contact: [Your name]
+Email: [Your email]
+Phone (optional): [Phone]
+eBay seller account (optional): [Your eBay handle, if applicable]
+Best response window: Mon–Fri, 9am–6pm ET
+
+Thank you for the consideration. We are happy to provide a sandbox demo or a screen recording of the Research Prices modal on request.
