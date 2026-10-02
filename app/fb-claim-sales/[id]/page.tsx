@@ -10,6 +10,7 @@ import { applyOwnedTransition } from '@/lib/inventory';
 import { replaceImageBg } from '@/lib/collageBg';
 import { syncClaimListing } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
+import CopyListingLink from '@/components/CopyListingLink';
 
 type Status = 'draft' | 'live' | 'closed' | 'settled';
 type ClaimStatus = 'open' | 'claimed' | 'sold' | 'paid';
@@ -772,6 +773,7 @@ export default function ManageClaimSalePage() {
                             <option value="claimed">Claimed</option>
                             <option value="paid">Sold</option>
                           </select>
+                          {it.listing?.id && <CopyListingLink listingId={it.listing.id} label="Public link" className="btn btn-outline btn-sm" />}
                           {savingItems.has(it.id) && <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>…</span>}
                         </div>
                       );

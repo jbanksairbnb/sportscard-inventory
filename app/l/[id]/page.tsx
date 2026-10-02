@@ -18,12 +18,12 @@ import ListingGallery from '@/components/ListingGallery';
 export const dynamic = 'force-dynamic';
 
 const COLUMNS =
-  'id, user_id, title, description, asking_price, photos, shipping_options, status, sold_state, ' +
+  'id, user_id, title, description, photos, shipping_options, status, sold_state, ' +
   'listing_type, set_slug, year, brand, card_number, player, condition_type, raw_grade, grading_company, grade';
 
 type Listing = {
   id: string; user_id: string; title: string | null; description: string | null;
-  asking_price: number | null; photos: string[] | null;
+  photos: string[] | null;
   shipping_options: Array<{ label: string; cost: number }> | null;
   status: string; sold_state: string | null; listing_type: string | null; set_slug: string | null;
   year: number | null; brand: string | null; card_number: string | null; player: string | null;
@@ -36,6 +36,50 @@ function admin() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } },
   );
+}
+
+// The Facebook post this listing was put up on, taken from the seller's
+// auctions / claim sales: a per-lot comment link wins over the sale's main
+// post link, and the most recent sale wins over older ones.
+async function loadFacebookUrl(db: ReturnType<typeof admin>, listingId: string): Promise<string | null> {
+  try {
+    const candidates: Array<{ at: string; url: string }> = [];
+
+    const { data: aLots } = await db.from('fb_auction_lots')
+      .select('comment_url, auction_id').eq('listing_id', listingId);
+    const aIds = Array.from(new Set((aLots ?? []).map(l => l.auction_id as string).filter(Boolean)));
+    if (aIds.length) {
+      const { data: auctions } = await db.from('fb_auctions').select('id, post_url, created_at').in('id', aIds);
+      const byId = new Map((auctions ?? []).map(a => [a.id as string, a]));
+      for (const l of aLots ?? []) {
+        const a = byId.get(l.auction_id as string);
+        const url = (l.comment_url as string | null)?.trim() || (a?.post_url as string | null)?.trim();
+        if (url && a) candidates.push({ at: String(a.created_at ?? ''), url });
+      }
+    }
+
+    const { data: items } = await db.from('fb_claim_sale_items').select('lot_id').eq('listing_id', listingId);
+    const lotIds = Array.from(new Set((items ?? []).map(i => i.lot_id as string).filter(Boolean)));
+    if (lotIds.length) {
+      const { data: cLots } = await db.from('fb_claim_sale_lots').select('id, comment_url, sale_id').in('id', lotIds);
+      const saleIds = Array.from(new Set((cLots ?? []).map(l => l.sale_id as string).filter(Boolean)));
+      const { data: sales } = saleIds.length
+        ? await db.from('fb_claim_sales').select('id, post_url, created_at').in('id', saleIds)
+        : { data: [] as Array<{ id: string; post_url: string | null; created_at: string | null }> };
+      const byId = new Map((sales ?? []).map(x => [x.id as string, x]));
+      for (const l of cLots ?? []) {
+        const sale = byId.get(l.sale_id as string);
+        const url = (l.comment_url as string | null)?.trim() || (sale?.post_url as string | null)?.trim();
+        if (url && sale) candidates.push({ at: String(sale.created_at ?? ''), url });
+      }
+    }
+
+    candidates.sort((a, b) => b.at.localeCompare(a.at));
+    const url = candidates.find(c => /^https?:\/\//i.test(c.url))?.url;
+    return url ?? null;
+  } catch {
+    return null;
+  }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -56,8 +100,7 @@ export async function generateMetadata(props: { params: Promise<{ id: string }> 
   const l = await loadListing(id);
   if (!l) return { title: 'Listing not found — Sports Collective' };
   const title = l.title || 'Sports Collective listing';
-  const price = fmtMoney(l.asking_price);
-  const desc = [price, (l.description || '').replace(/\s+/g, ' ').trim()].filter(Boolean).join(' · ').slice(0, 200)
+  const desc = (l.description || '').replace(/\s+/g, ' ').trim().slice(0, 200)
     || 'View photos and details on Sports Collective.';
   const image = l.photos?.[0];
   return {
@@ -75,6 +118,8 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
 
   const db = admin();
   const { data: seller } = await db.from('user_profiles').select('handle, display_name').eq('user_id', listing.user_id).maybeSingle();
+
+  const facebookUrl = await loadFacebookUrl(db, listing.id);
 
   const isSet = listing.listing_type === 'set' && !!listing.set_slug;
   let rows: SetCardRow[] = [];
@@ -141,11 +186,6 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
                 {isSet && totalCount > 0 && <> · <strong>{ownedCount} of {totalCount}</strong> cards</>}
               </div>
             )}
-            {listing.asking_price != null && (
-              <div className="display" style={{ fontSize: 32, color: 'var(--plum)', fontWeight: 700, margin: '4px 0 12px', textDecoration: sold ? 'line-through' : 'none' }}>
-                {fmtMoney(listing.asking_price)}
-              </div>
-            )}
             {specs.length > 0 && (
               <dl style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 14px', margin: '0 0 14px', fontSize: 13 }}>
                 {specs.map(([k, v]) => (
@@ -169,13 +209,18 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
                 ))}
               </div>
             )}
-            {!sold && (
+            {!sold && facebookUrl && (
+              <a href={facebookUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
+                View &amp; bid on Facebook →
+              </a>
+            )}
+            {!sold && !facebookUrl && (
               <Link href={`/marketplace?focus=${listing.id}`} className="btn btn-primary">
-                Buy on Sports Collective →
+                View on Sports Collective →
               </Link>
             )}
             <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 10 }}>
-              Interested? Comment or message the seller on Facebook, or sign in to buy here.
+              {facebookUrl ? 'Comment on the Facebook post to bid or claim.' : 'Interested? Message the seller on Facebook, or sign in to buy here.'}
             </div>
           </section>
         </div>
