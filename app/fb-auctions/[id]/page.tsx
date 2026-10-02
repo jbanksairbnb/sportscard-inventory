@@ -1,5 +1,7 @@
 'use client';
 
+import CopyListingLink from '@/components/CopyListingLink';
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -751,6 +753,7 @@ export default function ManageFbAuctionPage() {
                                 disabled={!lc.text} className="btn btn-outline btn-sm">
                                 {copiedKey === key ? '✓ Copied' : '📋 Copy'}
                               </button>
+                              {lc.listing?.id && <CopyListingLink listingId={lc.listing.id} label="Public link" className="btn btn-outline btn-sm" />}
                               {lc.comment_url && (
                                 <a href={lc.comment_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">↗</a>
                               )}
@@ -860,6 +863,7 @@ export default function ManageFbAuctionPage() {
                             background: lot.status === 'paid' ? 'var(--teal)' : lot.status === 'sold' ? 'var(--orange)' : lot.status === 'no_sale' ? 'var(--rust)' : 'var(--ink-mute)',
                             color: 'var(--cream)', textTransform: 'uppercase',
                           }}>{lotStatusLabel(lot.status)}</span>
+                          {lot.listing?.id && <CopyListingLink listingId={lot.listing.id} label="Public link" className="btn btn-outline btn-sm" />}
                         </div>
                         <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}>
                           {lot.listing?.year} {lot.listing?.brand} #{lot.listing?.card_number} {conditionNote(lot.listing) ? '· ' + conditionNote(lot.listing) : ''}
