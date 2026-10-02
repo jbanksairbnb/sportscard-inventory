@@ -82,12 +82,21 @@ async function loadFacebookUrl(db: ReturnType<typeof admin>, listingId: string):
   }
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function loadListing(id: string): Promise<Listing | null> {
-  if (!UUID_RE.test(id)) return null;
-  const { data } = await admin().from('listings').select(COLUMNS).eq('id', id).in('status', ['active', 'sold']).maybeSingle();
-  return (data as unknown as Listing) ?? null;
+// Accepts the full listing id (older links) or the short 12-hex-character
+// prefix that "Copy public link" now produces. A short code that matches more
+// than one listing is treated as not found rather than guessing.
+async function loadListing(code: string): Promise<Listing | null> {
+  const hex = code.replace(/-/g, '').toLowerCase();
+  if (!/^[0-9a-f]+$/.test(hex)) return null;
+  const q = admin().from('listings').select(COLUMNS).in('status', ['active', 'sold']);
+  if (hex.length === 32) {
+    const { data } = await q.eq('id', `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`).maybeSingle();
+    return (data as unknown as Listing) ?? null;
+  }
+  if (hex.length !== 12) return null;
+  const head = `${hex.slice(0, 8)}-${hex.slice(8, 12)}`;
+  const { data } = await q.gte('id', `${head}-0000-0000-000000000000`).lte('id', `${head}-ffff-ffff-ffffffffffff`).limit(2);
+  return data && data.length === 1 ? (data[0] as unknown as Listing) : null;
 }
 
 function fmtMoney(n: number | null | undefined): string {
@@ -119,7 +128,12 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
   const db = admin();
   const { data: seller } = await db.from('user_profiles').select('handle, display_name').eq('user_id', listing.user_id).maybeSingle();
 
-  const facebookUrl = await loadFacebookUrl(db, listing.id);
+  // A link saved on the listing itself wins; otherwise fall back to the
+  // auction / claim-sale post. Read separately so the page keeps working
+  // before the fb_post_url migration has been applied.
+  const { data: own } = await db.from('listings').select('fb_post_url').eq('id', listing.id).maybeSingle();
+  const ownUrl = (own as { fb_post_url?: string | null } | null)?.fb_post_url?.trim();
+  const facebookUrl = ownUrl && /^https?:\/\//i.test(ownUrl) ? ownUrl : await loadFacebookUrl(db, listing.id);
 
   const isSet = listing.listing_type === 'set' && !!listing.set_slug;
   let rows: SetCardRow[] = [];
