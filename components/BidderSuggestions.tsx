@@ -413,10 +413,13 @@ export function BidderSuggestionsPanel({
                       ↑ BUMPER
                     </span>
                   )}
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>
-                    {s.bidCount} bid{s.bidCount === 1 ? '' : 's'}
-                    {s.wonCount > 0 ? ` · ${s.wonCount} won` : ''}
-                    {s.claimCount > 0 ? ` · ${s.claimCount} claimed` : ''}
+                  {/* Lifetime figures, so they agree with the Bidders table. Who is
+                      suggested, and in what order, is still decided on the bids
+                      that match these cards (bidCount). */}
+                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-mute)' }}
+                    title={`${s.bidCount} of these bids were on cards matching this sale`}>
+                    {s.totalBids} bid{s.totalBids === 1 ? '' : 's'}
+                    {` · ${s.totalWins} won`}
                     {s.daysSinceActivity !== null ? ` · ${s.daysSinceActivity}d ago` : ''}
                   </span>
                   <CopyButton text={isComment ? commentTag : tag} label="📋" />

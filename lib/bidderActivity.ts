@@ -30,7 +30,8 @@ type LotJoin = {
 };
 
 type EventJoin = {
-  bidder_id: string;
+  bidder_id: string | null;
+  bidder_name?: string | null;
   lot_id: string;
   amount: number | null;
   created_at: string | null;
@@ -89,7 +90,7 @@ export async function loadBidderActivity(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<{ bidders: BidderRow[]; activity: LiveActivity[] }> {
-  const [biddersRes, lotRows, eventRows, claimRows, historicalRows, auctionDates] = await Promise.all([
+  const [biddersRes, lotRows, eventRows, unlinkedEventRows, claimRows, historicalRows, auctionDates] = await Promise.all([
     supabase.from('fb_bidders').select('id, name, fb_handle').eq('user_id', userId).order('name'),
     fetchAll<LotJoin>((from, to) => supabase
       .from('fb_auction_lots')
@@ -100,6 +101,14 @@ export async function loadBidderActivity(
       .from('fb_auction_bid_events')
       .select('bidder_id, lot_id, amount, created_at, lot:fb_auction_lots(bidder_id, auction_id, current_bid, status, listing:listings(year, brand, player))')
       .eq('user_id', userId).not('bidder_id', 'is', null)
+      .order('created_at', { ascending: true }).range(from, to) as never),
+    // Bids recorded by name only, with no linked bidder profile. The Bidders
+    // page counts these by matching the name, so the ranking has to as well —
+    // otherwise the same bidder shows fewer bids here than in the table.
+    fetchAll<EventJoin>((from, to) => supabase
+      .from('fb_auction_bid_events')
+      .select('bidder_id, bidder_name, lot_id, amount, created_at, lot:fb_auction_lots(bidder_id, auction_id, current_bid, status, listing:listings(year, brand, player))')
+      .eq('user_id', userId).is('bidder_id', null).not('bidder_name', 'is', null)
       .order('created_at', { ascending: true }).range(from, to) as never),
     fetchAll<ClaimJoin>((from, to) => supabase
       .from('fb_claim_sale_items')
@@ -119,18 +128,18 @@ export async function loadBidderActivity(
   // One row per recorded bid. The lot supplies the outcome: a bid only counts
   // as a win when that bidder is the one the lot actually settled on.
   const lotsWithOwnBid = new Set<string>();
-  for (const e of eventRows) {
+  const addBid = (e: EventJoin, bidderId: string) => {
     const lot = e.lot;
-    if (!lot) continue;
-    lotsWithOwnBid.add(`${e.bidder_id}|${e.lot_id}`);
-    const isWinner = lot.bidder_id === e.bidder_id && (lot.status === 'sold' || lot.status === 'paid');
+    if (!lot) return;
+    lotsWithOwnBid.add(`${bidderId}|${e.lot_id}`);
+    const isWinner = lot.bidder_id === bidderId && (lot.status === 'sold' || lot.status === 'paid');
     activity.push({
-      bidder_id: e.bidder_id,
+      bidder_id: bidderId,
       source: 'auction',
       kind: 'bid',
       item_key: `lot:${e.lot_id}`,
       is_winner: isWinner,
-      is_paid: lot.bidder_id === e.bidder_id && lot.status === 'paid',
+      is_paid: lot.bidder_id === bidderId && lot.status === 'paid',
       bid_amount: lot.status === 'paid' ? (lot.current_bid ?? null) : null,
       occurred_at: e.created_at
         || (lot.auction_id ? auctionDates.get(lot.auction_id) ?? null : null),
@@ -138,6 +147,17 @@ export async function loadBidderActivity(
       listing_brand: lot.listing?.brand ?? null,
       listing_player: lot.listing?.player ?? null,
     });
+  };
+  for (const e of eventRows) if (e.bidder_id) addBid(e, e.bidder_id);
+
+  const idsByName = new Map<string, string[]>();
+  for (const b of (biddersRes.data || []) as BidderRow[]) {
+    const k = b.name.trim().toLowerCase();
+    idsByName.set(k, [...(idsByName.get(k) || []), b.id]);
+  }
+  for (const e of unlinkedEventRows) {
+    const ids = idsByName.get((e.bidder_name || '').trim().toLowerCase());
+    if (ids) for (const id of ids) addBid(e, id);
   }
 
   // Lots a bidder holds with no bid event of their own behind them. Their

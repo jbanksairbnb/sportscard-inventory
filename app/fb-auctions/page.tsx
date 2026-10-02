@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
-import { logBidEvent, fetchLotBidStats, fetchLotBidHistory, type LotBidStats, type BidHistoryEvent } from '@/lib/fbBidEvents';
+import { logBidEvent, updateBidEvent, deleteBidEvent, fetchLotBidStats, fetchLotBidHistory, type LotBidStats, type BidHistoryEvent } from '@/lib/fbBidEvents';
 import { syncAuctionListings } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
 
@@ -145,6 +145,10 @@ export default function FbAuctionsPage() {
   const [addBidNote, setAddBidNote] = useState<string | null>(null);
   const [historyEvents, setHistoryEvents] = useState<BidHistoryEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [editEventId, setEditEventId] = useState<string | null>(null);
+  const [editEventName, setEditEventName] = useState('');
+  const [editEventAmount, setEditEventAmount] = useState('');
+  const [historyNote, setHistoryNote] = useState<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -585,12 +589,71 @@ export default function FbAuctionsPage() {
 
   async function openBidHistory(lotId: string) {
     setHistoryLotId(lotId);
+    setEditEventId(null);
+    setHistoryNote(null);
     setHistoryEvents([]);
     setHistoryLoading(true);
     const supabase = createClient();
     const events = await fetchLotBidHistory(supabase, lotId);
     setHistoryEvents(events);
     setHistoryLoading(false);
+  }
+
+  // Re-read one lot's bid history after an edit and bring the lot's cached
+  // stats and unique-bidder keys back in line with it.
+  async function refreshLotHistory(lotId: string) {
+    const supabase = createClient();
+    const events = await fetchLotBidHistory(supabase, lotId);
+    setHistoryEvents(events);
+    const fresh = await fetchLotBidStats(supabase, [lotId]);
+    const stat = fresh.get(lotId);
+    if (stat) setLotStats(prev => { const next = new Map(prev); next.set(lotId, stat); return next; });
+    const keys = new Set<string>();
+    for (const e of events) {
+      const k = bidderKey(e.bidder_id, e.bidder_name);
+      if (k) keys.add(k);
+    }
+    setBidderKeysByLot(prev => { const next = new Map(prev); next.set(lotId, keys); return next; });
+  }
+
+  function startEditEvent(e: BidHistoryEvent) {
+    setEditEventId(e.id);
+    setEditEventName(e.bidder_name || '');
+    setEditEventAmount(e.amount != null ? String(e.amount) : '');
+    setHistoryNote(null);
+  }
+
+  async function saveEventEdit(e: BidHistoryEvent) {
+    if (!historyLotId) return;
+    const name = editEventName.trim();
+    const amountText = editEventAmount.replace(/[^0-9.]/g, '');
+    const amount = amountText === '' ? null : Number(amountText);
+    if (amount !== null && Number.isNaN(amount)) { setHistoryNote('Enter a valid bid amount.'); return; }
+    let lotRef: LotRow | undefined;
+    for (const a of auctions) {
+      const l = a.fb_auction_lots.find(x => x.id === historyLotId);
+      if (l) { lotRef = l; break; }
+    }
+    if (!lotRef) return;
+    const supabase = createClient();
+    const bidderId = name ? await ensureBidderForLot(lotRef, name, null) : null;
+    const err = await updateBidEvent(supabase, e.id, {
+      amount, bidder_id: bidderId, bidder_name: name || null,
+    });
+    if (err) { setHistoryNote(err); return; }
+    setEditEventId(null);
+    setHistoryNote(null);
+    await refreshLotHistory(historyLotId);
+  }
+
+  async function removeEvent(e: BidHistoryEvent) {
+    if (!historyLotId) return;
+    if (!confirm(`Delete this ${e.amount != null ? fmtMoney(e.amount) : ''} bid${e.bidder_name ? ` by ${e.bidder_name}` : ''} from the history?`)) return;
+    const supabase = createClient();
+    const err = await deleteBidEvent(supabase, e.id);
+    if (err) { setHistoryNote(err); return; }
+    setHistoryNote(null);
+    await refreshLotHistory(historyLotId);
   }
 
   async function savePostUrl(auctionId: string, url: string) {
@@ -1023,12 +1086,16 @@ export default function FbAuctionsPage() {
             display: 'grid', placeItems: 'center', padding: 20,
           }}>
           <div onClick={e => e.stopPropagation()} className="panel-bordered"
-            style={{ background: 'var(--cream)', maxWidth: 540, width: '100%', maxHeight: '80vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            style={{ background: 'var(--cream)', maxWidth: 620, width: '100%', maxHeight: '80vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ padding: '14px 18px', borderBottom: '2px solid var(--plum)', display: 'flex', alignItems: 'center', gap: 10 }}>
               <div className="display" style={{ fontSize: 16, color: 'var(--plum)', flex: 1 }}>Bid history</div>
               <button onClick={() => setHistoryLotId(null)} className="btn btn-ghost btn-sm">✕ Close</button>
             </div>
             <div style={{ overflowY: 'auto', padding: '8px 0' }}>
+              {historyNote && (
+                <div style={{ margin: '4px 14px 8px', padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                  background: 'rgba(197,74,44,0.1)', border: '1.5px solid var(--rust)', color: 'var(--rust)' }}>{historyNote}</div>
+              )}
               {historyLoading ? (
                 <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-mute)' }}>Loading…</div>
               ) : historyEvents.length === 0 ? (
@@ -1041,24 +1108,57 @@ export default function FbAuctionsPage() {
                       <th style={{ padding: '6px 14px', textAlign: 'left' }}>When</th>
                       <th style={{ padding: '6px 14px', textAlign: 'left' }}>Bidder</th>
                       <th style={{ padding: '6px 14px', textAlign: 'right' }}>Bid</th>
+                      <th style={{ padding: '6px 14px' }} />
                     </tr>
                   </thead>
                   <tbody>
-                    {historyEvents.map((e, i) => (
-                      <tr key={e.id} style={{ borderTop: '1px solid var(--rule)', fontSize: 12.5, color: 'var(--plum)' }}>
-                        <td className="mono" style={{ padding: '6px 14px', color: 'var(--ink-mute)' }}>{i + 1}</td>
-                        <td className="mono" style={{ padding: '6px 14px' }}>
-                          {new Date(e.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                        </td>
-                        <td style={{ padding: '6px 14px' }}>
-                          <div style={{ fontWeight: 600 }}>{e.bidder_name || <span style={{ color: 'var(--ink-mute)' }}>—</span>}</div>
-                          {e.bidder_fb_handle && <div className="mono" style={{ fontSize: 10, color: 'var(--teal)' }}>@{e.bidder_fb_handle}</div>}
-                        </td>
-                        <td className="mono" style={{ padding: '6px 14px', textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>
-                          {e.amount != null ? fmtMoney(e.amount) : '—'}
-                        </td>
-                      </tr>
-                    ))}
+                    {/* Bids only ever go up in an ascending auction, so the amount
+                        is the true order — entry time is not (a thread transcribed
+                        newest-first is entered backwards). */}
+                    {[...historyEvents].sort((a, b) => {
+                      const aa = a.amount ?? -1, bb = b.amount ?? -1;
+                      return aa !== bb ? aa - bb : a.created_at.localeCompare(b.created_at);
+                    }).map((e, i) => {
+                      const editing = editEventId === e.id;
+                      return (
+                        <tr key={e.id} style={{ borderTop: '1px solid var(--rule)', fontSize: 12.5, color: 'var(--plum)' }}>
+                          <td className="mono" style={{ padding: '6px 14px', color: 'var(--ink-mute)' }}>{i + 1}</td>
+                          <td className="mono" style={{ padding: '6px 14px' }}>
+                            {new Date(e.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </td>
+                          <td style={{ padding: '6px 14px' }}>
+                            {editing ? (
+                              <input list="fb-bidders-list" value={editEventName} onChange={ev => setEditEventName(ev.target.value)}
+                                placeholder="Bidder name" className="input-sc" style={{ width: '100%', fontSize: 12 }} />
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 600 }}>{e.bidder_name || <span style={{ color: 'var(--rust)' }}>— no bidder</span>}</div>
+                                {e.bidder_fb_handle && <div className="mono" style={{ fontSize: 10, color: 'var(--teal)' }}>@{e.bidder_fb_handle}</div>}
+                              </>
+                            )}
+                          </td>
+                          <td className="mono" style={{ padding: '6px 14px', textAlign: 'right', color: 'var(--orange)', fontWeight: 700 }}>
+                            {editing ? (
+                              <input type="text" inputMode="decimal" value={editEventAmount} onChange={ev => setEditEventAmount(ev.target.value)}
+                                className="input-sc" style={{ width: 80, fontSize: 12, textAlign: 'right' }} />
+                            ) : (e.amount != null ? fmtMoney(e.amount) : '—')}
+                          </td>
+                          <td style={{ padding: '6px 14px', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                            {editing ? (
+                              <>
+                                <button onClick={() => saveEventEdit(e)} className="btn btn-primary btn-sm">Save</button>{' '}
+                                <button onClick={() => { setEditEventId(null); setHistoryNote(null); }} className="btn btn-ghost btn-sm">Cancel</button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => startEditEvent(e)} className="btn btn-ghost btn-sm" title="Fix the bidder or amount">✎</button>{' '}
+                                <button onClick={() => removeEvent(e)} className="btn btn-ghost btn-sm" title="Delete this bid">🗑</button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

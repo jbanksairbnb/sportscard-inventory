@@ -260,6 +260,13 @@ export default function BiddersListPage() {
     return arr;
   }, [stats, search, sort]);
 
+  // Bids that were recorded with neither a linked bidder nor a name belong to
+  // nobody in the table, which is one reason the counts can look low.
+  const unattributedBids = useMemo(
+    () => bidEvents.filter(e => !e.bidder_id && !(e.bidder_name || '').trim()).length,
+    [bidEvents],
+  );
+
   // Group bidders by lower(name) to spot dupes
   const dupeGroups = useMemo(() => {
     const map = new Map<string, BidderStats[]>();
@@ -315,6 +322,16 @@ export default function BiddersListPage() {
       </header>
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
+        {unattributedBids > 0 && (
+          <div style={{
+            marginBottom: 14, padding: '10px 14px', borderRadius: 8, fontSize: 12.5, color: 'var(--plum)',
+            background: 'rgba(232,116,44,0.10)', border: '1.5px solid var(--orange)',
+          }}>
+            <strong>{unattributedBids} recorded bid{unattributedBids === 1 ? ' has' : 's have'} no bidder attached</strong>, so
+            they are not counted for anyone below. Open a lot&apos;s <strong>Bid history</strong> on the FB Auctions page
+            and use ✎ to name the bidder.
+          </div>
+        )}
         <section style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search bidders…"

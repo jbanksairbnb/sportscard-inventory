@@ -40,6 +40,37 @@ export type LogBidEventInput = {
 // be a real bid than a correction.
 const CORRECTION_WINDOW_MS = 10 * 60 * 1000;
 
+// An UPDATE that RLS filters out affects zero rows and raises no error, which
+// is how a missing policy went unnoticed: bidders were never filled in and no
+// one was told. Ask for the updated rows back and treat none as a failure.
+export const BID_EVENT_BLOCKED_MSG =
+  'The bid history row was not changed — the database is missing UPDATE permission on fb_auction_bid_events. '
+  + 'Run supabase/migrations/20261002_fb_bid_events_update_policy.sql.';
+
+export async function updateBidEvent(
+  supabase: SupabaseClient,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<string | null> {
+  const { data, error } = await supabase.from('fb_auction_bid_events').update(patch).eq('id', id).select('id');
+  if (error) {
+    console.error('[fb_auction_bid_events] update failed:', error.message);
+    return error.message;
+  }
+  if (!data || data.length === 0) {
+    console.error('[fb_auction_bid_events] update matched no rows (RLS?)');
+    return BID_EVENT_BLOCKED_MSG;
+  }
+  return null;
+}
+
+export async function deleteBidEvent(supabase: SupabaseClient, id: string): Promise<string | null> {
+  const { data, error } = await supabase.from('fb_auction_bid_events').delete().eq('id', id).select('id');
+  if (error) return error.message;
+  if (!data || data.length === 0) return 'The bid history row was not deleted.';
+  return null;
+}
+
 type ExistingEvent = { id: string; amount: number | null; bidder_id: string | null; created_at: string };
 
 export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInput): Promise<string | null> {
@@ -81,12 +112,7 @@ export async function logBidEvent(supabase: SupabaseClient, args: LogBidEventInp
       if (args.bidderName) patch.bidder_name = args.bidderName;
       if (args.bidderFbHandle !== undefined) patch.bidder_fb_handle = args.bidderFbHandle;
       if (Object.keys(patch).length === 0) return null;
-      const { error } = await supabase.from('fb_auction_bid_events').update(patch).eq('id', adopt.id);
-      if (error) {
-        console.error('[fb_auction_bid_events] coalesce update failed:', error.message);
-        return error.message;
-      }
-      return null;
+      return updateBidEvent(supabase, adopt.id, patch);
     }
 
     const { error } = await supabase.from('fb_auction_bid_events').insert({
