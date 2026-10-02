@@ -1,5 +1,6 @@
 'use client';
 
+import CopyListingLink from '@/components/CopyListingLink';
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { buildListingTitle, GRADE_LABELS as SHARED_GRADE_LABELS, RAW_GRADES as SHARED_RAW_GRADES } from '@/lib/listingTitle';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -1311,6 +1312,9 @@ function ListingsPageContent() {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, minWidth: 130 }}>
                       <button onClick={() => openEdit(l)} className="btn btn-ghost btn-sm" style={{ justifyContent: 'center' }}>Edit</button>
+                      {(l.status === 'active' || l.status === 'sold') && (
+                        <CopyListingLink listingId={l.id} label="Public link" className="btn btn-outline btn-sm" style={{ justifyContent: 'center' }} />
+                      )}
                       {(l.status === 'active' || l.status === 'draft') && (
                         <>
                           <button onClick={() => sendListingsToFB([l.id], 'auction')} className="btn btn-sm" style={{ justifyContent: 'center', background: 'var(--teal)', color: 'var(--cream)', border: '1.5px solid var(--teal)' }}>

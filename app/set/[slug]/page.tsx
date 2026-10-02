@@ -28,6 +28,7 @@ import { RAW_GRADES as SHARED_RAW_GRADES, buildListingTitle } from "@/lib/listin
 import { BidderSuggestionsPanel, computeBidderSuggestions, type BidderRow, type LiveActivity } from '@/components/BidderSuggestions';
 import { loadBidderActivity } from '@/lib/bidderActivity';
 import { cropScanPadding } from "@/lib/scanAutoCrop";
+import CopyListingLink from "@/components/CopyListingLink";
 
 /* =====================  Constants  ===================== */
 // Notes is a free-form per-row text field shown beneath the player name in
@@ -1531,6 +1532,9 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               title="List this set as one marketplace item with a single price">
               📚 List Complete Set
             </button>
+            {existingSetListing && existingSetListing.status === 'active' && (
+              <CopyListingLink listingId={existingSetListing.id} label="Public link" />
+            )}
           </div>
         </div>
       </header>
@@ -2353,6 +2357,11 @@ function ListCompleteSetModal({
         <div className="display" style={{ fontSize: 22, color: 'var(--plum)' }}>
           📚 {existing ? 'Edit Complete-Set Listing' : 'List Complete Set'}
         </div>
+        {existing && (
+          <div style={{ marginTop: 8 }}>
+            <CopyListingLink listingId={existing.id} label="Copy public link for Facebook" />
+          </div>
+        )}
         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 4, marginBottom: 18 }}>
           One marketplace listing for the entire set. <strong>{ownedCount} of {totalRows}</strong> cards owned right now.
           Buyers will see your full set contents (player, condition, images) before purchase.
