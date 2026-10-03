@@ -82,6 +82,34 @@ async function loadFacebookUrl(db: ReturnType<typeof admin>, listingId: string):
   }
 }
 
+// The listing's state inside its auction, which can differ from the listing's
+// own status (a lot that is live in an auction is not "sold"). A lot that is
+// still open wins; otherwise the most recent auction does.
+type AuctionInfo = { lotStatus: string; postUrl: string | null };
+async function loadAuctionInfo(db: ReturnType<typeof admin>, listingId: string): Promise<AuctionInfo | null> {
+  try {
+    const { data: lots } = await db.from('fb_auction_lots')
+      .select('status, comment_url, auction_id').eq('listing_id', listingId);
+    if (!lots?.length) return null;
+    const ids = Array.from(new Set(lots.map(l => l.auction_id as string).filter(Boolean)));
+    const { data: auctions } = await db.from('fb_auctions').select('id, post_url, created_at').in('id', ids);
+    const byId = new Map((auctions ?? []).map(a => [a.id as string, a]));
+    const rows = lots
+      .map(l => ({ lot: l, a: byId.get(l.auction_id as string) }))
+      .filter(r => r.a)
+      .sort((x, y) => {
+        const open = Number(y.lot.status === 'open') - Number(x.lot.status === 'open');
+        return open || String(y.a!.created_at ?? '').localeCompare(String(x.a!.created_at ?? ''));
+      });
+    const top = rows[0];
+    if (!top) return null;
+    const url = (top.a!.post_url as string | null)?.trim() || (top.lot.comment_url as string | null)?.trim() || null;
+    return { lotStatus: top.lot.status as string, postUrl: url && /^https?:\/\//i.test(url) ? url : null };
+  } catch {
+    return null;
+  }
+}
+
 // Accepts the full listing id (older links) or the short 12-hex-character
 // prefix that "Copy public link" now produces. A short code that matches more
 // than one listing is treated as not found rather than guessing.
@@ -133,7 +161,10 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
   // before the fb_post_url migration has been applied.
   const { data: own } = await db.from('listings').select('fb_post_url').eq('id', listing.id).maybeSingle();
   const ownUrl = (own as { fb_post_url?: string | null } | null)?.fb_post_url?.trim();
-  const facebookUrl = ownUrl && /^https?:\/\//i.test(ownUrl) ? ownUrl : await loadFacebookUrl(db, listing.id);
+  const auction = await loadAuctionInfo(db, listing.id);
+  const facebookUrl = ownUrl && /^https?:\/\//i.test(ownUrl)
+    ? ownUrl
+    : auction?.postUrl ?? await loadFacebookUrl(db, listing.id);
 
   const isSet = listing.listing_type === 'set' && !!listing.set_slug;
   let rows: SetCardRow[] = [];
@@ -149,8 +180,17 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
     }
   }
 
-  const sold = listing.status === 'sold' || listing.sold_state === 'sold';
-  const claimed = !sold && listing.sold_state === 'claimed';
+  // Inside an auction, the lot's own status decides what buyers see.
+  const lotStatus = auction?.lotStatus ?? null;
+  const sold = lotStatus
+    ? lotStatus === 'paid'
+    : listing.status === 'sold' || listing.sold_state === 'sold';
+  const claimed = !lotStatus && !sold && listing.sold_state === 'claimed';
+  const auctionBadge = lotStatus === 'open' ? 'LIVE IN AUCTION'
+    : lotStatus === 'sold' ? 'AUCTION ENDED'
+    : lotStatus === 'no_sale' ? 'NO SALE'
+    : null;
+  const ended = lotStatus === 'sold' || lotStatus === 'no_sale';
   const photos = (listing.photos ?? []).filter(Boolean);
   const title = listing.title || 'Untitled listing';
   const badge = isSet ? '📚 COMPLETE SET' : listing.listing_type === 'lot' ? '📦 LOT' : null;
@@ -186,9 +226,9 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
 
           <section className="panel-bordered" style={{ padding: '20px 24px' }}>
             {badge && <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', padding: '3px 10px', borderRadius: 100, background: 'var(--teal)', color: 'var(--cream)' }}>{badge}</span>}
-            {(sold || claimed) && (
-              <span style={{ marginLeft: badge ? 8 : 0, fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', padding: '3px 10px', borderRadius: 100, background: 'var(--orange)', color: 'var(--cream)' }}>
-                {sold ? 'SOLD' : 'CLAIMED'}
+            {(sold || claimed || auctionBadge) && (
+              <span style={{ marginLeft: badge ? 8 : 0, fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', padding: '3px 10px', borderRadius: 100, background: auctionBadge === 'LIVE IN AUCTION' ? 'var(--teal)' : 'var(--orange)', color: 'var(--cream)' }}>
+                {sold ? 'SOLD' : claimed ? 'CLAIMED' : auctionBadge}
               </span>
             )}
             <h1 className="display" style={{ fontSize: 28, color: 'var(--plum)', margin: '10px 0 6px', lineHeight: 1.15 }}>{title}</h1>
@@ -225,7 +265,7 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
             )}
             {!sold && facebookUrl && (
               <a href={facebookUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary">
-                View &amp; bid on Facebook →
+                {ended ? 'View Facebook post →' : 'View & bid on Facebook →'}
               </a>
             )}
             {!sold && !facebookUrl && (
@@ -234,7 +274,7 @@ export default async function PublicListingPage(props: { params: Promise<{ id: s
               </Link>
             )}
             <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 10 }}>
-              {facebookUrl ? 'Comment on the Facebook post to bid or claim.' : 'Interested? Message the seller on Facebook, or sign in to buy here.'}
+              {facebookUrl ? (ended ? 'This auction has ended.' : 'Comment on the Facebook post to bid or claim.') : 'Interested? Message the seller on Facebook, or sign in to buy here.'}
             </div>
           </section>
         </div>
