@@ -581,6 +581,27 @@ export default function InvoicesPage() {
     });
   }
 
+  // Keep the Auctions page in step: once every lot in an auction is settled
+  // (paid / no sale) the auction itself moves to Sold ('settled'). Multi-lot
+  // auctions with lots still open or unpaid keep their current status, and the
+  // paid lots already show as sold. Mirrors deriveAuctionStatus on the
+  // Auctions page; drafts are never advanced.
+  async function rollUpAuctionStatuses(supabase: ReturnType<typeof createClient>, auctionIds: string[]) {
+    for (const id of auctionIds) {
+      const [{ data: auction }, { data: lots }] = await Promise.all([
+        supabase.from('fb_auctions').select('status').eq('id', id).maybeSingle(),
+        supabase.from('fb_auction_lots').select('status').eq('auction_id', id),
+      ]);
+      if (!auction || auction.status === 'draft' || !lots?.length) continue;
+      const next = lots.some(l => l.status === 'open') ? 'live'
+        : lots.some(l => l.status === 'sold') ? 'ended'
+        : 'settled';
+      if (next === auction.status) continue;
+      const { error } = await supabase.from('fb_auctions').update({ status: next }).eq('id', id);
+      if (error) console.warn('auction status roll-up failed:', error.message);
+    }
+  }
+
   // Mark a whole invoice paid: flip the underlying lots + claim items, then
   // sync each listing to Sold so the ended-auction area and My Listings buckets
   // update in step. Source of truth stays on the lot — no drift.
@@ -596,10 +617,13 @@ export default function InvoicesPage() {
 
     try {
       if (auctionLots.length) {
-        await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', auctionLots.map(l => l.key));
+        const { error: lotErr } = await supabase.from('fb_auction_lots').update({ status: 'paid' }).in('id', auctionLots.map(l => l.key));
+        if (lotErr) throw new Error(lotErr.message);
+        await rollUpAuctionStatuses(supabase, Array.from(new Set(auctionLots.map(l => l.sourceId))));
       }
       if (claimItems.length) {
-        await supabase.from('fb_claim_sale_items').update({ claim_status: 'paid' }).in('id', claimItems.map(l => l.key));
+        const { error: claimErr } = await supabase.from('fb_claim_sale_items').update({ claim_status: 'paid' }).in('id', claimItems.map(l => l.key));
+        if (claimErr) throw new Error(claimErr.message);
       }
       // Move each card Claimed -> Sold at its selling price.
       for (const l of inv.lines) {
