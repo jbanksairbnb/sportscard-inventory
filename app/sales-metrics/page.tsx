@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
+import { claimPrice } from '@/lib/claimPrice';
 
 // A single sale event — a paid auction lot, a paid claim sale item, or a
 // marketplace listing that was marked sold. Date is the parent auction/sale's
@@ -112,7 +113,7 @@ export default function SalesMetricsPage() {
           .eq('user_id', user.id),
         supabase.from('fb_claim_sales').select('id, created_at').eq('user_id', user.id),
         supabase.from('fb_claim_sale_items')
-          .select('lot_id, price, claim_status, claim_buyer_id, claim_buyer_name, listing:listings(cost, year, brand, card_number, player, title)')
+          .select('lot_id, price, sold_price, claim_status, claim_buyer_id, claim_buyer_name, listing:listings(cost, year, brand, card_number, player, title)')
           .eq('user_id', user.id),
         supabase.from('listings')
           .select('sold_at, sold_price, cost, status, sold_channel, year, brand, card_number, player, title')
@@ -131,7 +132,7 @@ export default function SalesMetricsPage() {
       type LotJoin = { auction_id: string; current_bid: number | null; status: string; bidder_id: string | null; bidder_name: string | null; listing: ListingJoin | null };
       type SaleRow = { id: string; created_at: string };
       type ClaimLotRow = { id: string; sale_id: string };
-      type ItemJoin = { lot_id: string; price: number | null; claim_status: string; claim_buyer_id: string | null; claim_buyer_name: string | null; listing: ListingJoin | null };
+      type ItemJoin = { lot_id: string; price: number | null; sold_price: number | null; claim_status: string; claim_buyer_id: string | null; claim_buyer_name: string | null; listing: ListingJoin | null };
 
       const aucsById = new Map<string, AucRow>();
       for (const a of (aucsRes.data || []) as AucRow[]) aucsById.set(a.id, a);
@@ -176,13 +177,13 @@ export default function SalesMetricsPage() {
         if (!lot) continue;
         const sale = salesById.get(lot.sale_id);
         if (!sale) continue;
-        if (it.claim_status === 'paid' && it.price) {
+        if (it.claim_status === 'paid' && claimPrice(it)) {
           const buyerKey = it.claim_buyer_id ? `id:${it.claim_buyer_id}`
             : (it.claim_buyer_name ? `name:${it.claim_buyer_name.trim().toLowerCase()}` : null);
           evs.push({
             source: 'claim',
             date: sale.created_at,
-            revenue: it.price,
+            revenue: claimPrice(it) as number,
             cost: it.listing?.cost ?? 0,
             buyerKey,
             buyerName: it.claim_buyer_name,

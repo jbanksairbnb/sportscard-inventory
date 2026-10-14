@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import type { BidderRow, LiveActivity } from '@/components/BidderSuggestions';
+import { claimPrice } from '@/lib/claimPrice';
 
 // Assembles the unified activity stream behind the bidder tag suggestions.
 //
@@ -48,6 +49,7 @@ type ClaimJoin = {
   id: string;
   claim_buyer_id: string;
   price: number | null;
+  sold_price?: number | null;
   claim_status: 'open' | 'claimed' | 'sold' | 'paid';
   created_at: string | null;
   listing: { year: number | null; brand: string | null; player: string | null } | null;
@@ -112,7 +114,7 @@ export async function loadBidderActivity(
       .order('created_at', { ascending: true }).range(from, to) as never),
     fetchAll<ClaimJoin>((from, to) => supabase
       .from('fb_claim_sale_items')
-      .select('id, claim_buyer_id, price, claim_status, created_at, listing:listings(year, brand, player)')
+      .select('id, claim_buyer_id, price, sold_price, claim_status, created_at, listing:listings(year, brand, player)')
       .eq('user_id', userId).not('claim_buyer_id', 'is', null)
       .order('id', { ascending: true }).range(from, to) as never),
     fetchAll<HistoricalRow>((from, to) => supabase
@@ -188,7 +190,7 @@ export async function loadBidderActivity(
       item_key: `claim:${c.id}`,
       is_winner: c.claim_status === 'claimed' || c.claim_status === 'sold' || c.claim_status === 'paid',
       is_paid: c.claim_status === 'paid',
-      bid_amount: c.price,
+      bid_amount: claimPrice(c),
       occurred_at: c.created_at ?? null,
       listing_year: c.listing?.year ?? null,
       listing_brand: c.listing?.brand ?? null,

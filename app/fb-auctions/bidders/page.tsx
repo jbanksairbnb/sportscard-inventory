@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import SCLogo from '@/components/SCLogo';
+import { claimPrice } from '@/lib/claimPrice';
 
 type BidderRow = {
   id: string;
@@ -42,6 +43,7 @@ type ClaimItemRow = {
   claim_buyer_id: string | null;
   claim_buyer_name: string | null;
   price: number | null;
+  sold_price: number | null;
   claim_status: 'open' | 'claimed' | 'sold' | 'paid';
 };
 
@@ -113,7 +115,7 @@ export default function BiddersListPage() {
           .select('bidder_id, bidder_name, current_bid, status').eq('user_id', user.id)
           .order('id', { ascending: true }).range(from, to)),
         fetchAll<ClaimItemRow>((from, to) => supabase.from('fb_claim_sale_items')
-          .select('claim_buyer_id, claim_buyer_name, price, claim_status').eq('user_id', user.id)
+          .select('claim_buyer_id, claim_buyer_name, price, sold_price, claim_status').eq('user_id', user.id)
           .order('id', { ascending: true }).range(from, to)),
         fetchAll<BidEventRow>((from, to) => supabase.from('fb_auction_bid_events')
           .select('lot_id, bidder_id, bidder_name, amount, created_at').eq('user_id', user.id)
@@ -227,10 +229,10 @@ export default function BiddersListPage() {
         if (c.claim_status === 'claimed' || c.claim_status === 'sold' || c.claim_status === 'paid') claimCount += 1;
         if (c.claim_status === 'paid') {
           claimPaidCount += 1;
-          if (c.price) totalSpend += c.price;
+          if (claimPrice(c)) totalSpend += claimPrice(c)!;
         } else if (c.claim_status === 'claimed' || c.claim_status === 'sold') {
           unpaidCount += 1;
-          if (c.price) unpaidTotal += c.price;
+          if (claimPrice(c)) unpaidTotal += claimPrice(c)!;
         }
       }
       // Imported wins settle as wins, so they belong in the Won column.
