@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { getSellerStatus } from '@/lib/sellerGuard';
 import { syncClaimListing } from '@/lib/listingStatusSync';
 import SCLogo from '@/components/SCLogo';
+import { claimPrice, parseSoldPriceInput } from '@/lib/claimPrice';
 
 type SaleStatus = 'draft' | 'live' | 'closed' | 'settled';
 type ClaimStatus = 'open' | 'claimed' | 'sold' | 'paid';
@@ -43,6 +44,7 @@ type ItemRow = {
   position: number;
   listing_id: string | null;
   price: number | null;
+  sold_price: number | null;
   claim_buyer_id: string | null;
   claim_buyer_name: string | null;
   claim_status: ClaimStatus;
@@ -132,7 +134,7 @@ export default function ClaimSalesPage() {
           .eq('user_id', user.id)
           .order('lot_number'),
         supabase.from('fb_claim_sale_items')
-          .select('id, lot_id, position, listing_id, price, claim_buyer_id, claim_buyer_name, claim_status, listing:listings(id, title, year, brand, card_number, player, photos)')
+          .select('id, lot_id, position, listing_id, price, sold_price, claim_buyer_id, claim_buyer_name, claim_status, listing:listings(id, title, year, brand, card_number, player, photos)')
           .eq('user_id', user.id)
           .order('position'),
         supabase.from('fb_groups').select('id, name').eq('user_id', user.id),
@@ -229,7 +231,7 @@ export default function ClaimSalesPage() {
     for (const s of visibleSales) {
       const its = itemsBySaleId.get(s.id) || [];
       for (const it of its) {
-        const v = it.price || 0;
+        const v = (it.claim_status === 'open' ? it.price : claimPrice(it)) || 0;
         if (it.claim_status === 'open') listedOpen += v;
         if (it.claim_status === 'claimed' || it.claim_status === 'sold') claimedOutstanding += v;
         if (it.claim_status === 'paid') totalSales += v;
@@ -289,11 +291,11 @@ export default function ClaimSalesPage() {
       : 'open';
     const supabase = createClient();
     const { error } = await supabase.from('fb_claim_sale_items')
-      .update({ claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status })
+      .update({ claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status, ...(claim_status === 'open' ? { sold_price: null } : {}) })
       .eq('id', item.id);
     if (!error) {
       setItems(prev => prev.map(i => i.id === item.id
-        ? { ...i, claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status }
+        ? { ...i, claim_buyer_id: buyerId, claim_buyer_name: buyerName, claim_status, ...(claim_status === 'open' ? { sold_price: null } : {}) }
         : i));
       await syncListingForItem(supabase, item, claim_status);
       await syncSaleStatus(item.lot_id, item.id, claim_status);
@@ -303,11 +305,37 @@ export default function ClaimSalesPage() {
     setSavingItems(prev => { const n = new Set(prev); n.delete(item.id); return n; });
   }
 
+  // Record what the buyer actually paid when it differs from the listed price.
+  // Blank reverts to the listed price. The listing's sold price follows, so
+  // My Listings and sales metrics show the real figure.
+  async function setItemSoldPrice(item: ItemRow, raw: string, input: HTMLInputElement) {
+    const parsed = parseSoldPriceInput(raw);
+    if (parsed === undefined) { alert('Enter a dollar amount, or leave blank to use the listed price.'); input.value = item.sold_price !== null && item.sold_price !== undefined ? item.sold_price.toFixed(2) : ''; return; }
+    if (parsed === (item.sold_price ?? null)) { input.value = parsed === null ? '' : parsed.toFixed(2); return; }
+    setSavingItems(prev => new Set(prev).add(item.id));
+    const supabase = createClient();
+    const { error } = await supabase.from('fb_claim_sale_items').update({ sold_price: parsed }).eq('id', item.id);
+    if (error) {
+      alert(error.message);
+    } else {
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, sold_price: parsed } : i));
+      if (userId && item.listing_id && item.claim_status !== 'open') {
+        await syncClaimListing(supabase, userId, {
+          listing_id: item.listing_id,
+          claim_status: item.claim_status,
+          price: claimPrice({ price: item.price, sold_price: parsed }),
+        });
+      }
+    }
+    setSavingItems(prev => { const n = new Set(prev); n.delete(item.id); return n; });
+  }
+
   async function setItemStatus(item: ItemRow, claim_status: ClaimStatus) {
     const supabase = createClient();
-    const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status }).eq('id', item.id);
+    const reset = claim_status === 'open' ? { sold_price: null } : {};
+    const { error } = await supabase.from('fb_claim_sale_items').update({ claim_status, ...reset }).eq('id', item.id);
     if (!error) {
-      setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status } : i));
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, claim_status, ...reset } : i));
       await syncListingForItem(supabase, item, claim_status);
       await syncSaleStatus(item.lot_id, item.id, claim_status);
     } else alert(error.message);
@@ -321,7 +349,7 @@ export default function ClaimSalesPage() {
     await syncClaimListing(supabase, userId, {
       listing_id: item.listing_id,
       claim_status: nextStatus,
-      price: item.price,
+      price: claimPrice(item),
     });
   }
 
@@ -462,7 +490,7 @@ export default function ClaimSalesPage() {
               const totalList = allItems.reduce((s, x) => s + (x.item.price || 0), 0);
               const totalClaimed = allItems
                 .filter(x => x.item.claim_status !== 'open')
-                .reduce((s, x) => s + (x.item.price || 0), 0);
+                .reduce((s, x) => s + (claimPrice(x.item) || 0), 0);
               return (
                 <section key={sale.id} className="panel-bordered" style={{ padding: 0, overflow: 'hidden' }}>
                   {/* Sale header */}
@@ -513,7 +541,7 @@ export default function ClaimSalesPage() {
                       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                           <tr style={{ background: 'var(--paper)' }}>
-                            {['Lot', 'Pos', 'Card', 'Price', 'Buyer', 'Status'].map(h => (
+                            {['Lot', 'Pos', 'Card', 'Price', 'Sold price', 'Buyer', 'Status'].map(h => (
                               <th key={h} className="eyebrow" style={{
                                 padding: '10px 14px', textAlign: 'left', fontSize: 10,
                                 letterSpacing: '0.16em', fontWeight: 700, color: 'var(--orange)',
@@ -553,6 +581,23 @@ export default function ClaimSalesPage() {
                                 </td>
                                 <td className="mono" style={{ padding: '8px 14px', fontSize: 12, color: 'var(--ink-soft)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                                   {fmtMoney(item.price)}
+                                </td>
+                                <td style={{ padding: '6px 14px', whiteSpace: 'nowrap' }}>
+                                  <input
+                                    key={`${item.id}:${item.sold_price ?? ''}`}
+                                    defaultValue={item.sold_price !== null && item.sold_price !== undefined ? item.sold_price.toFixed(2) : ''}
+                                    placeholder={item.price !== null ? item.price.toFixed(2) : '—'}
+                                    inputMode="decimal"
+                                    disabled={item.claim_status === 'open'}
+                                    title={item.claim_status === 'open' ? 'Set a buyer first' : 'What the buyer actually paid. Leave blank to use the listed price.'}
+                                    onBlur={e => setItemSoldPrice(item, e.target.value, e.target)}
+                                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                    className="input-sc"
+                                    style={{
+                                      width: 90, fontSize: 12, textAlign: 'right',
+                                      fontWeight: item.sold_price !== null && item.sold_price !== undefined ? 700 : 400,
+                                      color: item.sold_price !== null && item.sold_price !== undefined && item.sold_price !== item.price ? 'var(--orange)' : undefined,
+                                    }} />
                                 </td>
                                 <td style={{ padding: '6px 14px' }}>
                                   <input

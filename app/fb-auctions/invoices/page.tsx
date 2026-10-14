@@ -15,6 +15,7 @@ import {
   type InvoiceMessageInput,
 } from '@/lib/invoiceMessage';
 import SCLogo from '@/components/SCLogo';
+import { claimPrice } from '@/lib/claimPrice';
 
 // ---------------------------------------------------------------------------
 // Invoices tab
@@ -71,6 +72,7 @@ type ClaimItemRow = {
   lot_id: string;
   listing_id: string | null;
   price: number | null;
+  sold_price: number | null;
   claim_buyer_id: string | null;
   claim_buyer_name: string | null;
   claim_status: 'open' | 'claimed' | 'sold' | 'paid';
@@ -312,7 +314,7 @@ export default function InvoicesPage() {
           .in('status', ['sold', 'paid']),
         supabase
           .from('fb_claim_sale_items')
-          .select('id, lot_id, listing_id, price, claim_buyer_id, claim_buyer_name, claim_status')
+          .select('id, lot_id, listing_id, price, sold_price, claim_buyer_id, claim_buyer_name, claim_status')
           .eq('user_id', user.id)
           .in('claim_status', ['claimed', 'sold', 'paid']),
         supabase
@@ -421,7 +423,7 @@ export default function InvoicesPage() {
           sourceDate: saleDateOf(sale),
           label: cardSummary(listing),
           tag: listing?.tag_number || null,
-          amount: c.price || 0,
+          amount: claimPrice(c) || 0,
           listing,
         };
         const inv = c.claim_status === 'paid' ? target.paid : target.open;

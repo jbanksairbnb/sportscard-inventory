@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import SCLogo from '@/components/SCLogo';
+import { claimPrice } from '@/lib/claimPrice';
 
 type Bidder = {
   id: string;
@@ -66,6 +67,7 @@ type ClaimItemRow = {
   position: number;
   listing_id: string | null;
   price: number | null;
+  sold_price: number | null;
   claim_buyer_id: string | null;
   claim_buyer_name: string | null;
   claim_status: 'open' | 'claimed' | 'sold' | 'paid';
@@ -255,7 +257,7 @@ export default function BidderProfilePage() {
       // Pull claim sale items for this buyer (by id OR fallback by typed name).
       const { data: byIdClaims } = await supabase
         .from('fb_claim_sale_items')
-        .select('id, lot_id, position, listing_id, price, claim_buyer_id, claim_buyer_name, claim_status')
+        .select('id, lot_id, position, listing_id, price, sold_price, claim_buyer_id, claim_buyer_name, claim_status')
         .eq('user_id', user.id)
         .eq('claim_buyer_id', bidderId);
       const claims = (byIdClaims || []) as ClaimItemRow[];
@@ -263,7 +265,7 @@ export default function BidderProfilePage() {
       if (nameMatch) {
         const { data: byNameClaims } = await supabase
           .from('fb_claim_sale_items')
-          .select('id, lot_id, position, listing_id, price, claim_buyer_id, claim_buyer_name, claim_status')
+          .select('id, lot_id, position, listing_id, price, sold_price, claim_buyer_id, claim_buyer_name, claim_status')
           .eq('user_id', user.id)
           .ilike('claim_buyer_name', nameMatch);
         for (const c of ((byNameClaims || []) as ClaimItemRow[])) {
@@ -299,7 +301,7 @@ export default function BidderProfilePage() {
           saleId: lot?.sale_id || '',
           saleTitle: sale?.title || null,
           lotNumber: lot?.lot_number ?? null,
-          price: c.price,
+          price: claimPrice(c),
           claimStatus: c.claim_status,
           isPaid: c.claim_status === 'paid',
           listing: c.listing_id ? claimListingsById.get(c.listing_id) || null : null,
