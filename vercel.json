@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/collection-snapshot", "schedule": "15 0 1 * *" }
+  ]
+}

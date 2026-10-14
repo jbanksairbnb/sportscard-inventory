@@ -450,7 +450,7 @@ function Hero({ userId, avatar, cover, profile, onAvatarChange, onCoverChange, o
   );
 }
 
-type StatItem = { label: string; value: string; sub: string; onClick?: () => void };
+type StatItem = { label: string; value: string; sub: string; onClick?: () => void; link?: { label: string; href: string } };
 
 function StatsStrip({ stats }: { stats: StatItem[] }) {
   return (
@@ -469,6 +469,12 @@ function StatsStrip({ stats }: { stats: StatItem[] }) {
               <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6 }}>{s.label}</div>
               <div className="stat-num" style={{ fontSize: 38, color: s.onClick ? 'var(--orange)' : undefined }}>{s.value}</div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-mute)', marginTop: 3, fontWeight: 600 }}>{s.sub}</div>
+              {s.link && (
+                <Link href={s.link.href} onClick={e => e.stopPropagation()}
+                  style={{ display: 'inline-block', marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 700, color: 'var(--teal)', textDecoration: 'underline' }}>
+                  {s.link.label}
+                </Link>
+              )}
             </div>,
           ])}
         </div>
@@ -2194,6 +2200,7 @@ export default function HomePage() {
             ? '🔒 Private'
                         : '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k',
           sub: profile.value_private ? 'click to reveal' : 'book price · click to hide',
+          link: { label: '📈 Value tracker →', href: '/collection-value' },
           onClick: async () => {
             const next = !profile.value_private;
             setProfile({ ...profile, value_private: next });

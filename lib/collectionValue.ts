@@ -1,0 +1,229 @@
+// Collection value tracking — pure helpers shared by the /collection-value page
+// (browser) and the monthly snapshot cron (server). No Supabase or React here.
+//
+// A "card in the collection" is a set row marked Owned = Yes, from any set —
+// personal and inventory alike. Its value is the row's Value field.
+
+import { cardValueKey } from '@/lib/cardValueHistory';
+
+export type SetInput = {
+  slug: string;
+  title: string | null;
+  year: number | string | null;
+  brand: string | null;
+  purpose: string | null;
+  rows: Array<Record<string, any>> | null;
+};
+
+export type CollectionCard = {
+  key: string;      // stable per-card key within the collection: slug|rowId
+  histKey: string;  // slug|cardValueKey — joins to card_value_history
+  setSlug: string;
+  setTitle: string;
+  group: 'personal' | 'inventory';
+  name: string;     // "#150 Willie Mays"
+  condition: string; // "PSA 8" / "Raw NM"
+  value: number;
+  cost: number;
+};
+
+// [value, name, condition, set title]
+export type CardValueEntry = [number, string, string, string];
+
+export type SetBreakdown = { slug: string; title: string; group: 'personal' | 'inventory'; value: number; cards: number };
+export type TopCard = { key: string; name: string; condition: string; setTitle: string; value: number };
+
+export type Snapshot = {
+  month: string; // 'YYYY-MM'
+  total_value: number;
+  total_cost: number;
+  owned_cards: number;
+  valued_cards: number;
+  coverage: number | null;
+  by_purpose: { personal: number; inventory: number };
+  by_set: SetBreakdown[];
+  top_cards: TopCard[];
+  card_values: Record<string, CardValueEntry>;
+  source: 'month_end' | 'reconstructed' | 'live';
+  taken_at: string;
+};
+
+export function parseMoney(v: unknown): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const n = Number(String(v ?? '').replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function monthOf(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+export function addMonths(month: string, n: number): string {
+  const [y, m] = month.split('-').map(Number);
+  return monthOf(new Date(Date.UTC(y, m - 1 + n, 1)));
+}
+// Last instant of a month, as an ISO string (for "as of month end" lookups).
+export function monthEndIso(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 1) - 1).toISOString();
+}
+export function monthLabel(month: string, long = false): string {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, {
+    month: 'short', year: long ? 'numeric' : '2-digit', timeZone: 'UTC',
+  });
+}
+export function monthsBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let m = from; m <= to; m = addMonths(m, 1)) out.push(m);
+  return out;
+}
+
+export function groupForPurpose(purpose: string | null | undefined): 'personal' | 'inventory' {
+  return purpose === 'inventory' || purpose === 'for-sale' ? 'inventory' : 'personal';
+}
+
+// Every owned card across the given sets. Cards with no value are kept (they
+// count toward "owned" and the coverage figure) with value 0.
+export function extractCards(sets: SetInput[]): CollectionCard[] {
+  const out: CollectionCard[] = [];
+  for (const s of sets) {
+    const setTitle = s.title || `${s.year || ''} ${s.brand || ''}`.trim() || s.slug;
+    const group = groupForPurpose(s.purpose);
+    const year = s.year ? Number(s.year) || null : null;
+    const brand = s.brand || null;
+    (s.rows || []).forEach((r, idx) => {
+      if (String(r['Owned'] ?? '') !== 'Yes') return;
+      const cardNo = String(r['Card #'] ?? '').trim();
+      const player = String(r['Player'] ?? r['Description'] ?? '').trim();
+      const gradingCompany = String(r['Grading Company'] ?? '').trim() || null;
+      const grade = String(r['Grade'] ?? '').trim() || null;
+      const rawGrade = String(r['Raw Grade'] ?? '').trim() || null;
+      const isGraded = !!gradingCompany;
+      const rowId = typeof r['_id'] === 'string' && r['_id'] ? r['_id'] : `n${cardNo}-${idx}`;
+      out.push({
+        key: `${s.slug}|${rowId}`,
+        histKey: `${s.slug}|${cardValueKey({
+          year, brand, card_number: cardNo || null,
+          grade: isGraded ? grade : null,
+          grading_company: isGraded ? gradingCompany : null,
+          raw_grade: !isGraded ? rawGrade : null,
+        })}`,
+        setSlug: s.slug,
+        setTitle,
+        group,
+        name: [cardNo ? `#${cardNo}` : '', player].filter(Boolean).join(' ') || 'Card',
+        condition: isGraded ? `${gradingCompany} ${grade || ''}`.trim() : rawGrade ? `Raw ${rawGrade}` : 'Raw',
+        value: parseMoney(r['Value']),
+        cost: parseMoney(r['Cost']),
+      });
+    });
+  }
+  return out;
+}
+
+// Build a snapshot from cards priced by `valueOf` (current Value by default).
+export function buildSnapshot(
+  cards: CollectionCard[],
+  month: string,
+  source: Snapshot['source'],
+  valueOf: (c: CollectionCard) => number | null = c => (c.value > 0 ? c.value : null),
+  coverage: number | null = null,
+): Snapshot {
+  const card_values: Record<string, CardValueEntry> = {};
+  const setMap = new Map<string, SetBreakdown>();
+  const byPurpose = { personal: 0, inventory: 0 };
+  let total = 0, cost = 0, valued = 0;
+  for (const c of cards) {
+    const sb = setMap.get(c.setSlug) ?? { slug: c.setSlug, title: c.setTitle, group: c.group, value: 0, cards: 0 };
+    sb.cards += 1;
+    setMap.set(c.setSlug, sb);
+    cost += c.cost;
+    const v = valueOf(c);
+    if (v === null || !(v > 0)) continue;
+    valued += 1;
+    total += v;
+    byPurpose[c.group] += v;
+    sb.value += v;
+    card_values[c.key] = [v, c.name, c.condition, c.setTitle];
+  }
+  const top_cards: TopCard[] = Object.entries(card_values)
+    .map(([key, e]) => ({ key, value: e[0], name: e[1], condition: e[2], setTitle: e[3] }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 25);
+  return {
+    month, total_value: total, total_cost: cost, owned_cards: cards.length, valued_cards: valued,
+    coverage, by_purpose: byPurpose,
+    by_set: [...setMap.values()].sort((a, b) => b.value - a.value),
+    top_cards, card_values, source, taken_at: new Date().toISOString(),
+  };
+}
+
+export type HistoryMark = { set_slug: string | null; key: string; market_value: number; created_at: string };
+
+// Rebuild a past month from price-history marks: each card is valued at its
+// latest mark on or before month end. This uses the cards owned TODAY, so it
+// answers "what would today's collection have been worth then", not what was
+// physically owned. `coverage` is the share of currently-valued cards that had
+// a mark by then — low coverage means the figure is understated.
+export function reconstructSnapshot(cards: CollectionCard[], marks: HistoryMark[], month: string): Snapshot {
+  const end = monthEndIso(month);
+  const latest = new Map<string, { v: number; at: string }>();
+  for (const m of marks) {
+    if (!m.set_slug || m.created_at > end) continue;
+    const k = `${m.set_slug}|${m.key}`;
+    const cur = latest.get(k);
+    if (!cur || m.created_at > cur.at) latest.set(k, { v: Number(m.market_value), at: m.created_at });
+  }
+  const priced = cards.filter(c => c.value > 0);
+  const hit = priced.filter(c => latest.has(c.histKey)).length;
+  const coverage = priced.length ? hit / priced.length : 0;
+  return buildSnapshot(cards, month, 'reconstructed', c => latest.get(c.histKey)?.v ?? null, coverage);
+}
+
+export type Mover = {
+  key: string;
+  name: string;
+  condition: string;
+  setTitle: string;
+  kind: 'repriced' | 'added' | 'removed';
+  from: number;
+  to: number;
+  delta: number;
+  pct: number | null;
+};
+
+export type Drivers = {
+  repricedUp: number;
+  repricedDown: number;
+  added: number;
+  removed: number;
+  net: number;
+  upCount: number;
+  downCount: number;
+  addedCount: number;
+  removedCount: number;
+};
+
+// What changed between two snapshots, card by card.
+export function diffSnapshots(prev: Snapshot, cur: Snapshot): { movers: Mover[]; drivers: Drivers } {
+  const movers: Mover[] = [];
+  const d: Drivers = { repricedUp: 0, repricedDown: 0, added: 0, removed: 0, net: 0, upCount: 0, downCount: 0, addedCount: 0, removedCount: 0 };
+  for (const [key, e] of Object.entries(cur.card_values)) {
+    const p = prev.card_values[key];
+    if (!p) {
+      movers.push({ key, name: e[1], condition: e[2], setTitle: e[3], kind: 'added', from: 0, to: e[0], delta: e[0], pct: null });
+      d.added += e[0]; d.addedCount++;
+    } else if (Math.abs(e[0] - p[0]) >= 0.005) {
+      const delta = e[0] - p[0];
+      movers.push({ key, name: e[1], condition: e[2], setTitle: e[3], kind: 'repriced', from: p[0], to: e[0], delta, pct: p[0] ? (delta / p[0]) * 100 : null });
+      if (delta > 0) { d.repricedUp += delta; d.upCount++; } else { d.repricedDown += delta; d.downCount++; }
+    }
+  }
+  for (const [key, p] of Object.entries(prev.card_values)) {
+    if (cur.card_values[key]) continue;
+    movers.push({ key, name: p[1], condition: p[2], setTitle: p[3], kind: 'removed', from: p[0], to: 0, delta: -p[0], pct: null });
+    d.removed += -p[0]; d.removedCount++;
+  }
+  d.net = cur.total_value - prev.total_value;
+  return { movers, drivers: d };
+}
