@@ -6,7 +6,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
 import { getSellerStatus } from '@/lib/sellerGuard';
-import { applyOwnedTransition } from '@/lib/inventory';
+import { applyOwnedTransition, setItemsOwned } from '@/lib/inventory';
+import { ITEMS_SLUG } from '@/lib/itemsSource';
 import { replaceImageBg } from '@/lib/collageBg';
 import { syncClaimListing } from '@/lib/listingStatusSync';
 import { claimPrice, parseSoldPriceInput } from '@/lib/claimPrice';
@@ -492,6 +493,8 @@ export default function ManageClaimSalePage() {
       bySet.set(slug, set);
     }
     for (const [slug, cards] of bySet.entries()) {
+      // Singles & Items lines carry the item id as their "card number".
+      if (slug === ITEMS_SLUG) { await setItemsOwned(supabase, { userId: userId, itemIds: [...cards], owned: owned }); continue; }
       const { data: setRow } = await supabase
         .from('sets').select('rows').eq('user_id', userId).eq('slug', slug).maybeSingle();
       if (!setRow) continue;

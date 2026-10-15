@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { getSellerStatus } from '@/lib/sellerGuard';
-import { applyOwnedTransition } from '@/lib/inventory';
+import { applyOwnedTransition, setItemsOwned } from '@/lib/inventory';
+import { ITEMS_SLUG } from '@/lib/itemsSource';
 import { syncAuctionListings } from '@/lib/listingStatusSync';
 import { replaceImageBg } from '@/lib/collageBg';
 import SCLogo from '@/components/SCLogo';
@@ -243,6 +244,8 @@ function NewFbAuctionPageInner() {
         bySet.set(slug, set);
       }
       for (const [slug, cards] of bySet.entries()) {
+        // Singles & Items lines carry the item id as their "card number".
+        if (slug === ITEMS_SLUG) { await setItemsOwned(supabase, { userId: user.id, itemIds: [...cards], owned: false }); continue; }
         const { data: setRow } = await supabase
           .from('sets').select('rows').eq('user_id', user.id).eq('slug', slug).maybeSingle();
         if (!setRow) continue;

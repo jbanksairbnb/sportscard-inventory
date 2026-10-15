@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { ITEMS_SLUG } from '@/lib/itemsSource'
 
 type Row = Record<string, unknown>
 
@@ -181,6 +182,28 @@ export async function claimPurchaseIntoBuyerSets(
   return totalUpdated;
 }
 
+// Set `owned` on Singles & Items lines — the equivalent of flipping Owned on a
+// set row. Items live in their own table (one row per line), so there is no
+// jsonb blob to rewrite: the listing's source_row_id (or, for flows that only
+// carry a "card number", the item id stored there) is the item's id.
+// Returns true if any line changed.
+export async function setItemsOwned(
+  supabase: SupabaseClient,
+  args: { userId: string; itemIds: string[]; owned: boolean },
+): Promise<boolean> {
+  const ids = args.itemIds.filter(Boolean)
+  if (!args.userId || ids.length === 0) return false
+  const { data, error } = await supabase
+    .from('collection_items')
+    .update({ owned: args.owned, updated_at: new Date().toISOString() })
+    .eq('user_id', args.userId)
+    .in('id', ids)
+    .neq('owned', args.owned)
+    .select('id')
+  if (error) return false
+  return (data?.length ?? 0) > 0
+}
+
 // Set the `Owned` flag on a row inside a set (jsonb rows[] in `sets`).
 // Used by the auction "go live" flow and by marketplace purchase / cancel
 // flows to keep a seller's set inventory in sync with active sales.
@@ -194,6 +217,11 @@ export async function markSourceRowOwned(
 ): Promise<boolean> {
   const { sellerUserId, setSlug, cardNumber, owned, rowId } = args
   if (!sellerUserId || !setSlug || (!rowId && !cardNumber)) return false
+
+  // A Singles & Items listing: no set, just the item line it came from.
+  if (setSlug === ITEMS_SLUG) {
+    return setItemsOwned(supabase, { userId: sellerUserId, itemIds: [rowId || cardNumber], owned })
+  }
 
   const { data: set } = await supabase
     .from('sets')

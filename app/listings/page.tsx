@@ -494,6 +494,10 @@ function ListingsPageContent() {
     draft.brand = searchParams.get('brand') || '';
     draft.card_number = searchParams.get('card') || '';
     draft.player = searchParams.get('player') || '';
+    // Singles & Items carry a free-text description (a box, an autograph, a
+    // variation) that has no home in the year/brand/card fields.
+    const descParam = searchParams.get('description');
+    if (descParam) draft.description = descParam;
     const ct = searchParams.get('condition_type');
     if (ct === 'graded') {
       draft.condition_type = 'graded';
@@ -1248,10 +1252,12 @@ function ListingsPageContent() {
                         )}
                         {l.source_set_slug && (
                           <Link
-                            href={`/set/${encodeURIComponent(l.source_set_slug)}${l.source_row_id ? `#row-${l.source_row_id}` : ''}`}
-                            title="Open the source row in its set"
+                            href={l.source_set_slug === 'items'
+                              ? '/items'
+                              : `/set/${encodeURIComponent(l.source_set_slug)}${l.source_row_id ? `#row-${l.source_row_id}` : ''}`}
+                            title={l.source_set_slug === 'items' ? 'Open this item in Singles & Items' : 'Open the source row in its set'}
                             style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--teal)', textDecoration: 'none', padding: '3px 6px', borderRadius: 4, border: '1px dashed var(--teal)' }}>
-                            ↗ View in set
+                            {l.source_set_slug === 'items' ? '↗ View in items' : '↗ View in set'}
                           </Link>
                         )}
                       </div>

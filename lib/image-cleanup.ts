@@ -99,7 +99,7 @@ export async function pruneCardImages(
 
 /**
  * Every card-image path this user still points at: set rows (including the
- * archived-image slots a "Not Owned" card keeps), listing photos, and the
+ * archived-image slots a "Not Owned" card keeps), listing photos, item photos, and the
  * profile avatar / cover / favorite-card slots.
  *
  * Listings of EVERY status are scanned, `removed` included — a soft-deleted
@@ -119,6 +119,21 @@ async function collectReferencedPaths(
   const { data: listings } = await supabase.from('listings').select('photos').eq('user_id', userId);
   for (const listing of (listings || []) as Array<{ photos: string[] | null }>) {
     for (const photo of listing.photos || []) if (photo) urls.push(photo);
+  }
+
+  // Singles & Items photos. A listing created from an item copies its photo
+  // URL, so deleting that listing (or a set row sharing the object) must not
+  // take the item's picture with it. A missing table means there are none; any
+  // other failure aborts the prune (the caller treats a throw as "remove
+  // nothing") rather than sweeping on an incomplete picture of what's in use.
+  const { data: items, error: itemsErr } = await supabase
+    .from('collection_items')
+    .select('image_1, image_2')
+    .eq('user_id', userId);
+  if (itemsErr && !/does not exist|schema cache|relation|column/i.test(itemsErr.message)) throw new Error(itemsErr.message);
+  for (const it of (items || []) as Array<{ image_1: string | null; image_2: string | null }>) {
+    if (it.image_1) urls.push(it.image_1);
+    if (it.image_2) urls.push(it.image_2);
   }
 
   const { data: profile } = await supabase

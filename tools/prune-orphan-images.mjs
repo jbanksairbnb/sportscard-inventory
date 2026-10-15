@@ -10,6 +10,7 @@
 // What counts as "referenced":
 //   - sets.rows[].'Image 1'/'Image 2'/'Image 3' and their '… Archived' twins
 //   - listings.photos[]           (every status, 'removed' included)
+//   - collection_items.image_1/image_2   (Singles & Items)
 //   - fb_claim_sale_lots.collage_url / back_collage_url
 //   - user_profiles.avatar_url / cover_url / favorite_cards[]
 // A thumbnail (`*.thumb.jpg`) is referenced whenever its original is, since
@@ -171,6 +172,18 @@ async function collectReferenced() {
   await eachRow('listings', 'photos', (l) => {
     for (const photo of l.photos || []) add(photo);
   });
+  // Singles & Items photos. Skipped only when the table doesn't exist yet (no
+  // such photos can exist); any other failure aborts, because sweeping on a
+  // partial reference list would delete live images.
+  try {
+    await eachRow('collection_items', 'image_1, image_2', (item) => {
+      add(item.image_1);
+      add(item.image_2);
+    });
+  } catch (err) {
+    if (!/does not exist|schema cache|relation/i.test(String(err.message))) throw err;
+    console.warn(`  ! skipping collection_items: ${err.message}`);
+  }
   await eachRow('user_profiles', 'avatar_url, cover_url, favorite_cards', (p) => {
     add(p.avatar_url);
     add(p.cover_url);
