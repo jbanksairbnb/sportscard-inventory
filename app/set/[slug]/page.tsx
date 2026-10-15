@@ -8,9 +8,8 @@ import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
-import ValueSetModal from '@/components/ValueSetModal';
 import EbayHitsFeed from '@/components/EbayHitsFeed';
-import { sweepTargetsForSet, sweepDescriptorForRow, type SweepTarget } from '@/lib/sweepTargets';
+import { descriptorForSetRow } from '@/lib/cardDescriptor';
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
 import { generateWantListPdf, downloadPdf } from "@/lib/pdf/wantListPdf";
 import { applyOwnedTransition, ensureRowIds } from "@/lib/inventory";
@@ -672,27 +671,14 @@ export default function SetEditorPage() {
   const [listingsByRowId, setListingsByRowId] = useState<Record<string, { id: string; status: string }>>({});
   const [autoNumStart, setAutoNumStart] = useState('001');
   function descriptorForRow(row: Record<string, unknown>): CardDescriptor {
-    return sweepDescriptorForRow(row, {
+    return descriptorForSetRow(row, {
       slug,
       title: datasetTitle,
       year: year ? Number(year) || null : null,
       brand: brand || null,
     });
   }
-  // Rows the sweep can actually price — owned, graded with both a company and
-  // a grade, and carrying enough identity to look up. The gates and their
-  // reasoning live in lib/sweepTargets.ts, shared with the collection-wide
-  // sweep so the two can never disagree about which cards get priced.
-  const sweepTargets: SweepTarget[] = useMemo(
-    () => sweepTargetsForSet(
-      { slug, title: datasetTitle, year: year ? Number(year) || null : null, brand: brand || null },
-      rows,
-    ),
-    [rows, year, brand, slug, datasetTitle],
-  );   // eslint-disable-line react-hooks/exhaustive-deps
-
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
-  const [valueSetOpen, setValueSetOpen] = useState(false);
   const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
   const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
 
@@ -1918,12 +1904,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               <button type="button" onClick={addRow} className="btn btn-ghost btn-sm">
                 + Add row
               </button>
-              {sweepTargets.length > 0 && (
-                <button type="button" onClick={() => setValueSetOpen(true)} className="btn btn-ghost btn-sm"
-                  title="Price the graded cards you own in this set from CardSight comps — CardSight's sold data covers graded cards only">
-                  ⇊ Value graded cards
-                </button>
-              )}
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                 Appends a blank row to the end of the table — fill in any fields you want.
               </span>
@@ -2053,27 +2033,6 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           // don't lose the change to a stale-rows blur formatter on the next tick.
           onChangeCell(idx, 'Value', toCurrency(value.toFixed(2)));
           // A commit may have just added a history point — refresh trend badges.
-          loadValueTrends();
-        }}
-      />
-      <ValueSetModal
-        open={valueSetOpen}
-        onClose={() => { setValueSetOpen(false); loadValueTrends(); }}
-        userId={userId || ''}
-        targets={sweepTargets}
-        valueNote="Remember to save the set to keep the new values."
-        onApply={(accepted) => {
-          // One state update for the whole sweep. Applying them one at a time
-          // would have each write race the previous render's stale rows.
-          setRows(prev => {
-            const next = [...prev];
-            for (const { target, value } of accepted) {
-              const i = target.rowIndex;
-              if (!next[i]) continue;
-              next[i] = { ...next[i], Value: toCurrency(value.toFixed(2)) };
-            }
-            return next;
-          });
           loadValueTrends();
         }}
       />

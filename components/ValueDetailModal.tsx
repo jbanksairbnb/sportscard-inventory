@@ -9,7 +9,7 @@
 // time, the comps behind the latest analysis, and the full history log.
 
 import React, { useMemo } from 'react';
-import { ValueHistoryRow, AnalysisRow, trendFromRows, dedupeByPosition } from '@/lib/cardValueHistory';
+import { ValueHistoryRow, AnalysisRow, trendFromRows, dedupeByPosition, collapseUnchanged } from '@/lib/cardValueHistory';
 
 // Mirrors RESEARCH_SOURCES in MarketResearchModal — kept inline so the view
 // page doesn't pull the editor (and its Supabase writes) into its bundle.
@@ -157,8 +157,11 @@ export default function ValueDetailModal({ open, onClose, cardTitle, conditionLa
 
   if (!open) return null;
 
+  // One entry per price held: re-marks at an unchanged value fold into the
+  // entry that set it, so the chart and log show movement, not repetition.
+  const runs = collapseUnchanged(chrono);
   const latest = chrono.length > 0 ? chrono[chrono.length - 1] : null;
-  const chartPoints = chrono.map(h => ({ value: h.market_value, date: h.created_at }));
+  const chartPoints = runs.map(r => ({ value: r.mark.market_value, date: r.mark.created_at }));
 
   return (
     <div onClick={onClose} style={{
@@ -234,11 +237,12 @@ export default function ValueDetailModal({ open, onClose, cardTitle, conditionLa
             {/* Full history log (newest first) */}
             <section>
               <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 8 }}>
-                Value History <span style={{ color: 'var(--ink-mute)' }}>({chrono.length})</span>
+                Value History <span style={{ color: 'var(--ink-mute)' }}>({runs.length})</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {chrono.slice().reverse().map((h, i, arr) => {
-                  const older = arr[i + 1]; // next in newest-first order is the older commit
+                {runs.slice().reverse().map((run, i, arr) => {
+                  const h = run.mark;
+                  const older = arr[i + 1]?.mark; // next in newest-first order is the older value
                   const delta = older ? h.market_value - older.market_value : null;
                   const pct = older && older.market_value !== 0 ? (delta! / older.market_value) * 100 : null;
                   const dir: 'up' | 'down' | 'flat' = delta === null ? 'flat'
@@ -252,6 +256,12 @@ export default function ValueDetailModal({ open, onClose, cardTitle, conditionLa
                         <span className="display" style={{ fontSize: 16, color: 'var(--orange)', fontWeight: 700 }}>
                           {fmtMoney(h.market_value)}
                         </span>
+                        {run.count > 1 && (
+                          <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}
+                            title={`${run.count} marks at this value`}>
+                            unchanged through {fmtDate(run.through)} · {run.count} marks
+                          </span>
+                        )}
                         {delta !== null && (
                           <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: trendColor(dir) }}>
                             {trendArrow(dir)}{' '}

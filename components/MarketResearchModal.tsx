@@ -4,23 +4,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import {
   AnalysisRow, AnalysisSnapshot, ValueHistoryRow,
-  normalizeAnalysis, contentHash, trendFromRows, cardValueKey, dedupeByPosition,
-  cardsightDedupeKey, dataPointHasUserContent, analysisFromDataPoints,
+  normalizeAnalysis, contentHash, trendFromRows, cardValueKey, dedupeByPosition, markDedupeKey, collapseUnchanged,
+  dataPointHasUserContent, analysisFromDataPoints,
 } from '@/lib/cardValueHistory';
 import { insertValueHistoryRow } from '@/lib/recordValueMark';
-import type { CompsResponse } from '@/app/api/cardsight/comps/route';
 
 // Sources we offer in the dropdown. 'other' lets the user free-form a label.
 export const RESEARCH_SOURCES = [
   { value: 'ebay_sold_auction', label: 'eBay Sold Auctions' },
   { value: 'ebay_sold_bin', label: 'eBay Sold Buy-It-Now' },
-  // Auto-pulled comps get their own sources rather than reusing the eBay
-  // values. They ARE eBay sales, but the provenance matters: a row the user
-  // found and vetted is a different claim from one a machine dropped in, and
-  // conflating them would hide which is which on a saved analysis. The two
-  // values keep the ask/bid split visible in the table itself.
-  { value: 'cardsight_auction', label: 'CardSight · eBay auction' },
-  { value: 'cardsight_bin', label: 'CardSight · eBay Buy-It-Now' },
   { value: 'vcp', label: 'VCP' },
   { value: 'card_ladder', label: 'Card Ladder' },
   { value: 'beckett', label: 'Beckett' },
@@ -203,342 +195,6 @@ function rowsFromSnapshot(snap: AnalysisSnapshot, defaults: { company: string; g
 
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
-}
-
-// Summary of a CardSight pull: what it matched, how comparable the comps are,
-// and the shape of the sale prices behind them.
-//
-// The sample size is given as much room as the median deliberately. In our
-// era a specific grade often has only a handful of sales in CardSight's whole
-// window — a 1968 Ryan PSA 6 had exactly one — and a median of n=1 presented
-// like a market price is the failure mode this panel exists to prevent.
-function CompsPanel({ comps, onImportHistory, importing, imported, storedMonths }: {
-  comps: CompsResponse;
-  onImportHistory: () => void;
-  importing: boolean;
-  imported: number | null;
-  /** Months (YYYY-MM) this card already has a CardSight mark for. */
-  storedMonths: Set<string>;
-}) {
-  const s = comps.stats;
-  // Months CardSight has that this card's chart doesn't.
-  const missingMonths = comps.history.filter(p => !storedMonths.has(p.month));
-  const alreadyStored = comps.history.length - missingMonths.length;
-  const tierLabel: Record<string, string> = {
-    exact: 'exact grade match',
-    'same-grade': 'same grade, different grader',
-    'adjacent-grade': 'within a half grade',
-    ungraded: 'ungraded sales',
-  };
-  const thin = !!s && s.n < 5;
-  return (
-    <div style={{
-      border: '1.5px solid var(--rule)', borderRadius: 8, padding: '12px 14px',
-      background: 'var(--paper)', marginBottom: 16, fontSize: 12.5,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-        <strong style={{ color: 'var(--plum)' }}>CardSight comps</strong>
-        {comps.matched && (
-          <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-            {comps.matched.year} {comps.matched.release} · {comps.matched.set} · {comps.matched.name}
-          </span>
-        )}
-        {comps.tier && (
-          <span className="chip chip-gold" style={{ fontSize: 10 }}>
-            {tierLabel[comps.tier] ?? comps.tier}
-          </span>
-        )}
-      </div>
-
-      {s ? (
-        <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 6 }}>
-          <Stat
-            label={`Sales (${comps.saleWindowDays ?? 30}d)`}
-            value={String(s.n)} warn={thin}
-          />
-          <Stat label="Median" value={fmtMoney(s.median)} />
-          <Stat label="Mean" value={fmtMoney(s.mean)} />
-          <Stat label="Middle 50%" value={`${fmtMoney(s.p25)} – ${fmtMoney(s.p75)}`} />
-          <Stat label="Range" value={`${fmtMoney(s.min)} – ${fmtMoney(s.max)}`} />
-        </div>
-      ) : (
-        <div style={{ color: 'var(--ink-mute)' }}>
-          No completed sales in the last {comps.saleWindowDays ?? 30} days.
-        </div>
-      )}
-
-      {/* The longer view, and deliberately outside the block above: the comps
-          window is a strict 30 days, so a vintage card routinely has no current
-          sales at all, and that is exactly when the monthly archive is worth
-          reading. It is not a substitute for the stats — it is history, labelled
-          as history. See monthlySeries(): a card with one sale a month gets no
-          line. */}
-      {comps.monthly && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--rule)' }}>
-          <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)', marginBottom: 4 }}>
-            Monthly median · archive
-          </div>
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-            {comps.monthly.map(m => (
-              <span key={m.month} className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
-                {m.month} <strong style={{ color: 'var(--plum)' }}>{fmtMoney(m.stats.median)}</strong>
-                <span style={{ color: 'var(--ink-mute)' }}> ({m.stats.n})</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Storing history is offered only for months that aren't on the chart
-          yet. The import has always been idempotent — a month already stored
-          hits the dedupe key and is skipped — but the button still counted
-          every month CardSight returned, so a card whose history was fully
-          imported kept offering to save it again and answered "Saved 0". An
-          action with nothing to do shouldn't be on screen. */}
-      {missingMonths.length > 0 && (
-        <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onImportHistory} disabled={importing}
-            className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
-            {importing ? 'Saving…' : `↳ Save ${missingMonths.length} month${missingMonths.length === 1 ? '' : 's'} to price history`}
-          </button>
-          <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-            {imported === null
-              ? alreadyStored > 0
-                ? `${alreadyStored} of ${comps.history.length} already on the chart; one mark per remaining month, dated to the month\u2019s end.`
-                : 'One mark per month of completed sales, dated to the month\u2019s end.'
-              : `Saved ${imported} month${imported === 1 ? '' : 's'}.`}
-          </span>
-        </div>
-      )}
-      {/* Nothing left to import, but the months exist — say so once, so the
-          absence of the button reads as "done" rather than as a missing
-          feature. */}
-      {comps.history.length > 0 && missingMonths.length === 0 && (
-        <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)', fontSize: 11, color: 'var(--ink-mute)' }}>
-          {imported !== null && imported > 0
-            ? `Saved ${imported} month${imported === 1 ? '' : 's'} — all ${comps.history.length} of CardSight\u2019s months are on this card\u2019s price chart.`
-            : `All ${comps.history.length} month${comps.history.length === 1 ? '' : 's'} CardSight has are already on this card\u2019s price chart.`}
-        </div>
-      )}
-
-      {comps.active && <ActiveMarketPanel active={comps.active} />}
-
-      {comps.note && (
-        <div style={{ marginTop: 8, fontSize: 11.5, color: thin ? 'var(--rust)' : 'var(--ink-soft)', lineHeight: 1.5 }}>
-          {comps.note}
-        </div>
-      )}
-      {comps.lastSale && (
-        <div className="mono" style={{ marginTop: 6, fontSize: 10.5, color: 'var(--ink-mute)' }}>
-          Last sale {new Date(comps.lastSale).toLocaleDateString()} · CardSight&rsquo;s archive currently reaches back about five months.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// "2d 4h", or "ended" for one the crawl caught on its way out.
-function endsIn(iso: string | null): string {
-  if (!iso) return '—';
-  const ms = Date.parse(iso) - Date.now();
-  if (!Number.isFinite(ms)) return '—';
-  if (ms <= 0) return 'ending';
-  const h = Math.floor(ms / 3_600_000);
-  return h < 24 ? `ends in ${h}h` : `ends in ${Math.floor(h / 24)}d ${h % 24}h`;
-}
-
-function closingSoon(iso: string | null): boolean {
-  if (!iso) return false;
-  const ms = Date.parse(iso) - Date.now();
-  return Number.isFinite(ms) && ms > 0 && ms < 24 * 3_600_000;
-}
-
-// The live shelf — deliberately below the sold stats and outside the
-// comps table, because none of it is evidence of value.
-//
-// It answers the seller's question instead of the collector's: not "what is
-// this worth" but "if I listed it tomorrow, what am I up against, and what
-// price has the market already walked past?" The unsold-days figure is the
-// sharpest thing here — an ask we have watched sit for weeks is a price buyers
-// have declined, which no amount of sold data tells you.
-function ActiveMarketPanel({ active }: { active: NonNullable<CompsResponse['active']> }) {
-  const [open, setOpen] = useState(false);
-  const g = active.guidance;
-  const premium = active.premiumPct;
-  return (
-    <div style={{
-      marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--rule)',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-        <strong style={{ color: 'var(--plum)', fontSize: 12.5 }}>Live market</strong>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
-          {active.n} asking{active.liveConfirmed > 0 && ` (${active.liveConfirmed} confirmed live)`}
-          {active.auctions.length > 0 && ` · ${active.auctions.length} at auction`} · not comps
-        </span>
-        {premium !== null && (
-          <span className="chip" style={{
-            fontSize: 10, background: 'var(--paper)', border: '1px solid var(--rule)', color: 'var(--ink-soft)',
-          }}>
-            asks run {premium >= 0 ? '+' : ''}{premium.toFixed(0)}% vs sold
-          </span>
-        )}
-      </div>
-
-      {active.stats && (
-        <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginBottom: 8 }}>
-          <Stat label="Cheapest ask" value={fmtMoney(active.stats.min)} />
-          <Stat label="Median ask" value={fmtMoney(active.stats.median)} />
-          <Stat label="Highest ask" value={fmtMoney(active.stats.max)} />
-          {active.stale.n > 0 && (
-            <Stat label="Unsold 14d+" value={`${active.stale.n} of ${active.n}`} warn />
-          )}
-        </div>
-      )}
-
-      {/* Three prices a seller can actually act on. */}
-      <div style={{
-        display: 'flex', gap: 0, flexWrap: 'wrap', border: '1px solid var(--rule)',
-        borderRadius: 6, overflow: 'hidden', marginBottom: 8,
-      }}>
-        {([
-          ['Price to sell', g.priceToMove, 'At or under the shelf, near what the card actually fetches'],
-          ['Fair value', g.fairValue, 'The median of completed sales'],
-          ['Patient ask', g.topOfMarket, 'Where the optimists are listed — reachable, expect to wait'],
-        ] as const).map(([label, value, hint]) => (
-          <div key={label} title={hint} style={{
-            flex: '1 1 130px', padding: '7px 10px', background: 'var(--paper)',
-            borderRight: '1px solid var(--rule)',
-          }}>
-            <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)' }}>
-              {label}
-            </div>
-            <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--plum)' }}>
-              {value === null ? '—' : fmtMoney(value)}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* With the comps window held at a strict 30 days, an unanchored fair
-          value is the normal state for vintage rather than a failure — but a
-          seller reading two ask-derived prices around an em dash deserves to
-          know which leg is missing. */}
-      {g.fairValue === null && (
-        <div style={{ fontSize: 11.5, color: 'var(--ink-soft)', lineHeight: 1.5, marginBottom: 6 }}>
-          Fair value is blank because nothing comparable has sold in the last 30 days. The two
-          prices either side of it come from the live shelf, so they say what sellers are asking,
-          not what buyers have paid.
-        </div>
-      )}
-
-      {active.stale.n > 0 && (
-        <div style={{ fontSize: 11.5, color: 'var(--rust)', lineHeight: 1.5, marginBottom: 6 }}>
-          {active.stale.n === 1 ? 'One ask has' : `${active.stale.n} asks have`} sat unsold for
-          {' '}{active.stale.maxDaysListed} days or more
-          {active.stale.median !== null && <> (median {fmtMoney(active.stale.median)})</>} — prices
-          buyers have already passed on.
-        </div>
-      )}
-
-      {/* The only forward-looking thing on this page. A sold comp says what the
-          card fetched last month; an auction with bids on it and two days to
-          run is demand still being decided, and it is the one number here that
-          will be different tomorrow. Worth a diary entry either way — as a
-          buyer or as someone about to list against it. */}
-      {active.auctions.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          <div className="mono" style={{ fontSize: 9.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-mute)', marginBottom: 4 }}>
-            Auctions running now
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {active.auctions.slice(0, 5).map((a, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', fontSize: 11.5 }}>
-                <span className="mono" style={{ fontWeight: 700, color: 'var(--orange)', minWidth: 72 }}>
-                  {fmtMoney(a.price)}
-                </span>
-                <span className="mono" style={{ color: 'var(--ink-mute)', minWidth: 60 }}>
-                  {a.bidCount === null ? '—' : `${a.bidCount} bid${a.bidCount === 1 ? '' : 's'}`}
-                </span>
-                <span className="mono" style={{ color: closingSoon(a.endDate) ? 'var(--rust)' : 'var(--ink-soft)', minWidth: 84 }}>
-                  {endsIn(a.endDate)}
-                </span>
-                {a.url
-                  ? <a href={a.url} target="_blank" rel="noreferrer" style={{ color: 'var(--plum)', flex: '1 1 200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title || 'view'}</a>
-                  : <span style={{ color: 'var(--ink-soft)' }}>{a.title || '—'}</span>}
-              </div>
-            ))}
-          </div>
-          {active.auctions.length > 5 && (
-            <div style={{ fontSize: 11, color: 'var(--ink-mute)', marginTop: 3 }}>
-              +{active.auctions.length - 5} more running.
-            </div>
-          )}
-        </div>
-      )}
-
-      {active.n > 0 && (
-        <button type="button" onClick={() => setOpen(o => !o)} className="btn btn-ghost btn-sm"
-          style={{ fontSize: 11 }}>
-          {open ? 'Hide listings' : `Show all ${active.n} listings`}
-        </button>
-      )}
-
-      {open && (
-        <div style={{ overflowX: 'auto', marginTop: 8 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
-            <thead>
-              <tr style={{ textAlign: 'left', color: 'var(--ink-mute)' }}>
-                <th style={detailTh}>Ask</th>
-                <th style={detailTh}>Grade</th>
-                <th style={detailTh}>Condition</th>
-                <th style={detailTh}>On the market</th>
-                <th style={detailTh}>Listing</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.listings.map((l, i) => (
-                <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
-                  <td className="mono" style={{ ...detailTd, fontWeight: 700, color: 'var(--orange)' }}>
-                    {fmtMoney(l.price)}
-                    {l.priceCut > 0 && (
-                      <span style={{ fontWeight: 400, color: 'var(--ink-mute)' }}> ↓{fmtMoney(l.priceCut)}</span>
-                    )}
-                  </td>
-                  <td className="mono" style={detailTd}>
-                    {[l.company, l.grade].filter(Boolean).join(' ') || '—'}
-                  </td>
-                  <td className="mono" style={{ ...detailTd, color: 'var(--ink-soft)' }}>
-                    {l.condition ?? '—'}
-                  </td>
-                  <td className="mono" style={{ ...detailTd, color: l.staleDays && l.staleDays >= 14 ? 'var(--rust)' : undefined }}>
-                    {l.staleDays === null ? 'just listed' : `${l.staleDays}d unsold`}
-                    {/* Confirmed against today's shelf, versus last seen in a
-                        crawl and assumed to still be up. Different confidence,
-                        so they should not look the same. */}
-                    {l.confirmed && <span style={{ color: 'var(--ink-mute)' }}> · live</span>}
-                  </td>
-                  <td style={{ ...detailTd, maxWidth: 300 }}>
-                    {l.url
-                      ? <a href={l.url} target="_blank" rel="noreferrer" style={{ color: 'var(--plum)' }}>{l.title || 'view'}</a>
-                      : <span style={{ color: 'var(--ink-soft)' }}>{l.title || '—'}</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Stat({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
-  return (
-    <div>
-      <div className="mono" style={{ fontSize: 10, letterSpacing: '0.06em', color: 'var(--ink-mute)', textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: warn ? 'var(--rust)' : 'var(--plum)' }}>{value}</div>
-    </div>
-  );
 }
 
 function trendArrow(dir: 'up' | 'down' | 'flat'): string {
@@ -929,13 +585,6 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // so the next commit records the lineage.
   const [derivedFromId, setDerivedFromId] = useState<string | null>(null);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
-  // CardSight comp pull — result of the last "Pull comps" click, kept so the
-  // stats panel survives after the rows have been edited.
-  const [comps, setComps] = useState<CompsResponse | null>(null);
-  const [compsLoading, setCompsLoading] = useState(false);
-  const [compsError, setCompsError] = useState<string | null>(null);
-  const [importingHistory, setImportingHistory] = useState(false);
-  const [importedCount, setImportedCount] = useState<number | null>(null);
   const cardIsGraded = !!card.grading_company
     && card.grading_company.toLowerCase() !== 'raw'
     && !!card.grade;
@@ -1017,11 +666,6 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setDerivedFromId(null);
       setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
       setNotes('');
-      // A pull belongs to the card it was fetched for — leaving the panel up
-      // across a reopen would show one card's comps above another's table.
-      setComps(null);
-      setCompsError(null);
-      setImportedCount(null);
       setAutoSaveTick('idle');
       setHistoryError(null);
       if (own.length > 0) {
@@ -1219,7 +863,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // Spread 100% evenly across every priced row.
   //
   // Pulling comps hands back a table already balanced to 100%, so adding a row
-  // of your own to it — the sale you found that CardSight missed, a VCP figure,
+  // of your own to it — a sale you found elsewhere, a VCP figure,
   // your own read — necessarily breaks the total and locks Save until you
   // re-type every weight by hand. One click gets back to a valid, unopinionated
   // starting point, and hand-tuning from there is the same job it always was.
@@ -1230,142 +874,6 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setRows(prev => evenWeights(prev));
   }
 
-  // Import CardSight's monthly medians as value-history marks.
-  //
-  // Each month becomes one immutable mark dated to that month's most recent
-  // sale, so the price-history list and trend badge read as a real timeline
-  // rather than a stack of rows sharing today's date. Marks are tagged
-  // 'cardsight' so they stay distinguishable from the owner's own research and
-  // typed values — this is the market's number, not their judgement of it.
-  //
-  // Re-running is safe: months already imported for this card are skipped, so
-  // clicking twice, or coming back next month, only adds what's new.
-  async function importHistory() {
-    if (!userId || !comps?.history?.length) return;
-    setImportingHistory(true);
-    setCompsError(null);
-    try {
-      // Skip months we can already see. This is the fast path, not the
-      // guarantee — the unique index on dedupe_key is what actually stops a
-      // duplicate, because the case that produced them was precisely this
-      // state not knowing what was stored. See migration 20260908.
-      const already = new Set(
-        valueHistory
-          .filter(h => h.mark_kind === 'cardsight')
-          .map(h => h.created_at.slice(0, 7)),
-      );
-      const pending = comps.history.filter(p => !already.has(p.month));
-      if (!pending.length) { setImportedCount(0); return; }
-
-      const written: ValueHistoryRow[] = [];
-      for (const point of pending) {
-        const analysisRows: AnalysisRow[] = point.rows.map((r, i) => ({
-          position: i,
-          source: r.source,
-          source_label: r.source_label,
-          grade_company: r.grade_company || null,
-          grade_value: r.grade_value || null,
-          sale_date: r.sale_date || null,
-          price: r.price,
-          // The comps behind a median are evidence, not a weighting — the
-          // median already IS the value, so no row claims a share of it.
-          weight_pct: null,
-          url: r.url || null,
-          notes: r.notes || null,
-        }));
-        const value = Math.round(point.stats.median * 100) / 100;
-        const auctions = point.rows.filter(r => r.listing_type === 'auction').length;
-        const asks = point.rows.length - auctions;
-        const mix = [
-          auctions ? `${auctions} auction${auctions === 1 ? '' : 's'}` : '',
-          asks ? `${asks} ask${asks === 1 ? '' : 's'}` : '',
-        ].filter(Boolean).join(' + ');
-        const noteText = `CardSight ${point.month}: weighted median of ${mix} (auctions count double)`;
-        const snapshot: AnalysisSnapshot = { notes: noteText, market_value: value, rows: analysisRows };
-        const { row, error, duplicate } = await insertValueHistoryRow({
-          user_id: userId,
-          card_year: card.year, card_brand: card.brand, card_number: card.card_number, card_player: card.player,
-          card_grade: card.grade, card_grading_company: card.grading_company, card_raw_grade: card.raw_grade,
-          listing_id: card.listing_id ?? null, set_slug: card.set_slug ?? null, set_card_number: card.set_card_number ?? null,
-          market_value: value,
-          content_hash: contentHash(normalizeAnalysis(analysisRows, noteText, value)),
-          snapshot,
-          mark_kind: 'cardsight' as const,
-          dedupe_key: cardsightDedupeKey({
-            year: card.year, brand: card.brand, card_number: card.card_number,
-            grade: card.grade, grading_company: card.grading_company, raw_grade: card.raw_grade,
-          }, point.month),
-          // File the mark at the close of the month it describes, so the chart
-          // reads as an evenly spaced monthly series. The month's actual last
-          // sale is still in the snapshot, where it's the more useful fact.
-          created_at: `${point.monthEnd}T12:00:00.000Z`,
-          source_session_id: null,
-          derived_from_id: null,
-        });
-        // A duplicate means the database already had this month. Nothing to
-        // report and nothing to retry — keep going through the rest.
-        if (duplicate) continue;
-        if (error) { setCompsError(error); break; }
-        if (row) written.push(row);
-      }
-      if (written.length) {
-        setValueHistory(prev =>
-          [...written, ...prev].sort((a, b) => b.created_at.localeCompare(a.created_at)),
-        );
-      }
-      setImportedCount(written.length);
-    } finally {
-      setImportingHistory(false);
-    }
-  }
-
-  // Pull comps from CardSight and drop them in as weighted rows.
-  //
-  // This REPLACES the current rows rather than appending. Appending would
-  // silently break the 100% total the user may have already balanced, and
-  // half-pulled tables are confusing; a fresh pull is a fresh starting point
-  // they then adjust. Existing analyses are untouched — they live in the
-  // history list, and the user has to click to load one.
-  async function pullComps() {
-    setCompsLoading(true);
-    setCompsError(null);
-    try {
-      const res = await fetch('/api/cardsight/comps', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          year: card.year,
-          brand: card.brand,
-          number: card.card_number,
-          player: card.player,
-          grading_company: card.grading_company ?? (card.raw_grade ? 'Raw' : null),
-          grade: card.grade,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setCompsError(data?.error || 'Could not reach CardSight'); return; }
-      const payload = data as CompsResponse;
-      setComps(payload);
-      if (payload.rows.length) {
-        setRows(payload.rows.map((r, i) => ({
-          position: i,
-          source: r.source as SourceValue,
-          source_label: r.source_label ?? '',
-          grade_company: r.grade_company,
-          grade_value: r.grade_value,
-          sale_date: r.sale_date,
-          price: String(r.price),
-          weight_pct: String(r.weight_pct),
-          url: r.url,
-          notes: r.notes,
-        })));
-      }
-    } catch {
-      setCompsError('Could not reach CardSight');
-    } finally {
-      setCompsLoading(false);
-    }
-  }
   function removeRow(idx: number) {
     setRows(prev => prev.filter((_, i) => i !== idx).map((r, i) => ({ ...r, position: i })));
   }
@@ -1451,6 +959,12 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       content_hash: contentHash(normalized),
       snapshot,
       mark_kind: 'research' as const,
+      // Same analysis written on top of the same previous mark is one save, not
+      // two — the database refuses the copy (double click, retry, second tab).
+      dedupe_key: markDedupeKey({
+        year: card.year, brand: card.brand, card_number: card.card_number,
+        grade: card.grade, grading_company: card.grading_company, raw_grade: card.raw_grade,
+      }, contentHash(normalized), valueHistory[0]?.id ?? null),
       source_session_id: null, // reserved for the migration backfill only
       derived_from_id: derivedFromId,
     };
@@ -1586,20 +1100,6 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // Rebuild the mark from the session's own rows. `content_hash` decides
   // whether one is needed: an analysis committed the normal way hashes to the
   // same value, so a card whose history is already correct never offers this.
-  // Which months this card already carries a CardSight mark for. Keyed on the
-  // month of created_at, the same key collapseImportedMonths uses and the same
-  // one the import writes to — and unlike dedupe_key it is present on marks
-  // imported before that column existed, so an older card doesn't read as
-  // un-imported and get offered a save that would be a no-op.
-  const storedCardsightMonths = useMemo(
-    () => new Set(
-      valueHistory
-        .filter(h => h.mark_kind === 'cardsight')
-        .map(h => h.created_at.slice(0, 7)),
-    ),
-    [valueHistory],
-  );
-
   const sessionAnalysis = useMemo(() => {
     if (!latestSession || latestSession.session.market_value === null) return null;
     const rows = analysisFromDataPoints(latestSession.data_points || []);
@@ -1996,30 +1496,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                   ⚖ Even out weights
                 </button>
               )}
-              {/* Graded cards get rows; ungraded cards get the price range only,
-                  because CardSight publishes no condition on a raw sale and the
-                  spread between a beat-up copy and a clean one is most of the
-                  price. The label says which you'll get. */}
-              <button type="button" onClick={pullComps} disabled={compsLoading}
-                className="btn btn-ghost btn-sm"
-                title={cardIsGraded
-                  ? 'Fill the table with recent completed sales at this grade, and show the live asks separately'
-                  : 'Ungraded card — shows the sold price range, not comps'}>
-                {compsLoading ? 'Pulling…' : cardIsGraded ? '⇩ Pull comps' : '⇩ Pull price range'}
-              </button>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                 Need at least one priced row. Save unlocks at total = 100%.
               </span>
             </div>
-
-            {compsError && (
-              <div style={{ fontSize: 12, color: 'var(--rust)', marginBottom: 12 }}>{compsError}</div>
-            )}
-            {comps && (
-              <CompsPanel comps={comps} onImportHistory={importHistory}
-                importing={importingHistory} imported={importedCount}
-                storedMonths={storedCardsightMonths} />
-            )}
 
             <div style={{ marginBottom: 16 }}>
               <label className="input-label">Notes (private — only you see these)</label>
@@ -2059,7 +1539,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
               <div style={{ flex: 1, minWidth: 300 }}>
                 <div className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)', marginBottom: 6 }}>Prior vs New Value</div>
                 <PriorVsNewChart
-                  history={valueHistory.slice().reverse()}
+                  history={collapseUnchanged(valueHistory.slice().reverse()).map(r => r.mark)}
                   newValue={totals.marketValue}
                   hasNew={totals.weightOk}
                   selectedId={selectedMarkId}
@@ -2087,7 +1567,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                   )}
                   {valueHistory.length >= 2 && (
                     <div style={{ marginLeft: 'auto' }}>
-                      <Sparkline values={valueHistory.slice().reverse().map(h => h.market_value)} />
+                      <Sparkline values={collapseUnchanged(valueHistory.slice().reverse()).map(r => r.mark.market_value)} />
                     </div>
                   )}
                 </div>
@@ -2201,11 +1681,15 @@ function ValueHistoryList({ items, onUse }: {
   items: ValueHistoryRow[];
   onUse: (h: ValueHistoryRow) => void;
 }) {
+  // One entry per price held: marks that restate the previous value fold into
+  // the entry that set it (oldest mark kept, with its date range).
+  const runs = collapseUnchanged(items.slice().reverse()).reverse();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {items.map((h, i) => {
-        // The next item in this newest-first list is the older commit.
-        const older = items[i + 1];
+      {runs.map((run, i) => {
+        const h = run.mark;
+        // The next run in this newest-first list is the older value.
+        const older = runs[i + 1]?.mark;
         const delta = older ? h.market_value - older.market_value : null;
         const pct = older && older.market_value !== 0 ? (delta! / older.market_value) * 100 : null;
         const dir: 'up' | 'down' | 'flat' = delta === null ? 'flat'
@@ -2225,6 +1709,12 @@ function ValueHistoryList({ items, onUse }: {
                   did, the other is what they concluded. */}
               {h.mark_kind === 'cardsight' && (
                 <span className="chip chip-gold" style={{ fontSize: 9.5 }}>CardSight median</span>
+              )}
+              {run.count > 1 && (
+                <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)' }}
+                  title={`${run.count} marks at this value`}>
+                  unchanged through {new Date(run.through).toLocaleDateString()} · {run.count} marks
+                </span>
               )}
               {delta !== null && (
                 <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: trendColor(dir) }}>

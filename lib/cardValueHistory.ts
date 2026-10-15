@@ -86,20 +86,17 @@ export function cardValueKey(p: CardKeyParts): string {
   ].join('|');
 }
 
-// Idempotency key for one imported month of CardSight comps.
+// Idempotency key for a mark a person made (research analysis or typed value).
 //
-// MUST stay byte-identical to public.cardsight_dedupe_key() in migration
-// 20260908_cardsight_history_dedupe.sql — the unique index is what actually
-// prevents duplicates, and a key the database computes differently would let
-// every already-imported month import a second time.
-// One sweep mark per card per day. A second sweep the same afternoon is the
-// same observation twice; a sweep next week is a new data point.
-export function sweepDedupeKey(p: CardKeyParts, day: string): string {
-  return `sweep:${cardValueKey(p)}:${day}`;
-}
-
-export function cardsightDedupeKey(p: CardKeyParts, month: string): string {
-  return `cardsight:${cardValueKey(p)}:${month}`;
+// MUST stay byte-identical to public.mark_dedupe_key() in migration
+// 20261015_value_history_dedupe.sql.
+//
+// A double click, a retry, or two tabs saving at once all write "this analysis,
+// on top of the same previous mark" — so the key names exactly that: the card,
+// the analysis fingerprint, and the mark it was written on top of. A genuine
+// A → B → A sequence is not blocked, because the second A sits on top of B.
+export function markDedupeKey(p: CardKeyParts, hash: string, previousMarkId: string | null): string {
+  return `mark:${cardValueKey(p)}:${hash}:${previousMarkId ?? 'none'}`;
 }
 
 // Stable normalized fingerprint of an analysis, used to answer "did anything
@@ -154,16 +151,53 @@ export type Trend = {
   pct: number | null; // null when the previous value is 0 (no meaningful %)
 };
 
-// Trend for ONE card: the most recently committed value vs the value committed
-// just before it. Returns null with fewer than two snapshots (nothing to
-// compare against yet).
+// Marks that restate the previous value add a date, not information. A card
+// re-marked every month at the same price should read as one price held since
+// the first of those dates, not as a row of identical entries.
+export type CollapsedMark<T> = {
+  /** The mark that established this value (first of the run). */
+  mark: T;
+  /** Date of the last mark in the run that restated it. */
+  through: string;
+  /** How many marks the run covers, the first included. */
+  count: number;
+};
+
+const SAME_VALUE_EPS = 0.005;
+
+// Collapse consecutive same-valued marks (oldest → newest in, oldest → newest
+// out). Only consecutive runs collapse: A → B → A keeps all three, since the
+// return to A is real movement.
+export function collapseUnchanged<T extends { market_value: number; created_at: string }>(
+  chronological: T[],
+): CollapsedMark<T>[] {
+  const out: CollapsedMark<T>[] = [];
+  for (const m of chronological) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last.mark.market_value - m.market_value) < SAME_VALUE_EPS) {
+      last.through = m.created_at;
+      last.count += 1;
+    } else {
+      out.push({ mark: m, through: m.created_at, count: 1 });
+    }
+  }
+  return out;
+}
+
+// Trend for ONE card: the latest value against the last value that was
+// different from it. Repeats of the same price are not a "prior" to compare
+// with — measured against one, every re-mark would read as 0.0%. With no
+// earlier different value the card is flat. Returns null with fewer than two
+// marks (nothing to compare against yet).
 export function trendFromRows(rows: { market_value: number; created_at: string }[]): Trend | null {
   if (rows.length < 2) return null;
-  const sorted = rows.slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const latest = sorted[sorted.length - 1].market_value;
-  const previous = sorted[sorted.length - 2].market_value;
+  const runs = collapseUnchanged(
+    rows.slice().sort((a, b) => a.created_at.localeCompare(b.created_at)),
+  );
+  const latest = runs[runs.length - 1].mark.market_value;
+  const previous = runs.length >= 2 ? runs[runs.length - 2].mark.market_value : latest;
   const delta = latest - previous;
-  const direction = delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : 'flat';
+  const direction = delta > SAME_VALUE_EPS ? 'up' : delta < -SAME_VALUE_EPS ? 'down' : 'flat';
   const pct = previous !== 0 ? (delta / previous) * 100 : null;
   return { direction, latest, previous, delta, pct };
 }
