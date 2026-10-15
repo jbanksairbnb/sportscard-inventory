@@ -1656,6 +1656,7 @@ function SetsInProgress({
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href="/set/new" className="btn btn-primary btn-sm">+ New Upload</Link>
+            <Link href="/items" className="btn btn-outline btn-sm">📦 Singles &amp; Items</Link>
             <Link href="/shared" className="btn btn-outline btn-sm">Community Sets</Link>
           </div>
         </div>
@@ -1718,6 +1719,8 @@ function SetsInProgress({
           })}
         </div>
 
+        <Link href="/items" className="btn btn-outline btn-sm" style={{ flexShrink: 0 }}
+          title="Singles, boxes and other items you track outside a set">📦 Singles &amp; Items</Link>
         <Link href="/set/new" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ New Upload</Link>
       </div>
 
