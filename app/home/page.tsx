@@ -2067,13 +2067,13 @@ export default function HomePage() {
       // or sold) are left out, like a Not Owned set row.
       const { data: itemData } = await supabase
         .from('collection_items')
-        .select('qty, value, owned')
+        .select('*')
         .eq('user_id', user.id);
-      const owned = ((itemData || []) as { qty: number | null; value: number | null; owned: boolean | null }[])
+      const owned = ((itemData || []) as { qty: unknown; value: unknown; owned?: boolean | null }[])
         .filter(i => i.owned !== false);
       setItemTotals({
-        cards: owned.reduce((n, i) => n + (i.qty || 0), 0),
-        value: owned.reduce((n, i) => n + (i.qty || 0) * (i.value || 0), 0),
+        cards: owned.reduce((n, i) => n + (Number(i.qty) || 0), 0),
+        value: owned.reduce((n, i) => n + (Number(i.qty) || 0) * (Number(i.value) || 0), 0),
       });
       setLoading(false);
     }
