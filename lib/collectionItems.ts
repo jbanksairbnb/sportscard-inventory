@@ -148,3 +148,46 @@ export function parseItemRows(rows: string[][]): { items: ParsedItem[]; skipped:
   }
   return { items, skipped };
 }
+
+// Sorting ---------------------------------------------------------------------
+
+export type SortKey = 'item_type' | 'first_name' | 'last_name' | 'year' | 'brand' | 'description'
+  | 'qty' | 'cost' | 'invested' | 'value' | 'total' | 'gain';
+export type SortState = { key: SortKey; dir: 'asc' | 'desc' };
+
+// The value a column sorts on: text columns as lower-cased text, number columns
+// as numbers. Blank text and an unset year sort as "no value" (null).
+export function sortValue(r: CollectionItem, key: SortKey): string | number | null {
+  switch (key) {
+    case 'item_type': return ITEM_TYPES.find(t => t.value === r.item_type)?.label.toLowerCase() ?? r.item_type;
+    case 'first_name': case 'last_name': case 'brand': case 'description': {
+      const v = (r[key] ?? '').trim().toLowerCase();
+      return v || null;
+    }
+    case 'year': return r.year ?? null;
+    case 'qty': return r.qty;
+    case 'cost': return r.cost;
+    case 'value': return r.value;
+    case 'invested': return itemTotals(r).invested;
+    case 'total': return itemTotals(r).worth;
+    case 'gain': return itemTotals(r).gain;
+  }
+}
+
+// Ids in sorted order. Empty cells always go to the bottom, whichever way the
+// column is sorted, so a blank First Name never leads an A → Z list.
+export function sortedIds(rows: CollectionItem[], { key, dir }: SortState): string[] {
+  const sign = dir === 'asc' ? 1 : -1;
+  return rows.map((r, i) => ({ id: r.id, i, v: sortValue(r, key) }))
+    .sort((a, b) => {
+      if (a.v === null && b.v === null) return a.i - b.i;
+      if (a.v === null) return 1;
+      if (b.v === null) return -1;
+      const c = typeof a.v === 'number' && typeof b.v === 'number'
+        ? a.v - b.v
+        : String(a.v).localeCompare(String(b.v), undefined, { numeric: true });
+      return c !== 0 ? sign * c : a.i - b.i;
+    })
+    .map(x => x.id);
+}
+
