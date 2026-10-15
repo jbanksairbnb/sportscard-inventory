@@ -9,8 +9,8 @@ import { fetchAll } from '@/lib/supabase/fetchAll';
 import SCLogo from '@/components/SCLogo';
 import { cardValueKey } from '@/lib/cardValueHistory';
 import {
-  addMonths, buildSnapshot, diffSnapshots, extractCards, monthLabel, monthOf, monthsBetween,
-  reconstructSnapshot, type HistoryMark, type Mover, type SetInput, type Snapshot,
+  addMonths, buildSnapshot, buildValueIndex, diffSnapshots, extractCards, monthLabel, monthOf, monthsBetween,
+  reconstructSnapshot, type HistoryMark, type IndexPoint, type Mover, type SetInput, type Snapshot,
 } from '@/lib/collectionValue';
 
 // Collection value tracker. One month-end snapshot per month (written by the
@@ -33,7 +33,7 @@ const signed = (n: number) => `${n >= 0 ? '+' : '−'}${money(Math.abs(n))}`;
 const pctText = (n: number | null) => (n === null ? '—' : `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(1)}%`);
 const tone = (n: number) => (n > 0.005 ? 'var(--teal)' : n < -0.005 ? 'var(--rust)' : 'var(--ink-mute)');
 
-type SeriesKey = 'total' | 'personal' | 'inventory';
+type SeriesKey = 'total' | 'personal' | 'inventory' | 'market';
 type Tab = 'movers' | 'top' | 'sets';
 
 function Kpi({ label, value, sub, color }: { label: string; value: string; sub?: React.ReactNode; color?: string }) {
@@ -64,6 +64,7 @@ export default function CollectionValuePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snaps, setSnaps] = useState<Snapshot[]>([]);
+  const [indexPts, setIndexPts] = useState<IndexPoint[]>([]);
   const [series, setSeries] = useState<SeriesKey>('total');
   const [selected, setSelected] = useState<string>('');
   const [tab, setTab] = useState<Tab>('movers');
@@ -77,9 +78,17 @@ export default function CollectionValuePage() {
 
       const [setsRes, marks, stored] = await Promise.all([
         supabase.from('sets').select('slug, title, year, brand, purpose, rows').eq('user_id', user.id),
-        fetchAll<any>((from, to) => supabase.from('card_value_history')
-          .select('set_slug, card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
-          .eq('user_id', user.id).order('created_at').range(from, to)),
+        // mark_kind and the note text only weight a mark in the market index;
+        // a deployment without those columns falls back to the plain select.
+        (async () => {
+          const withKind = await fetchAll<any>((from, to) => supabase.from('card_value_history')
+            .select('set_slug, card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at, mark_kind, mark_notes:snapshot->>notes')
+            .eq('user_id', user.id).order('created_at').range(from, to));
+          if (withKind.length) return withKind;
+          return fetchAll<any>((from, to) => supabase.from('card_value_history')
+            .select('set_slug, card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
+            .eq('user_id', user.id).order('created_at').range(from, to));
+        })(),
         supabase.from('collection_value_snapshots').select('*').eq('user_id', user.id).order('month'),
       ]);
       if (setsRes.error) { setError(setsRes.error.message); setLoading(false); return; }
@@ -109,6 +118,8 @@ export default function CollectionValuePage() {
         }),
         market_value: Number(m.market_value),
         created_at: m.created_at,
+        kind: m.mark_kind ?? null,
+        notes: m.mark_notes ?? null,
       }));
       if (histMarks.length && cards.length) {
         const first = monthOf(new Date(histMarks[0].created_at));
@@ -131,6 +142,7 @@ export default function CollectionValuePage() {
       }
 
       const list = [...out.values()].sort((a, b) => a.month.localeCompare(b.month));
+      if (list.length > 1) setIndexPts(buildValueIndex(cards, histMarks, list.map(x => x.month)));
       setSnaps(list);
       setSelected(thisMonth);
       setLoading(false);
@@ -144,11 +156,23 @@ export default function CollectionValuePage() {
 
   const diff = useMemo(() => (cur && prev ? diffSnapshots(prev, cur) : null), [cur, prev]);
 
+  // Market-adjusted line: the like-for-like index scaled to today's total, so a
+  // month moves only when cards that were actually re-marked moved.
+  const marketByMonth = useMemo(() => {
+    const m = new Map<string, IndexPoint & { value: number }>();
+    const end = indexPts[indexPts.length - 1];
+    const now = snaps[snaps.length - 1];
+    if (!end || !now || indexPts.length !== snaps.length) return m;
+    for (const p of indexPts) m.set(p.month, { ...p, value: now.total_value * (p.index / end.index) });
+    return m;
+  }, [indexPts, snaps]);
+
   const chartData = useMemo(() => snaps.map(s => ({
     month: s.month, label: monthLabel(s.month),
     total: Math.round(s.total_value), personal: Math.round(s.by_purpose.personal), inventory: Math.round(s.by_purpose.inventory),
+    market: marketByMonth.has(s.month) ? Math.round(marketByMonth.get(s.month)!.value) : undefined,
     source: s.source,
-  })), [snaps]);
+  })), [snaps, marketByMonth]);
 
   const metrics = useMemo(() => {
     if (!snaps.length) return null;
@@ -226,9 +250,10 @@ export default function CollectionValuePage() {
             <div className="panel" style={{ padding: '18px 20px 10px', marginBottom: 22 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
                 <span className="eyebrow" style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 700 }}>★ Value trend ★</span>
-                {(['total', 'personal', 'inventory'] as SeriesKey[]).map(k => (
-                  <button key={k} type="button" onClick={() => setSeries(k)} className={`btn btn-sm ${series === k ? 'btn-primary' : 'btn-outline'}`}>
-                    {k === 'total' ? 'Total' : k === 'personal' ? 'Personal' : 'Inventory'}
+                {(['total', 'personal', 'inventory', ...(marketByMonth.size ? ['market'] : [])] as SeriesKey[]).map(k => (
+                  <button key={k} type="button" onClick={() => setSeries(k)} className={`btn btn-sm ${series === k ? 'btn-primary' : 'btn-outline'}`}
+                    title={k === 'market' ? 'Only counts cards that were re-priced each month, so cards you added or never re-marked don’t move the line' : undefined}>
+                    {k === 'total' ? 'Total' : k === 'personal' ? 'Personal' : k === 'inventory' ? 'Inventory' : 'Market-adjusted'}
                   </button>
                 ))}
                 <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-mute)', fontStyle: 'italic' }}>
@@ -264,7 +289,18 @@ export default function CollectionValuePage() {
               <p style={{ fontSize: 11.5, color: 'var(--ink-mute)', margin: '6px 0 8px' }}>
                 {snaps.some(s => s.source === 'reconstructed') && 'Months marked “rebuilt” were reconstructed from your price history using the cards you own today, so they show what today’s collection was worth then. '}
                 The current month is month-to-date until it closes.
+                {series === 'market' && ' Market-adjusted compares only cards that got a new price mark each month, weighted by value and by how many sales stood behind the mark, then scales to today’s total. Months with little new pricing are flagged.'}
               </p>
+              {series === 'market' && marketByMonth.get(selected) && (() => {
+                const p = marketByMonth.get(selected)!;
+                if (p.link === null) return <p style={{ fontSize: 11.5, color: 'var(--ink-mute)', margin: '0 0 8px' }}>No cards were re-priced in {monthLabel(selected, true)}, so the line holds flat.</p>;
+                return (
+                  <p style={{ fontSize: 11.5, color: p.coverage < 0.25 ? 'var(--rust)' : 'var(--ink-mute)', margin: '0 0 8px' }}>
+                    {monthLabel(selected, true)}: {pctText((p.link - 1) * 100)} like-for-like from {p.observed.toLocaleString()} re-priced card{p.observed === 1 ? '' : 's'}
+                    {' '}({(p.coverage * 100).toFixed(0)}% of value){p.coverage < 0.25 ? ' — thin data, treat this move with caution.' : '.'}
+                  </p>
+                );
+              })()}
             </div>
 
             {/* Month picker + drivers */}

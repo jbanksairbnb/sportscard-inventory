@@ -158,7 +158,12 @@ export function buildSnapshot(
   };
 }
 
-export type HistoryMark = { set_slug: string | null; key: string; market_value: number; created_at: string };
+export type HistoryMark = {
+  set_slug: string | null; key: string; market_value: number; created_at: string;
+  // Optional provenance, used only to weight a mark in the market index.
+  kind?: string | null;
+  notes?: string | null;
+};
 
 // Rebuild a past month from price-history marks: each card is valued at its
 // latest mark on or before month end. This uses the cards owned TODAY, so it
@@ -226,4 +231,95 @@ export function diffSnapshots(prev: Snapshot, cur: Snapshot): { movers: Mover[];
   }
   d.net = cur.total_value - prev.total_value;
   return { movers, drivers: d };
+}
+
+
+// Market index ---------------------------------------------------------------
+//
+// reconstructSnapshot answers "what would today's collection have been worth",
+// but it carries each card's last mark forward indefinitely. A card re-marked
+// once in March and never again looks perfectly flat through November, so the
+// line stays level and then jumps whenever the stragglers are finally re-marked.
+//
+// The index below only believes what was observed. For each month it takes the
+// cards that received a NEW mark that month, compares each to its value at the
+// previous month end, and averages those moves weighted by prior value and by
+// how trustworthy the mark is. Cards nobody re-marked contribute nothing —
+// absence of a mark is not evidence of no change. Months chain together
+// (index_m = index_{m-1} × link_m), cards first marked in a month are skipped
+// (they are additions, not price moves), and the whole series is anchored to
+// today's collection value so it reads in dollars.
+
+// How far to trust one mark, 0–1. A sweep or import that rests on one sale is
+// a single data point, not a market; a typed value is the owner's judgement.
+export function markQuality(m: { kind?: string | null; notes?: string | null }): number {
+  const kind = m.kind ?? 'research';
+  if (kind === 'research') return 1;
+  if (kind === 'manual') return 0.8;
+  const n = /median of (\d+)/i.exec(m.notes ?? '');
+  const comps = n ? Number(n[1]) : null;
+  if (comps === null) return 0.5;
+  return comps >= 5 ? 1 : comps >= 2 ? 0.7 : 0.35;
+}
+
+export type IndexPoint = {
+  month: string;
+  index: number;          // 100 at the first month
+  link: number | null;    // this month's like-for-like change, as a ratio (null for the first month)
+  observed: number;       // cards with a usable new mark this month
+  coverage: number;       // share of collection value (at prior month end) that was observed
+};
+
+export function buildValueIndex(cards: CollectionCard[], marks: HistoryMark[], months: string[]): IndexPoint[] {
+  if (!months.length) return [];
+  const wanted = new Set(cards.filter(c => c.value > 0).map(c => c.histKey));
+  const series = new Map<string, HistoryMark[]>();
+  for (const m of marks) {
+    if (!m.set_slug) continue;
+    const k = `${m.set_slug}|${m.key}`;
+    if (!wanted.has(k)) continue;
+    const arr = series.get(k) ?? [];
+    arr.push(m);
+    series.set(k, arr);
+  }
+  for (const arr of series.values()) arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  const out: IndexPoint[] = [{ month: months[0], index: 100, link: null, observed: 0, coverage: 0 }];
+  for (let i = 1; i < months.length; i++) {
+    const start = monthEndIso(months[i - 1]);
+    const end = monthEndIso(months[i]);
+    let num = 0, den = 0, observed = 0, observedValue = 0, allValue = 0;
+    for (const arr of series.values()) {
+      let prev: HistoryMark | null = null;
+      let last: HistoryMark | null = null;
+      for (const m of arr) {
+        if (m.created_at <= start) prev = m;
+        else if (m.created_at <= end) last = m;
+      }
+      if (!prev) continue;
+      const pv = Number(prev.market_value);
+      if (!(pv > 0)) continue;
+      allValue += pv;
+      if (!last) continue;
+      const cv = Number(last.market_value);
+      if (!(cv > 0)) continue;
+      // A re-mark at the same price restates the prior one; it confirms a flat
+      // market at half the weight rather than counting as a second opinion.
+      const repeat = Math.abs(cv - pv) < 0.005;
+      const w = markQuality(last) * (repeat ? 0.5 : 1);
+      num += w * cv;
+      den += w * pv;
+      observed += 1;
+      observedValue += pv;
+    }
+    const link = den > 0 ? num / den : 1;
+    out.push({
+      month: months[i],
+      index: out[i - 1].index * link,
+      link: den > 0 ? link : null,
+      observed,
+      coverage: allValue > 0 ? observedValue / allValue : 0,
+    });
+  }
+  return out;
 }
