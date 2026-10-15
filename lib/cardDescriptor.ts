@@ -5,7 +5,9 @@
 // separate yes/no flag.
 
 import type { CardDescriptor } from '@/components/MarketResearchModal';
-import { itemName, type CollectionItem } from '@/lib/collectionItems';
+import { itemName, parseGradeFromText, type CollectionItem } from '@/lib/collectionItems';
+
+export { parseGradeFromText };
 
 export type SetRowContext = {
   slug: string;
@@ -38,23 +40,25 @@ export function descriptorForSetRow(
   };
 }
 
-// A grader and grade written in free text — "PSA 7", "BGS 9.5", "SGC6".
-const GRADE_RE = /\b(PSA|BGS|BVG|SGC|CGC|CSG|HGA|GAI)\s*-?\s*(10|[0-9](?:\.5)?)\b/i;
-
-export function parseGradeFromText(text: string | null | undefined): { company: string; grade: string } | null {
-  const m = GRADE_RE.exec(text ?? '');
-  return m ? { company: m[1].toUpperCase(), grade: m[2] } : null;
-}
-
 // How an item in the Singles & Items list becomes the card the research modal
 // prices. Each item is its own series: the "card number" is the item's id, so
 // two lines that happen to share a year and brand (two different boxes, say)
 // never blend their price history. The grade comes from the description when
 // it names one; anything else is priced as raw.
 export function descriptorForItem(
-  item: Pick<CollectionItem, 'id' | 'first_name' | 'last_name' | 'year' | 'brand' | 'description'>,
+  item: Pick<CollectionItem, 'id' | 'first_name' | 'last_name' | 'year' | 'brand' | 'description'
+    | 'condition' | 'raw_grade' | 'grading_company' | 'grade'>,
 ): CardDescriptor {
-  const g = parseGradeFromText(item.description);
+  // The Raw/Graded selector is authoritative. A row with no grade entered at
+  // all falls back to one written in the description, as before the selector
+  // existed, so older rows keep their price history.
+  const explicitGraded = item.condition === 'graded' && !!item.grading_company && !!item.grade;
+  const g = explicitGraded
+    ? { company: item.grading_company as string, grade: item.grade as string }
+    : (item.condition === 'raw' && item.raw_grade) || item.condition === 'graded'
+      ? null
+      : parseGradeFromText(item.description);
+  const rawGrade = !g && item.condition === 'raw' ? (item.raw_grade || null) : null;
   const who = [item.first_name, item.last_name].map(s => (s ?? '').trim()).filter(Boolean).join(' ');
   return {
     year: item.year ?? null,
@@ -63,7 +67,7 @@ export function descriptorForItem(
     player: who || (item.description ?? '').trim() || null,
     grade: g?.grade ?? null,
     grading_company: g?.company ?? null,
-    raw_grade: null,
+    raw_grade: rawGrade,
     set_slug: 'items',
     set_card_number: item.id,
     display_title: itemName(item),

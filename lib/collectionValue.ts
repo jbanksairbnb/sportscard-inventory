@@ -5,7 +5,8 @@
 // personal and inventory alike. Its value is the row's Value field.
 
 import { cardValueKey } from '@/lib/cardValueHistory';
-import { itemName, itemTypeLabel, type CollectionItem } from '@/lib/collectionItems';
+import { ITEMS_SLUG } from '@/lib/itemsSource';
+import { itemConditionLabel, itemName, type CollectionItem } from '@/lib/collectionItems';
 
 export type SetInput = {
   slug: string;
@@ -127,21 +128,25 @@ export function extractCards(sets: SetInput[]): CollectionCard[] {
 
 // Set slug used for singles/boxes/other items so their price points join to the
 // same history-mark shape cards in sets use.
-export const ITEMS_SLUG = 'items';
+export { ITEMS_SLUG };
 export const ITEMS_TITLE = 'Singles & items';
 
 // Items from the collection_items table as collection cards. Always personal,
 // like a card in a personal set.
 export function extractItemCards(items: Pick<CollectionItem,
-  'id' | 'item_type' | 'first_name' | 'last_name' | 'year' | 'brand' | 'description' | 'qty' | 'cost' | 'value'>[]): CollectionCard[] {
-  return items.filter(i => i.qty > 0).map(i => ({
+  'id' | 'item_type' | 'first_name' | 'last_name' | 'year' | 'brand' | 'description' | 'qty' | 'cost' | 'value'
+  | 'condition' | 'raw_grade' | 'grading_company' | 'grade' | 'owned'>[]): CollectionCard[] {
+  // Listed or sold items (owned = false) are out of the collection, like a set
+  // row marked Not Owned. `owned` is absent on rows read before the column
+  // existed, which counts as owned.
+  return items.filter(i => i.qty > 0 && i.owned !== false).map(i => ({
     key: `${ITEMS_SLUG}|${i.id}`,
     histKey: `${ITEMS_SLUG}|${i.id}`,
     setSlug: ITEMS_SLUG,
     setTitle: ITEMS_TITLE,
     group: 'personal' as const,
     name: itemName(i),
-    condition: itemTypeLabel(i.item_type),
+    condition: itemConditionLabel(i),
     value: i.qty * i.value,
     cost: i.qty * i.cost,
     qty: i.qty,

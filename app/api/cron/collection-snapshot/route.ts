@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   for (let from = 0; ; from += PAGE * 10) {
     const { data, error } = await admin
       .from('collection_items')
-      .select('id, user_id, item_type, first_name, last_name, year, brand, description, qty, cost, value')
+      .select('*')
       .order('user_id').order('id')
       .range(from, from + PAGE * 10 - 1)
     if (error || !data) break

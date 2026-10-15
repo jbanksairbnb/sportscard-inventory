@@ -92,7 +92,7 @@ export default function CollectionValuePage() {
         })(),
         supabase.from('collection_value_snapshots').select('*').eq('user_id', user.id).order('month'),
         // Singles & items. A missing table (migration not run) just means no items.
-        supabase.from('collection_items').select('id, item_type, first_name, last_name, year, brand, description, qty, cost, value, value_history').eq('user_id', user.id),
+        supabase.from('collection_items').select('*').eq('user_id', user.id),
       ]);
       const items = ((itemsRes.data || []) as any[]).map(r => ({
         ...r, qty: Number(r.qty), cost: Number(r.cost), value: Number(r.value),
