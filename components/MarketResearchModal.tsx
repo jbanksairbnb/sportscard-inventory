@@ -8,6 +8,8 @@ import {
   dataPointHasUserContent, analysisFromDataPoints,
 } from '@/lib/cardValueHistory';
 import { insertValueHistoryRow } from '@/lib/recordValueMark';
+import { compToRow, imageToPayload } from '@/lib/compImport';
+import type { ExtractedComp } from '@/lib/ai/comp-extraction';
 
 // Sources we offer in the dropdown. 'other' lets the user free-form a label.
 export const RESEARCH_SOURCES = [
@@ -877,6 +879,76 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     setRows(prev => evenWeights(prev));
   }
 
+  // Screenshot import ------------------------------------------------------
+  //
+  // A screenshot of a sold-comps list (Card Ladder etc.) is read server-side
+  // and dropped into the table: blank rows are filled first, the rest appended,
+  // then weights are spread evenly. Nothing is saved until the usual confirm.
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function importScreenshot(file: Blob) {
+    setImporting(true);
+    setImportMsg(null);
+    try {
+      const payload = await imageToPayload(file);
+      const res = await fetch('/api/research/extract-comps', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || `Import failed (${res.status})`);
+      const comps = (json.comps || []) as ExtractedComp[];
+      const mapped = comps.map(c => compToRow(c, cardDefaults)).filter(r => r.price !== '');
+      if (!mapped.length) {
+        setImportMsg({ kind: 'warn', text: 'No priced sales found in that image. Try a tighter crop of the results list.' });
+        return;
+      }
+      setRows(prev => {
+        const isBlank = (r: Row) => !r.price && !r.sale_date && !r.url && !r.notes.trim();
+        const keep = prev.filter(r => !isBlank(r));
+        const added: Row[] = mapped.map(m => ({
+          position: 0, source: m.source, source_label: m.source_label,
+          grade_company: m.grade_company, grade_value: m.grade_value,
+          sale_date: m.sale_date, price: m.price, weight_pct: '', url: '', notes: m.notes,
+        }));
+        const merged = [...keep, ...added];
+        while (merged.length < 5) merged.push(emptyRow(merged.length, cardDefaults));
+        return evenWeights(merged.map((r, i) => ({ ...r, position: i })));
+      });
+      const off = mapped.filter(r => r.gradeMismatch).length;
+      const skipped = comps.length - mapped.length;
+      setImportMsg({
+        kind: off || skipped ? 'warn' : 'ok',
+        text: `Added ${mapped.length} comp${mapped.length === 1 ? '' : 's'} with weights spread evenly.`
+          + (off ? ` ${off} ${off === 1 ? 'is' : 'are'} a different grade than this card — remove ${off === 1 ? 'it' : 'them'} if not comparable.` : '')
+          + (skipped ? ` ${skipped} had no readable price and ${skipped === 1 ? 'was' : 'were'} skipped.` : '')
+          + (json.notes ? ` Note: ${json.notes}` : '')
+          + ' Check the figures, then save.',
+      });
+    } catch (e) {
+      setImportMsg({ kind: 'error', text: e instanceof Error ? e.message : 'Import failed.' });
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  // Ctrl/Cmd+V of a screenshot anywhere in the open modal. Text pastes into the
+  // inputs are left alone — only a clipboard that carries an image is taken.
+  useEffect(() => {
+    if (!open) return;
+    function onPaste(e: ClipboardEvent) {
+      const item = Array.from(e.clipboardData?.items || []).find(i => i.kind === 'file' && i.type.startsWith('image/'));
+      const file = item?.getAsFile();
+      if (!file) return;
+      e.preventDefault();
+      importScreenshot(file);
+    }
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, cardDefaults]);
+
   function removeRow(idx: number) {
     setRows(prev => prev.filter((_, i) => i !== idx).map((r, i) => ({ ...r, position: i })));
   }
@@ -1490,6 +1562,13 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
               <button type="button" onClick={addRow} className="btn btn-ghost btn-sm">+ Add row</button>
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={importing}
+                className="btn btn-outline btn-sm"
+                title="Upload or paste (Ctrl+V) a screenshot of sold comps — Card Ladder, 130point, eBay…">
+                {importing ? 'Reading screenshot…' : '📷 Import from screenshot'}
+              </button>
+              <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+                onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importScreenshot(f); }} />
               {/* Only offered when it would change something: rebalancing a
                   table that already totals 100% is a no-op that invites a
                   click for nothing. */}
@@ -1503,6 +1582,14 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                 Need at least one priced row. Save unlocks at total = 100%.
               </span>
             </div>
+
+            {importMsg && (
+              <div role="status" style={{
+                fontSize: 12.5, lineHeight: 1.5, marginBottom: 14, padding: '8px 12px', borderRadius: 8,
+                border: '1.5px solid ' + (importMsg.kind === 'error' ? 'var(--red, #c54a2c)' : importMsg.kind === 'warn' ? 'var(--orange)' : 'var(--teal, #2d7a6e)'),
+                background: 'var(--cream)', color: 'var(--plum)',
+              }}>{importMsg.text} <span style={{ color: 'var(--ink-mute)' }}>(You can also paste a screenshot with Ctrl+V.)</span></div>
+            )}
 
             <div style={{ marginBottom: 16 }}>
               <label className="input-label">Notes (private — only you see these)</label>
