@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
-import { addMonths, buildSnapshot, extractCards, monthOf, type SetInput } from '@/lib/collectionValue'
+import { addMonths, buildSnapshot, extractCards, extractItemCards, monthOf, type SetInput } from '@/lib/collectionValue'
+import type { CollectionItem } from '@/lib/collectionItems'
 
 // Monthly close-of-month snapshot of every user's collection value.
 //
@@ -29,21 +30,46 @@ export async function GET(req: NextRequest) {
     { auth: { autoRefreshToken: false, persistSession: false } },
   )
 
+  // Singles & items, grouped by owner. A missing table (migration not run)
+  // just means nobody has items yet.
+  const itemsByUser = new Map<string, CollectionItem[]>()
+  for (let from = 0; ; from += PAGE * 10) {
+    const { data, error } = await admin
+      .from('collection_items')
+      .select('id, user_id, item_type, first_name, last_name, year, brand, description, qty, cost, value')
+      .order('user_id').order('id')
+      .range(from, from + PAGE * 10 - 1)
+    if (error || !data) break
+    for (const r of data as any[]) {
+      const list = itemsByUser.get(r.user_id) ?? []
+      list.push({ ...r, qty: Number(r.qty), cost: Number(r.cost), value: Number(r.value) } as CollectionItem)
+      itemsByUser.set(r.user_id, list)
+    }
+    if (data.length < PAGE * 10) break
+  }
+
   let written = 0
   const failures: string[] = []
   let current: string | null = null
   let bucket: SetInput[] = []
+  const seenUsers = new Set<string>()
+
+  async function snapshotUser(userId: string, sets: SetInput[]) {
+    seenUsers.add(userId)
+    const cards = [...extractCards(sets), ...extractItemCards(itemsByUser.get(userId) ?? [])]
+    const snap = buildSnapshot(cards, month, 'month_end')
+    if (snap.owned_cards > 0) {
+      const { error } = await admin.from('collection_value_snapshots').upsert({
+        user_id: userId, ...snap,
+      })
+      if (error) failures.push(`${userId}: ${error.message}`)
+      else written++
+    }
+  }
 
   async function flush() {
     if (!current) return
-    const snap = buildSnapshot(extractCards(bucket), month, 'month_end')
-    if (snap.owned_cards > 0) {
-      const { error } = await admin.from('collection_value_snapshots').upsert({
-        user_id: current, ...snap,
-      })
-      if (error) failures.push(`${current}: ${error.message}`)
-      else written++
-    }
+    await snapshotUser(current, bucket)
     bucket = []
   }
 
@@ -63,6 +89,11 @@ export async function GET(req: NextRequest) {
     if (!data || data.length < PAGE) break
   }
   await flush()
+
+  // Owners who have items but no sets still get a snapshot.
+  for (const [userId] of itemsByUser) {
+    if (!seenUsers.has(userId)) await snapshotUser(userId, [])
+  }
 
   return NextResponse.json({ month, written, failures })
 }

@@ -5,6 +5,7 @@
 // personal and inventory alike. Its value is the row's Value field.
 
 import { cardValueKey } from '@/lib/cardValueHistory';
+import { itemName, itemTypeLabel, type CollectionItem } from '@/lib/collectionItems';
 
 export type SetInput = {
   slug: string;
@@ -23,8 +24,11 @@ export type CollectionCard = {
   group: 'personal' | 'inventory';
   name: string;     // "#150 Willie Mays"
   condition: string; // "PSA 8" / "Raw NM"
-  value: number;
+  value: number;   // total for the line: price × qty
   cost: number;
+  // Units behind `value`. Marks are per unit, so a past month's value is
+  // mark × qty. 1 for a card in a set.
+  qty?: number;
 };
 
 // [value, name, condition, set title]
@@ -121,6 +125,45 @@ export function extractCards(sets: SetInput[]): CollectionCard[] {
   return out;
 }
 
+// Set slug used for singles/boxes/other items so their price points join to the
+// same history-mark shape cards in sets use.
+export const ITEMS_SLUG = 'items';
+export const ITEMS_TITLE = 'Singles & items';
+
+// Items from the collection_items table as collection cards. Always personal,
+// like a card in a personal set.
+export function extractItemCards(items: Pick<CollectionItem,
+  'id' | 'item_type' | 'first_name' | 'last_name' | 'year' | 'brand' | 'description' | 'qty' | 'cost' | 'value'>[]): CollectionCard[] {
+  return items.filter(i => i.qty > 0).map(i => ({
+    key: `${ITEMS_SLUG}|${i.id}`,
+    histKey: `${ITEMS_SLUG}|${i.id}`,
+    setSlug: ITEMS_SLUG,
+    setTitle: ITEMS_TITLE,
+    group: 'personal' as const,
+    name: itemName(i),
+    condition: itemTypeLabel(i.item_type),
+    value: i.qty * i.value,
+    cost: i.qty * i.cost,
+    qty: i.qty,
+  }));
+}
+
+// An item's saved per-unit price points as history marks.
+export function itemMarks(items: Pick<CollectionItem, 'id' | 'value_history'>[]): HistoryMark[] {
+  return items.flatMap(i => (i.value_history || []).map(p => ({
+    set_slug: ITEMS_SLUG, key: i.id, market_value: Number(p.value), created_at: p.at, kind: 'manual' as const,
+  })));
+}
+
+// Marks that don't describe the owner's own view of a card's price. Imported
+// CardSight medians and whole-set sweeps were found unreliable, so they are
+// left out of every reconstructed value; a card falls back to its most recent
+// research or typed mark instead.
+const EXCLUDED_MARK_KINDS = new Set(['cardsight', 'sweep']);
+export function usableMarks(marks: HistoryMark[]): HistoryMark[] {
+  return marks.filter(m => !EXCLUDED_MARK_KINDS.has(m.kind ?? ''));
+}
+
 // Build a snapshot from cards priced by `valueOf` (current Value by default).
 export function buildSnapshot(
   cards: CollectionCard[],
@@ -182,7 +225,10 @@ export function reconstructSnapshot(cards: CollectionCard[], marks: HistoryMark[
   const priced = cards.filter(c => c.value > 0);
   const hit = priced.filter(c => latest.has(c.histKey)).length;
   const coverage = priced.length ? hit / priced.length : 0;
-  return buildSnapshot(cards, month, 'reconstructed', c => latest.get(c.histKey)?.v ?? null, coverage);
+  return buildSnapshot(cards, month, 'reconstructed', c => {
+    const v = latest.get(c.histKey)?.v;
+    return v === undefined ? null : v * (c.qty ?? 1);
+  }, coverage);
 }
 
 export type Mover = {
@@ -273,6 +319,8 @@ export type IndexPoint = {
 export function buildValueIndex(cards: CollectionCard[], marks: HistoryMark[], months: string[]): IndexPoint[] {
   if (!months.length) return [];
   const wanted = new Set(cards.filter(c => c.value > 0).map(c => c.histKey));
+  // Weights are dollars at stake, so a line of ten boxes counts ten times one.
+  const qtyOf = new Map(cards.map(c => [c.histKey, c.qty ?? 1] as const));
   const series = new Map<string, HistoryMark[]>();
   for (const m of marks) {
     if (!m.set_slug) continue;
@@ -289,7 +337,8 @@ export function buildValueIndex(cards: CollectionCard[], marks: HistoryMark[], m
     const start = monthEndIso(months[i - 1]);
     const end = monthEndIso(months[i]);
     let num = 0, den = 0, observed = 0, observedValue = 0, allValue = 0;
-    for (const arr of series.values()) {
+    for (const [k, arr] of series) {
+      const q = qtyOf.get(k) ?? 1;
       let prev: HistoryMark | null = null;
       let last: HistoryMark | null = null;
       for (const m of arr) {
@@ -297,11 +346,11 @@ export function buildValueIndex(cards: CollectionCard[], marks: HistoryMark[], m
         else if (m.created_at <= end) last = m;
       }
       if (!prev) continue;
-      const pv = Number(prev.market_value);
+      const pv = Number(prev.market_value) * q;
       if (!(pv > 0)) continue;
       allValue += pv;
       if (!last) continue;
-      const cv = Number(last.market_value);
+      const cv = Number(last.market_value) * q;
       if (!(cv > 0)) continue;
       // A re-mark at the same price restates the prior one; it confirms a flat
       // market at half the weight rather than counting as a second opinion.

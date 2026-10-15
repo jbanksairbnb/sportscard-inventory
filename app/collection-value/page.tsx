@@ -8,8 +8,9 @@ import { createClient } from '@/lib/supabase/client';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import SCLogo from '@/components/SCLogo';
 import { cardValueKey } from '@/lib/cardValueHistory';
+import type { CollectionItem } from '@/lib/collectionItems';
 import {
-  addMonths, buildSnapshot, buildValueIndex, diffSnapshots, extractCards, monthLabel, monthOf, monthsBetween,
+  addMonths, buildSnapshot, buildValueIndex, diffSnapshots, extractCards, extractItemCards, itemMarks, usableMarks, monthLabel, monthOf, monthsBetween,
   reconstructSnapshot, type HistoryMark, type IndexPoint, type Mover, type SetInput, type Snapshot,
 } from '@/lib/collectionValue';
 
@@ -76,7 +77,7 @@ export default function CollectionValuePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push('/login'); return; }
 
-      const [setsRes, marks, stored] = await Promise.all([
+      const [setsRes, marks, stored, itemsRes] = await Promise.all([
         supabase.from('sets').select('slug, title, year, brand, purpose, rows').eq('user_id', user.id),
         // mark_kind and the note text only weight a mark in the market index;
         // a deployment without those columns falls back to the plain select.
@@ -90,16 +91,25 @@ export default function CollectionValuePage() {
             .eq('user_id', user.id).order('created_at').range(from, to));
         })(),
         supabase.from('collection_value_snapshots').select('*').eq('user_id', user.id).order('month'),
+        // Singles & items. A missing table (migration not run) just means no items.
+        supabase.from('collection_items').select('id, item_type, first_name, last_name, year, brand, description, qty, cost, value, value_history').eq('user_id', user.id),
       ]);
+      const items = ((itemsRes.data || []) as any[]).map(r => ({
+        ...r, qty: Number(r.qty), cost: Number(r.cost), value: Number(r.value),
+        value_history: Array.isArray(r.value_history) ? r.value_history : [],
+      })) as CollectionItem[];
       if (setsRes.error) { setError(setsRes.error.message); setLoading(false); return; }
       // A missing table (migration not run yet) shouldn't blank the page: we can
       // still show the live numbers, just without stored history.
       const have = new Map<string, Snapshot>();
       for (const r of (stored.data || []) as any[]) have.set(r.month, { ...r, total_value: Number(r.total_value), total_cost: Number(r.total_cost), coverage: r.coverage === null ? null : Number(r.coverage) });
 
-      const cards = extractCards((setsRes.data || []) as SetInput[]);
+      const cards = [...extractCards((setsRes.data || []) as SetInput[]), ...extractItemCards(items)];
       const thisMonth = monthOf(new Date());
-      const out = new Map(have);
+      // Rebuilt months are recomputed on every visit (they are cheap and follow
+      // the price marks as you add them); only month-end snapshots taken at the
+      // time are kept as stored.
+      const out = new Map([...have].filter(([, v]) => v.source === 'month_end'));
       const toWrite: Snapshot[] = [];
 
       // Live, month-to-date point.
@@ -107,10 +117,12 @@ export default function CollectionValuePage() {
       out.set(thisMonth, live);
       if (cards.length) toWrite.push(live);
 
-      // Close-of-month points we don't have yet (or only have as a mid-month
-      // visit): rebuild from price history, starting at the first month with
-      // enough coverage and continuing from there.
-      const histMarks: HistoryMark[] = marks.map(m => ({
+      // Past months: rebuild from price history, starting at the first month with
+      // enough coverage and continuing from there. The month just before this one
+      // is the baseline the current month is measured against, so it is always
+      // built from marks dated before this month began — whatever coverage there
+      // is, shown on the page — and never from anything entered this month.
+      const histMarks: HistoryMark[] = usableMarks(marks.map(m => ({
         set_slug: m.set_slug,
         key: cardValueKey({
           year: m.card_year, brand: m.card_brand, card_number: m.card_number,
@@ -120,18 +132,27 @@ export default function CollectionValuePage() {
         created_at: m.created_at,
         kind: m.mark_kind ?? null,
         notes: m.mark_notes ?? null,
-      }));
+      }))).concat(itemMarks(items)).sort((a, b) => a.created_at.localeCompare(b.created_at));
       if (histMarks.length && cards.length) {
         const first = monthOf(new Date(histMarks[0].created_at));
         const start = first < addMonths(thisMonth, -MAX_BACKFILL_MONTHS) ? addMonths(thisMonth, -MAX_BACKFILL_MONTHS) : first;
         let started = false;
-        for (const m of monthsBetween(start, addMonths(thisMonth, -1))) {
+        const baseline = addMonths(thisMonth, -1);
+        for (const m of monthsBetween(start, baseline)) {
           const existing = have.get(m);
-          if (existing && existing.source !== 'live') { started = true; continue; }
+          const isBaseline = m === baseline;
+          if (existing?.source === 'month_end' && !isBaseline) { started = true; continue; }
           const rec = reconstructSnapshot(cards, histMarks, m);
-          const ok = rec.coverage !== null && rec.coverage >= MIN_RECONSTRUCT_COVERAGE && rec.total_value > 0;
+          const ok = rec.total_value > 0
+            && (isBaseline || (rec.coverage !== null && rec.coverage >= MIN_RECONSTRUCT_COVERAGE));
           if (!started && !ok) continue;
-          if (ok) { started = true; out.set(m, rec); toWrite.push(rec); }
+          if (ok) {
+            started = true;
+            out.set(m, rec);
+            // A month-end snapshot is the record of what was stored then; the
+            // baseline view replaces it on screen but never overwrites it.
+            if (existing?.source !== 'month_end') toWrite.push(rec);
+          }
         }
       }
 
@@ -201,6 +222,10 @@ export default function CollectionValuePage() {
   const gain = latest ? latest.total_value - latest.total_cost : 0;
   const isLive = cur?.source === 'live';
   const drv = diff?.drivers;
+  // A rebuilt prior month is built from the cards you own today, so a card that
+  // is "added" against it was not new — it just had no price before then.
+  const prevRebuilt = prev?.source === 'reconstructed';
+  const addedLabel = prevRebuilt ? 'No prior price' : 'New to collection';
 
   const tabBtn = (t: Tab, label: string) => (
     <button type="button" onClick={() => setTab(t)} className={`btn btn-sm ${tab === t ? 'btn-primary' : 'btn-outline'}`}>{label}</button>
@@ -329,7 +354,7 @@ export default function CollectionValuePage() {
                   {[
                     { l: 'Cards that rose', v: drv.repricedUp, n: drv.upCount },
                     { l: 'Cards that fell', v: drv.repricedDown, n: drv.downCount },
-                    { l: 'New to collection', v: drv.added, n: drv.addedCount },
+                    { l: addedLabel, v: drv.added, n: drv.addedCount },
                     { l: 'Left collection', v: drv.removed, n: drv.removedCount },
                     { l: 'Net change', v: drv.net, n: null as number | null },
                   ].map(x => (
@@ -340,7 +365,9 @@ export default function CollectionValuePage() {
                   ))}
                 </div>
                 <p style={{ fontSize: 11.5, color: 'var(--ink-mute)', margin: '8px 0 0' }}>
-                  Price moves are market changes; additions and removals are cards bought, sold, or re-marked as owned.
+                  {prevRebuilt
+                    ? `${monthLabel(prev!.month, true)} is rebuilt from each card’s latest price before ${monthLabel(selected, true)} began, so price moves are cards re-priced since. “No prior price” cards had no earlier mark, so their full value shows as added.`
+                    : 'Price moves are market changes; additions and removals are cards bought, sold, or re-marked as owned.'}
                 </p>
               </div>
             )}
@@ -375,7 +402,7 @@ export default function CollectionValuePage() {
                           <tr key={m.key} style={{ borderTop: '1px solid var(--rule)' }}>
                             <td style={{ ...td, fontWeight: 600 }}>
                               {m.name}
-                              {m.kind !== 'repriced' && <span className="chip" style={{ marginLeft: 8, fontSize: 9 }}>{m.kind === 'added' ? 'New' : 'Left'}</span>}
+                              {m.kind !== 'repriced' && <span className="chip" style={{ marginLeft: 8, fontSize: 9 }}>{m.kind === 'added' ? (prevRebuilt ? 'No prior price' : 'New') : 'Left'}</span>}
                             </td>
                             <td style={{ ...td, color: 'var(--ink-soft)' }}>{m.setTitle}</td>
                             <td style={{ ...td, color: 'var(--ink-soft)' }}>{m.condition}</td>
@@ -406,7 +433,7 @@ export default function CollectionValuePage() {
                           <td style={{ ...td, color: 'var(--ink-soft)' }}>{c.condition}</td>
                           <td style={{ ...tdR, fontWeight: 700 }}>{money(c.value)}</td>
                           <td style={tdR}>{cur.total_value ? ((c.value / cur.total_value) * 100).toFixed(1) : '0'}%</td>
-                          <td style={{ ...tdR, color: d === null ? 'var(--ink-mute)' : tone(d) }}>{d === null ? (prev ? 'New' : '—') : Math.abs(d) < 0.005 ? '—' : signed(d)}</td>
+                          <td style={{ ...tdR, color: d === null ? 'var(--ink-mute)' : tone(d) }}>{d === null ? (prev ? (prevRebuilt ? 'No prior price' : 'New') : '—') : Math.abs(d) < 0.005 ? '—' : signed(d)}</td>
                         </tr>
                       );
                     })}
@@ -438,7 +465,7 @@ export default function CollectionValuePage() {
             </div>
 
             <p style={{ fontSize: 11.5, color: 'var(--ink-mute)', marginTop: 14 }}>
-              Counts every card marked Owned, in personal and inventory sets, at its Value. Want-list cards aren&apos;t included, so this can be
+              Counts every card marked Owned, in personal and inventory sets, at its Value, plus your <Link href="/items" style={{ color: 'var(--teal)' }}>singles &amp; items</Link> at quantity × value. Want-list cards aren&apos;t included, so this can be
               lower than “Est. value” on the home page, which totals every row in every set.
             </p>
           </>
