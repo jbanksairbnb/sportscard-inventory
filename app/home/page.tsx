@@ -2018,6 +2018,7 @@ export default function HomePage() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sets, setSets] = useState<SetRow[]>([]);
+  const [itemTotals, setItemTotals] = useState({ cards: 0, value: 0 });
   const [avatar, setAvatar] = useState<string | null>(null);
   const [cover, setCover] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('Home');
@@ -2062,6 +2063,18 @@ export default function HomePage() {
         .eq('user_id', user.id)
         .order('updated_at', { ascending: false });
       if (data) setSets(data as SetRow[]);
+      // Singles & Items count toward the totals too. Not-owned lines (listed
+      // or sold) are left out, like a Not Owned set row.
+      const { data: itemData } = await supabase
+        .from('collection_items')
+        .select('qty, value, owned')
+        .eq('user_id', user.id);
+      const owned = ((itemData || []) as { qty: number | null; value: number | null; owned: boolean | null }[])
+        .filter(i => i.owned !== false);
+      setItemTotals({
+        cards: owned.reduce((n, i) => n + (i.qty || 0), 0),
+        value: owned.reduce((n, i) => n + (i.qty || 0) * (i.value || 0), 0),
+      });
       setLoading(false);
     }
     load();
@@ -2171,14 +2184,14 @@ export default function HomePage() {
         }} />
       {/* <SubNav active={activeTab} setActive={setActiveTab} /> */}
       <StatsStrip stats={[
-        { label: 'Cards owned', value: sets.reduce((n, s) => n + (s.owned_count || 0), 0).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}` },
+        { label: 'Cards owned', value: (sets.reduce((n, s) => n + (s.owned_count || 0), 0) + itemTotals.cards).toLocaleString() || '—', sub: `${sets.length} ${sets.length === 1 ? 'set' : 'sets'}${itemTotals.cards > 0 ? ` + ${itemTotals.cards.toLocaleString()} singles/items` : ''}` },
         { label: 'Sets tracked', value: sets.length.toString() || '—', sub: 'in progress' },
         { label: 'Want list', value: sets.reduce((n, s) => n + Math.max(0, (s.row_count || 0) - (s.owned_count || 0)), 0).toLocaleString() || '—', sub: 'chasing', onClick: () => setShowWantList(true) },
         {
           label: 'Est. value',
           value: profile.value_private
             ? '🔒 Private'
-                        : '$' + Math.round(sets.reduce((n, s) => n + (s.total_value || 0), 0) / 1000) + 'k',
+                        : '$' + Math.round((sets.reduce((n, s) => n + (s.total_value || 0), 0) + itemTotals.value) / 1000) + 'k',
           sub: profile.value_private ? 'click to reveal' : 'book price · click to hide',
           link: { label: '📈 Value tracker →', href: '/collection-value' },
           onClick: async () => {
