@@ -60,6 +60,9 @@ export type CardDescriptor = {
   // physical card alongside the comps. Front = Image 1, back = Image 2.
   image_front?: string | null;
   image_back?: string | null;
+  // Full title to show in the header when the usual year/brand/#number/player
+  // line would read badly (e.g. an item whose card number is an internal id).
+  display_title?: string | null;
 };
 
 type Row = {
@@ -1176,7 +1179,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
 
   if (!open) return null;
 
-  const cardTitle = [
+  const cardTitle = card.display_title?.trim() || [
     card.year ? String(card.year) : '',
     card.brand || '',
     card.card_number ? `#${card.card_number}` : '',

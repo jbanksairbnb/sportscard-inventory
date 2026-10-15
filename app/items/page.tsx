@@ -7,9 +7,13 @@ import { createClient } from '@/lib/supabase/client';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { parseCsv, toCsv } from '@/lib/csv';
 import SCLogo from '@/components/SCLogo';
+import MarketResearchModal from '@/components/MarketResearchModal';
+import { cardValueKey, trendFromRows, type Trend } from '@/lib/cardValueHistory';
+import { descriptorForItem } from '@/lib/cardDescriptor';
+import { recordManualValueMark } from '@/lib/recordValueMark';
 import {
-  ITEM_TYPES, emptyItem, itemTotals, parseItemRows, withValuePoint,
-  type CollectionItem, type ItemDraft, type ItemType, type ParsedItem,
+  ITEM_TYPES, emptyItem, itemTotals, parseItemRows, sortedIds, withValuePoint,
+  type CollectionItem, type ItemDraft, type ItemType, type ParsedItem, type SortKey, type SortState,
 } from '@/lib/collectionItems';
 
 // Singles, boxes, packs and anything else tracked outside a set. Edited inline
@@ -20,6 +24,16 @@ const money = (n: number) =>
   new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 const signed = (n: number) => `${n < 0 ? '−' : n > 0 ? '+' : ''}${money(Math.abs(n))}`;
 const tone = (n: number) => (n > 0.5 ? 'var(--teal)' : n < -0.5 ? 'var(--rust)' : 'var(--ink-mute)');
+
+const EMPTY_CARD = { year: null, brand: null, card_number: null, player: null, grade: null, grading_company: null, raw_grade: null };
+
+const COLUMNS: { key: SortKey; label: string; right?: boolean; minWidth?: number }[] = [
+  { key: 'item_type', label: 'Type' }, { key: 'first_name', label: 'First' }, { key: 'last_name', label: 'Last' },
+  { key: 'year', label: 'Year' }, { key: 'brand', label: 'Brand' }, { key: 'description', label: 'Description', minWidth: 220 },
+  { key: 'qty', label: 'Qty', right: true }, { key: 'cost', label: 'Cost ea.', right: true },
+  { key: 'invested', label: 'Invested', right: true }, { key: 'value', label: 'Value ea.', right: true },
+  { key: 'total', label: 'Total', right: true }, { key: 'gain', label: 'Gain / loss', right: true },
+];
 
 const cellInput: React.CSSProperties = {
   width: '100%', boxSizing: 'border-box', padding: '5px 6px', fontSize: 12.5,
@@ -83,6 +97,16 @@ export default function ItemsPage() {
   const [importing, setImporting] = useState<{ items: ParsedItem[]; skipped: number; asOf: string } | null>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The item whose market value is being researched, and each item's price
+  // trend (latest value vs the last different one) for the ▲/▼ badge.
+  const [researchId, setResearchId] = useState<string | null>(null);
+  const [trends, setTrends] = useState<Record<string, Trend>>({});
+  // Column sort. The order is worked out when a header is clicked (and rows
+  // added or removed), not on every keystroke, so a row you are typing in stays
+  // put instead of jumping as its own value changes. Click a header again to
+  // re-sort after editing.
+  const [sort, setSort] = useState<SortState | null>(null);
+  const [order, setOrder] = useState<string[] | null>(null);
 
   // Rows with unsaved edits, and the latest rows for blur handlers (which would
   // otherwise close over a stale render).
@@ -113,15 +137,37 @@ export default function ItemsPage() {
     })();
   }, [router]);
 
+  const loadTrends = useCallback(async () => {
+    if (!userId) return;
+    const { data } = await createClient().from('card_value_history')
+      .select('card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
+      .eq('user_id', userId).eq('set_slug', 'items');
+    const groups: Record<string, { market_value: number; created_at: string }[]> = {};
+    for (const r of (data || []) as Array<Record<string, any>>) {
+      const key = cardValueKey({
+        year: r.card_year, brand: r.card_brand, card_number: r.card_number,
+        grade: r.card_grade, grading_company: r.card_grading_company, raw_grade: r.card_raw_grade,
+      });
+      (groups[key] ||= []).push({ market_value: Number(r.market_value), created_at: r.created_at });
+    }
+    const out: Record<string, Trend> = {};
+    for (const k of Object.keys(groups)) { const t = trendFromRows(groups[k]); if (t) out[k] = t; }
+    setTrends(out);
+  }, [userId]);
+  useEffect(() => { loadTrends(); }, [loadTrends]);
+
   const edit = useCallback(<K extends keyof ItemDraft>(id: string, key: K, value: ItemDraft[K]) => {
     dirty.current.add(id);
     setRows(prev => prev.map(r => (r.id === id ? { ...r, [key]: value } : r)));
   }, []);
 
-  const persist = useCallback(async (id: string) => {
+  const persist = useCallback(async (id: string, patch?: Partial<ItemDraft>) => {
     if (!dirty.current.has(id)) return;
-    const r = rowsRef.current.find(x => x.id === id);
-    if (!r) return;
+    const base = rowsRef.current.find(x => x.id === id);
+    if (!base) return;
+    // `patch` carries an edit made in the same tick, before React has re-rendered
+    // and refreshed rowsRef.
+    const r = { ...base, ...patch };
     dirty.current.delete(id);
     const history = withValuePoint(r.value_history, r.value);
     if (history !== r.value_history) {
@@ -132,8 +178,16 @@ export default function ItemsPage() {
       brand: r.brand, description: r.description, qty: r.qty, cost: r.cost, value: r.value,
       value_history: history, updated_at: new Date().toISOString(),
     }).eq('id', id);
-    if (err) { dirty.current.add(id); setSaveError(err.message); } else setSaveError(null);
-  }, []);
+    if (err) { dirty.current.add(id); setSaveError(err.message); return; }
+    setSaveError(null);
+    // A changed value is also a mark on the item's price history, so its trend
+    // badge and research history reflect typed prices too. A value that came
+    // from the research modal already has its mark and is skipped there.
+    if (history !== r.value_history && r.value > 0) {
+      const ok = await recordManualValueMark(r.user_id, descriptorForItem(r), r.value);
+      if (ok) loadTrends();
+    }
+  }, [loadTrends]);
 
   async function addItem() {
     if (!userId) return;
@@ -205,14 +259,26 @@ export default function ItemsPage() {
     URL.revokeObjectURL(a.href);
   }
 
+  function clickHeader(key: SortKey) {
+    // asc → desc → back to the original order.
+    const next: SortState | null = !sort || sort.key !== key ? { key, dir: 'asc' }
+      : sort.dir === 'asc' ? { key, dir: 'desc' } : null;
+    setSort(next);
+    setOrder(next ? sortedIds(rowsRef.current, next) : null);
+  }
+
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter(r => {
+    const filtered = rows.filter(r => {
       if (typeFilter !== 'all' && r.item_type !== typeFilter) return false;
       if (!q) return true;
       return [r.first_name, r.last_name, r.brand, r.description, r.year].some(v => String(v ?? '').toLowerCase().includes(q));
     });
-  }, [rows, typeFilter, search]);
+    if (!order) return filtered;
+    // Rows added since the sort (not in `order`) stay at the end, in entry order.
+    const pos = new Map(order.map((id, i) => [id, i]));
+    return filtered.slice().sort((a, b) => (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity));
+  }, [rows, typeFilter, search, order]);
 
   const totals = useMemo(() => shown.reduce((a, r) => {
     const t = itemTotals(r);
@@ -224,6 +290,15 @@ export default function ItemsPage() {
     for (const r of rows) c[r.item_type] = (c[r.item_type] || 0) + 1;
     return c;
   }, [rows]);
+
+  const researchRow = rows.find(r => r.id === researchId) ?? null;
+  // Memoized on the fields that define the card, so the modal's own effects
+  // don't re-run when only the value changes underneath it.
+  const researchCard = useMemo(
+    () => (researchRow ? descriptorForItem(researchRow) : EMPTY_CARD),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [researchRow?.id, researchRow?.first_name, researchRow?.last_name, researchRow?.year, researchRow?.brand, researchRow?.description],
+  );
 
   if (loading) {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SCLogo size={80} /></div>;
@@ -311,9 +386,21 @@ export default function ItemsPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
                 <thead style={{ background: 'var(--plum)', color: 'var(--mustard)', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
                   <tr>
-                    <th style={th}>Type</th><th style={th}>First</th><th style={th}>Last</th><th style={th}>Year</th><th style={th}>Brand</th>
-                    <th style={{ ...th, minWidth: 220 }}>Description</th><th style={thR}>Qty</th><th style={thR}>Cost ea.</th>
-                    <th style={thR}>Invested</th><th style={thR}>Value ea.</th><th style={thR}>Total</th><th style={thR}>Gain / loss</th><th style={th} />
+                    {COLUMNS.map(c => {
+                      const active = sort?.key === c.key;
+                      return (
+                        <th key={c.key} style={{ ...(c.right ? thR : th), minWidth: c.minWidth, cursor: 'pointer', userSelect: 'none' }}
+                          onClick={() => clickHeader(c.key)}
+                          aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          title={`Sort by ${c.label}`}>
+                          {c.label}
+                          <span style={{ marginLeft: 4, opacity: active ? 1 : 0.35, fontSize: 9 }}>
+                            {active ? (sort!.dir === 'asc' ? '▲' : '▼') : '↕'}
+                          </span>
+                        </th>
+                      );
+                    })}
+                    <th style={th} />
                   </tr>
                 </thead>
                 <tbody>
@@ -356,7 +443,26 @@ export default function ItemsPage() {
                         <td style={{ padding: '3px 4px' }}>{num('qty', 52, '1')}</td>
                         <td style={{ padding: '3px 4px' }}>{num('cost', 84, 'any')}</td>
                         <td style={tdR}>{money(t.invested)}</td>
-                        <td style={{ padding: '3px 4px' }}>{num('value', 84, 'any')}</td>
+                        <td style={{ padding: '3px 4px', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            {num('value', 84, 'any')}
+                            <button type="button" title="Research market price from sold comps" aria-label="Research market price"
+                              onClick={() => setResearchId(r.id)}
+                              style={{ background: 'transparent', border: 0, color: 'var(--teal)', cursor: 'pointer', fontSize: 14, padding: 2 }}>📈</button>
+                            {(() => {
+                              const tr = trends[cardValueKey(descriptorForItem(r))];
+                              if (!tr) return null;
+                              const color = tr.direction === 'up' ? 'var(--teal)' : tr.direction === 'down' ? 'var(--rust)' : 'var(--ink-mute)';
+                              const arrow = tr.direction === 'up' ? '▲' : tr.direction === 'down' ? '▼' : '→';
+                              return (
+                                <span title={`Latest $${tr.latest.toFixed(2)} vs prior $${tr.previous.toFixed(2)}`}
+                                  style={{ fontSize: 10, fontWeight: 700, color, minWidth: 30 }}>
+                                  {arrow}{tr.pct !== null ? `${tr.pct >= 0 ? '+' : ''}${tr.pct.toFixed(0)}%` : ''}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                        </td>
                         <td style={{ ...tdR, fontWeight: 700 }}>{money(t.worth)}</td>
                         <td style={{ ...tdR, color: tone(t.gain) }}>{r.cost || r.value ? signed(t.gain) : '—'}</td>
                         <td style={{ padding: '3px 6px' }}>
@@ -392,6 +498,18 @@ export default function ItemsPage() {
           </>
         )}
       </div>
+
+      <MarketResearchModal
+        open={!!researchRow}
+        onClose={() => { setResearchId(null); loadTrends(); }}
+        card={researchCard}
+        onApply={(value) => {
+          if (!researchRow) return;
+          const v = Math.round(value * 100) / 100;
+          edit(researchRow.id, 'value', v);
+          void persist(researchRow.id, { value: v });
+        }}
+      />
     </div>
   );
 }
