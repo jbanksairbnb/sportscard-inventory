@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 
 const RAW_GRADES = ['Gem Mint', 'Mint', 'NM-MT', 'NM', 'EXMT', 'EX', 'VG-EX', 'VG', 'G', 'P'];
-const GRADING_COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
+const GRADING_COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG', 'DEGREE'];
 
 const RAW_GRADE_RANKS: Record<string, number> = {
   'P': 0,
@@ -81,7 +81,7 @@ type Hit = Listing & {
   matched_sets: { slug: string; title: string }[];
 };
 
-type FilterId = 'all' | 'raw' | 'PSA' | 'SGC' | 'BGS' | 'CGC' | 'TAG';
+type FilterId = 'all' | 'raw' | 'PSA' | 'SGC' | 'BGS' | 'CGC' | 'TAG' | 'DEGREE';
 
 function fmtMoney(n: number | null) {
   if (n == null) return '—';
@@ -332,7 +332,7 @@ export default function WantListHitsFeed() {
   }, [hits, filter]);
 
   const counts = useMemo(() => {
-    const c: Record<FilterId, number> = { all: hits.length, raw: 0, PSA: 0, SGC: 0, BGS: 0, CGC: 0, TAG: 0 };
+    const c: Record<FilterId, number> = { all: hits.length, raw: 0, PSA: 0, SGC: 0, BGS: 0, CGC: 0, TAG: 0, DEGREE: 0 };
     for (const h of hits) {
       if (h.condition_type === 'raw') c.raw++;
       else if (h.grading_company && (GRADING_COMPANIES as readonly string[]).includes(h.grading_company)) {
@@ -370,6 +370,7 @@ export default function WantListHitsFeed() {
     { id: 'BGS', label: 'BGS' },
     { id: 'CGC', label: 'CGC' },
     { id: 'TAG', label: 'TAG' },
+    { id: 'DEGREE', label: 'Degree' },
   ];
 
   return (

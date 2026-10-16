@@ -39,7 +39,7 @@ export function targetGradeToPsa(targetType: string, value: string): number | nu
   if (!v) return null;
   if (targetType === 'Raw') return rawGradeToPsa(v);
   // Graded: strip any "PSA " / "SGC " prefix, parse what's left.
-  const stripped = v.replace(/^(PSA|SGC|BGS|CGC|BVG|TAG|HGA|GMA|AGS)\s*/i, '').trim();
+  const stripped = v.replace(/^(PSA|SGC|BGS|CGC|BVG|TAG|DEGREE|HGA|GMA|AGS)\s*/i, '').trim();
   const n = parseFloat(stripped);
   return Number.isFinite(n) ? n : null;
 }
