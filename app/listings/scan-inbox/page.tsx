@@ -15,7 +15,7 @@ type ConditionType = 'raw' | 'graded';
 type ShippingOption = { label: string; cost: number; additional_cost?: number; cap?: number | null };
 
 const RAW_GRADES = SHARED_RAW_GRADES as readonly string[];
-const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'];
+const COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG', 'DEGREE'];
 const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
 const GRADE_LABELS: Record<string, string> = {
   '10': 'GEM MT', '9.5': 'GEM MT', '9': 'MINT',

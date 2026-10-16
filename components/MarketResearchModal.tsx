@@ -27,7 +27,7 @@ type SourceValue = (typeof RESEARCH_SOURCES)[number]['value'];
 // BVG, CGC and TAG are here because a pulled comp can legitimately carry one:
 // when the exact grade is thin we widen across graders on a comparable scale,
 // and a row whose company isn't in this list would render as an empty select.
-const GRADING_COMPANIES = ['Raw', 'PSA', 'SGC', 'BGS', 'BVG', 'CGC', 'CSG', 'TAG', 'Other'] as const;
+const GRADING_COMPANIES = ['Raw', 'PSA', 'SGC', 'BGS', 'BVG', 'CGC', 'CSG', 'TAG', 'DEGREE', 'Other'] as const;
 type GradingCompany = (typeof GRADING_COMPANIES)[number];
 
 const RAW_GRADES = ['GEM MINT', 'MINT', 'NM-MT', 'NM', 'EX-MT', 'EX', 'VG-EX', 'VG', 'GD', 'FR', 'PR'];

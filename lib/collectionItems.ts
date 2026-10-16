@@ -23,7 +23,7 @@ export type ItemValuePoint = { at: string; value: number };
 export type Condition = 'raw' | 'graded';
 
 // Same company list the set tables offer.
-export const GRADING_COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG'] as const;
+export const GRADING_COMPANIES = ['PSA', 'SGC', 'BGS', 'CGC', 'TAG', 'DEGREE'] as const;
 // 10, 9.5 … 1 — the numeric grades a set row offers.
 export const NUMERIC_GRADES = Array.from({ length: 19 }, (_, i) => (10 - i * 0.5).toString().replace(/\.0$/, ''));
 
@@ -106,7 +106,7 @@ export function displayToIso(text: string | null | undefined): string | null {
 }
 
 // A grader and grade written in free text — "PSA 7", "BGS 9.5", "SGC6".
-const GRADE_RE = /\b(PSA|BGS|BVG|SGC|CGC|CSG|HGA|GAI|TAG)\s*-?\s*(10|[0-9](?:\.5)?)\b/i;
+const GRADE_RE = /\b(PSA|BGS|BVG|SGC|CGC|CSG|HGA|GAI|TAG|DEGREE)\s*-?\s*(10|[0-9](?:\.5)?)\b/i;
 export function parseGradeFromText(text: string | null | undefined): { company: string; grade: string } | null {
   const m = GRADE_RE.exec(text ?? '');
   return m ? { company: m[1].toUpperCase(), grade: m[2] } : null;
