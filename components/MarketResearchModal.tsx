@@ -123,6 +123,10 @@ type Props = {
   onClose: () => void;
   card: CardDescriptor;
   onApply?: (marketValue: number) => void;   // called when user clicks "Use this value"
+  // Called when editing or deleting price-history entries changes which value
+  // is the card's latest, so the owner's stored Value can follow it. Only
+  // passed where the modal prices an owned card (not a listing's asking price).
+  onLatestValueChange?: (marketValue: number) => void;
 };
 
 function emptyRow(position: number, defaults: { company: string; grade: string } = { company: '', grade: '' }): Row {
@@ -555,7 +559,7 @@ function sourceDisplay(s: SourceValue, label: string | null): string {
 
 const INSTRUCTIONS = `Use this to set a market value for your card based on recent comps. Pull from whichever sources you trust — eBay sold listings, VCP, Card Ladder, Beckett, your own gut — and weight each row by how comparable it is to your card (centering, corners, eye appeal). Weights must add to 100% but you don't need multiple rows; if you love VCP, put one row at 100% and you're done. Every entry is saved so you can revisit your research later.`;
 
-export default function MarketResearchModal({ open, onClose, card, onApply }: Props) {
+export default function MarketResearchModal({ open, onClose, card, onApply, onLatestValueChange }: Props) {
   const [userId, setUserId] = useState<string>('');
   // Which history bar the user has opened to inspect its comps.
   const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
@@ -589,6 +593,11 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // When the working draft was seeded from a prior history entry, remember it
   // so the next commit records the lineage.
   const [derivedFromId, setDerivedFromId] = useState<string | null>(null);
+  // The price-history entry being edited in place. While set, saving replaces
+  // that entry's analysis and value but keeps its date — used to rework one
+  // month's value (e.g. with Card Ladder data) without adding another point.
+  const [editingMarkId, setEditingMarkId] = useState<string | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [community, setCommunity] = useState<CommunitySession[]>([]);
   const cardIsGraded = !!card.grading_company
     && card.grading_company.toLowerCase() !== 'raw'
@@ -669,6 +678,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       // visible in the history panel below the form.
       setActiveSession(null);
       setDerivedFromId(null);
+      setEditingMarkId(null);
       setRows(Array.from({ length: 5 }, (_, i) => emptyRow(i, cardDefaults)));
       setNotes('');
       setAutoSaveTick('idle');
@@ -857,6 +867,11 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
     () => valueHistory.find(h => h.id === selectedMarkId) ?? null,
     [valueHistory, selectedMarkId],
   );
+  const editingEntry = useMemo(
+    () => valueHistory.find(h => h.id === editingMarkId) ?? null,
+    [valueHistory, editingMarkId],
+  );
+  const modalTopRef = useRef<HTMLDivElement>(null);
 
   function updateRow(idx: number, patch: Partial<Row>) {
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
@@ -998,6 +1013,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
   // history, with no % change against the prior mark.
   async function commitHistory(): Promise<string | null> {
     if (!userId || !totals.weightOk) return null;
+    if (editingMarkId) return replaceEditedMark(editingMarkId);
     const analysisRows: AnalysisRow[] = rows.filter(rowHasUserContent).map(r => ({
       position: r.position,
       source: r.source,
@@ -1050,6 +1066,90 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       setDerivedFromId(row.id); // subsequent commits chain off this one
     }
     return null;
+  }
+
+  // The analysis currently in the table, in snapshot form.
+  function currentAnalysis() {
+    const analysisRows: AnalysisRow[] = rows.filter(rowHasUserContent).map(r => ({
+      position: r.position,
+      source: r.source,
+      source_label: r.source === 'other' ? (r.source_label.trim() || null) : null,
+      grade_company: r.grade_company || null,
+      grade_value: r.grade_value || null,
+      sale_date: r.sale_date || null,
+      price: r.price !== '' ? Number(r.price) : null,
+      weight_pct: r.weight_pct !== '' ? Number(r.weight_pct) : null,
+      url: r.url.trim() || null,
+      notes: r.notes.trim() || null,
+    }));
+    const value = totals.marketValue;
+    const trimmedNotes = notes.trim() || null;
+    return { analysisRows, value, trimmedNotes, normalized: normalizeAnalysis(analysisRows, trimmedNotes, value) };
+  }
+
+  // Tell the owner's page when the newest entry's value moved, so the card's
+  // stored Value follows its history.
+  function syncLatest(before: ValueHistoryRow[], after: ValueHistoryRow[]) {
+    if (!onLatestValueChange || !after.length) return;
+    const was = before[0];
+    const now = after[0];
+    if (!was || was.id !== now.id || Math.abs(was.market_value - now.market_value) >= 0.005) {
+      onLatestValueChange(now.market_value);
+    }
+  }
+
+  // Overwrite one history entry with the analysis in the table. Its date stays,
+  // so the series keeps one point for that period instead of gaining another.
+  async function replaceEditedMark(markId: string): Promise<string | null> {
+    const target = valueHistory.find(h => h.id === markId);
+    if (!target) return 'That history entry no longer exists.';
+    const { analysisRows, value, trimmedNotes, normalized } = currentAnalysis();
+    const snapshot: AnalysisSnapshot = { notes: trimmedNotes, market_value: value, rows: analysisRows };
+    const supabase = createClient();
+    const { data, error } = await supabase.from('card_value_history')
+      .update({
+        market_value: value,
+        snapshot,
+        content_hash: contentHash(normalized),
+        mark_kind: 'research',
+        // The double-save key named the entry's original content; it no longer
+        // describes this row.
+        dedupe_key: null,
+      })
+      .eq('id', markId).eq('user_id', userId)
+      .select('*').single();
+    if (error) return error.message;
+    const updated = data as unknown as ValueHistoryRow;
+    const before = valueHistory;
+    const after = valueHistory.map(h => (h.id === markId ? updated : h));
+    setValueHistory(after);
+    setEditingMarkId(null);
+    setDerivedFromId(markId);
+    syncLatest(before, after);
+    return null;
+  }
+
+  // Remove history entries for good (a collapsed run deletes every mark in it).
+  async function deleteMarks(ids: string[], label: string) {
+    if (!ids.length || !userId) return;
+    const msg = ids.length > 1
+      ? `Delete the ${label} history entry? This value was recorded ${ids.length} times; all ${ids.length} will be removed. This can't be undone.`
+      : `Delete the ${label} history entry? This can't be undone.`;
+    if (!window.confirm(msg)) return;
+    setHistoryBusy(true);
+    setHistoryError(null);
+    const supabase = createClient();
+    const { error } = await supabase.from('card_value_history').delete().in('id', ids).eq('user_id', userId);
+    setHistoryBusy(false);
+    if (error) { setHistoryError(error.message); return; }
+    const gone = new Set(ids);
+    const before = valueHistory;
+    const after = valueHistory.filter(h => !gone.has(h.id));
+    setValueHistory(after);
+    if (editingMarkId && gone.has(editingMarkId)) setEditingMarkId(null);
+    if (derivedFromId && gone.has(derivedFromId)) setDerivedFromId(null);
+    if (selectedMarkId && gone.has(selectedMarkId)) setSelectedMarkId(null);
+    syncLatest(before, after);
   }
 
   // Persist current session + data points. Returns true on success. The UI
@@ -1138,6 +1238,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       alert('Weights must total 100% with at least one row that has a price filled in.');
       return;
     }
+    if (editingMarkId) { await save(); return; }
     setSaving(true);
     setHistoryError(null);
     const ok = await queueSave();
@@ -1268,7 +1369,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
       display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
       padding: '40px 16px', overflowY: 'auto',
     }}>
-      <div onClick={(e) => e.stopPropagation()} className="panel-bordered"
+      <div ref={modalTopRef} onClick={(e) => e.stopPropagation()} className="panel-bordered"
         style={{ width: '100%', maxWidth: 1100, padding: 24, background: 'var(--cream)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
           {(() => {
@@ -1601,6 +1702,25 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
             <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'stretch', marginBottom: 22 }}>
               {/* Actions */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center', minWidth: 220 }}>
+                {editingEntry ? (
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px',
+                    border: '1.5px solid var(--orange)', borderRadius: 6, background: 'var(--paper)',
+                  }}>
+                    <div style={{ fontSize: 12, color: 'var(--plum)', lineHeight: 1.45 }}>
+                      Editing the <b>{new Date(editingEntry.created_at).toLocaleDateString()}</b> entry
+                      ({fmtMoney(editingEntry.market_value)}). Saving replaces it and keeps its date.
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button type="button" onClick={save} disabled={saving || !totals.weightOk}
+                        className="btn btn-primary btn-sm">
+                        {saving ? 'Saving…' : `💾 Replace with ${totals.weightOk ? fmtMoney(totals.marketValue) : 'value'}`}
+                      </button>
+                      <button type="button" onClick={() => setEditingMarkId(null)} disabled={saving}
+                        className="btn btn-ghost btn-sm">Cancel edit</button>
+                    </div>
+                  </div>
+                ) : (
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
                   <button type="button" onClick={save} disabled={saving || !totals.weightOk}
                     className="btn btn-ghost btn-sm">{saving ? 'Saving…' : '💾 Save research'}</button>
@@ -1609,6 +1729,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                     {saving ? 'Saving…' : `→ Use ${totals.weightOk ? fmtMoney(totals.marketValue) : 'value'}`}
                   </button>
                 </div>
+                )}
                 <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>
                   {autoSaveTick === 'pending' && '· autosave pending…'}
                   {autoSaveTick === 'saving' && '· autosaving…'}
@@ -1619,8 +1740,7 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                     fontSize: 11.5, lineHeight: 1.5, color: 'var(--rust)', fontWeight: 600,
                     background: 'var(--paper)', border: '1.5px solid var(--rust)', borderRadius: 6, padding: '8px 10px',
                   }}>
-                    Your research was saved, but this analysis could not be added to the card&apos;s
-                    price history, so it won&apos;t show a change vs. your prior value.
+                    Your research was saved, but the card&apos;s price history could not be updated.
                     <div className="mono" style={{ fontSize: 10.5, fontWeight: 400, marginTop: 4 }}>{historyError}</div>
                   </div>
                 )}
@@ -1663,13 +1783,26 @@ export default function MarketResearchModal({ open, onClose, card, onApply }: Pr
                 </div>
                 <ValueHistoryList
                   items={valueHistory}
+                  editingId={editingMarkId}
+                  busy={historyBusy || saving}
                   onUse={(h) => {
                     setRows(rowsFromSnapshot(h.snapshot, cardDefaults));
                     setNotes(h.snapshot?.notes || '');
                     setActiveSession(null);   // fork a fresh working session; don't overwrite
                     setDerivedFromId(h.id);   // lineage recorded on the next commit
+                    setEditingMarkId(null);
                     setAutoSaveTick('idle');
                   }}
+                  onEdit={(h) => {
+                    setRows(rowsFromSnapshot(h.snapshot, cardDefaults));
+                    setNotes(h.snapshot?.notes || '');
+                    setActiveSession(null);
+                    setDerivedFromId(h.id);
+                    setEditingMarkId(h.id);
+                    setAutoSaveTick('idle');
+                    modalTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
+                  onDelete={(ids, h) => deleteMarks(ids, new Date(h.created_at).toLocaleDateString())}
                 />
               </section>
             )}
@@ -1767,13 +1900,29 @@ function PastList({ items, showNotes }: {
 // Immutable price-history entries (newest first). Each entry shows its comps
 // from the stored snapshot, the notes, and its change vs the chronologically
 // previous commit, plus a "Use this analysis" button to fork it into the form.
-function ValueHistoryList({ items, onUse }: {
+function ValueHistoryList({ items, onUse, onEdit, onDelete, editingId, busy }: {
   items: ValueHistoryRow[];
   onUse: (h: ValueHistoryRow) => void;
+  onEdit: (h: ValueHistoryRow) => void;
+  // Every mark id in the entry's run, plus the entry itself.
+  onDelete: (ids: string[], h: ValueHistoryRow) => void;
+  editingId: string | null;
+  busy: boolean;
 }) {
   // One entry per price held: marks that restate the previous value fold into
   // the entry that set it (oldest mark kept, with its date range).
-  const runs = collapseUnchanged(items.slice().reverse()).reverse();
+  const chronological = items.slice().reverse();
+  const runs = collapseUnchanged(chronological).reverse();
+  // Which marks each run covers, so deleting an entry removes all of it.
+  const runIds = new Map<string, string[]>();
+  {
+    let current: string | null = null;
+    const starts = new Set(runs.map(r => r.mark.id));
+    for (const m of chronological) {
+      if (starts.has(m.id)) current = m.id;
+      if (current) (runIds.get(current) ?? runIds.set(current, []).get(current)!).push(m.id);
+    }
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {runs.map((run, i) => {
@@ -1786,7 +1935,10 @@ function ValueHistoryList({ items, onUse }: {
           : delta > 0.005 ? 'up' : delta < -0.005 ? 'down' : 'flat';
         const snapRows = dedupeByPosition((h.snapshot?.rows || []).slice().sort((a, b) => a.position - b.position));
         return (
-          <div key={h.id} className="panel" style={{ padding: 12, background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 6 }}>
+          <div key={h.id} className="panel" style={{
+            padding: 12, background: 'var(--paper)', borderRadius: 6,
+            border: editingId === h.id ? '2px solid var(--orange)' : '1px solid var(--rule)',
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
               <span className="mono" style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 700 }}>
                 {new Date(h.created_at).toLocaleDateString()}
@@ -1814,10 +1966,23 @@ function ValueHistoryList({ items, onUse }: {
                     : `${delta >= 0 ? '+' : ''}${fmtMoney(delta)}`}
                 </span>
               )}
-              <button type="button" onClick={() => onUse(h)}
-                className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 11 }}>
-                ↳ Use this analysis
-              </button>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => onUse(h)} disabled={busy}
+                  className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                  title="Start a new analysis from this one (saved as a new entry dated today)">
+                  ↳ Use this analysis
+                </button>
+                <button type="button" onClick={() => onEdit(h)} disabled={busy || editingId === h.id}
+                  className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
+                  title="Rework this entry's comps and value; it keeps its date">
+                  {editingId === h.id ? '✎ Editing…' : '✎ Edit entry'}
+                </button>
+                <button type="button" onClick={() => onDelete(runIds.get(h.id) ?? [h.id], h)} disabled={busy}
+                  className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--rust)' }}
+                  title="Remove this entry from the price history">
+                  🗑 Delete
+                </button>
+              </div>
             </div>
             {snapRows.length > 0 && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, fontSize: 11.5, color: 'var(--ink-soft)' }}>
