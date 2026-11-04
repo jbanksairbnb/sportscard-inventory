@@ -1255,7 +1255,53 @@ export default function MarketResearchModal({ open, onClose, card, onApply, onLa
     onClose();
   }
 
+  // The most recent analysis on this card: the newest price-history entry or
+  // the newest saved session, whichever is later. A CSV import or an edited
+  // history entry only ever lands in the history, so looking at sessions alone
+  // left the summary box showing older work. Imported market medians aren't
+  // the owner's analysis and don't count.
+  const latestMark = useMemo(
+    () => valueHistory.find(h => h.mark_kind !== 'cardsight') ?? null,
+    [valueHistory],
+  );
+  const recent = useMemo(() => {
+    const sessionWhen = latestSession
+      ? (latestSession.session.updated_at || latestSession.session.created_at) : null;
+    const useMark = !!latestMark && (!sessionWhen || latestMark.created_at.localeCompare(sessionWhen) >= 0);
+    if (useMark && latestMark) {
+      return {
+        kind: 'mark' as const,
+        when: latestMark.created_at,
+        value: latestMark.market_value as number | null,
+        notes: (latestMark.snapshot?.notes || '').trim(),
+        rows: dedupeByPosition((latestMark.snapshot?.rows || []).slice().sort((a, b) => a.position - b.position))
+          .map(d => ({ ...d, grade_condition: null as string | null })),
+      };
+    }
+    if (!latestSession) return null;
+    return {
+      kind: 'session' as const,
+      when: sessionWhen as string,
+      value: latestSession.session.market_value,
+      notes: (latestSession.session.notes || '').trim(),
+      rows: (latestSession.data_points || [])
+        .filter(dataPointHasUserContent)
+        .sort((a, b) => a.position - b.position),
+    };
+  }, [latestMark, latestSession]);
+
   function loadFromLatest() {
+    if (recent?.kind === 'mark' && latestMark) {
+      // Same as "Use this analysis" on the history entry: a fresh working
+      // session seeded from it, saved as a new entry.
+      setRows(rowsFromSnapshot(latestMark.snapshot, cardDefaults));
+      setNotes(latestMark.snapshot?.notes || '');
+      setActiveSession(null);
+      setDerivedFromId(latestMark.id);
+      setEditingMarkId(null);
+      setAutoSaveTick('idle');
+      return;
+    }
     if (!latestSession) return;
     setRows(rowsFromDataPoints(latestSession.data_points, cardDefaults));
     setNotes(latestSession.session.notes || '');
@@ -1477,18 +1523,16 @@ export default function MarketResearchModal({ open, onClose, card, onApply, onLa
             )}
           </div>
         )}
-        {latestSession && !sessionId && (() => {
+        {recent && !sessionId && (() => {
           // The form deliberately opens blank so a new analysis never starts
           // half-filled. The cost was that a card with saved work looked exactly
           // like one with none — the only tell was a ghost button, which reads as
           // "your research is gone". So show the saved rows right here: opening
           // the card surfaces the analysis, and pulling it into the form for
           // editing stays a deliberate click.
-          const saved = (latestSession.data_points || [])
-            .filter(dataPointHasUserContent)
-            .sort((a, b) => a.position - b.position);
-          const when = new Date(latestSession.session.updated_at || latestSession.session.created_at).toLocaleDateString();
-          const sessionNotes = (latestSession.session.notes || '').trim();
+          const saved = recent.rows;
+          const when = new Date(recent.when).toLocaleDateString();
+          const sessionNotes = recent.notes;
           return (
             <div style={{ padding: '10px 12px', background: 'var(--paper)', border: '1.5px solid var(--rule)', borderRadius: 8, marginBottom: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1497,11 +1541,11 @@ export default function MarketResearchModal({ open, onClose, card, onApply, onLa
                       `created_at` would show when the session was first opened, which
                       on a resumed analysis is not the day the work was done. */}
                   You analyzed this card on <strong>{when}</strong>
-                  {latestSession.session.market_value !== null ? <> · {fmtMoney(latestSession.session.market_value)}</> : null}
+                  {recent.value !== null ? <> · {fmtMoney(recent.value)}</> : null}
                   {saved.length > 0 ? <> · {saved.length} {saved.length === 1 ? 'comp' : 'comps'}</> : null}.
                 </span>
                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {sessionNeedsMark && (
+                  {recent.kind === 'session' && sessionNeedsMark && (
                     <button type="button" onClick={restoreSessionToHistory} disabled={restoring}
                       className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}
                       title="Chart this analysis in the price history below, dated to the day you did it">
@@ -1523,10 +1567,10 @@ export default function MarketResearchModal({ open, onClose, card, onApply, onLa
                 <div style={{ overflowX: 'auto', marginTop: 8 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                     <tbody>
-                      {saved.map(d => (
-                        <tr key={d.id} style={{ borderTop: '1px solid var(--rule)' }}>
+                      {saved.map((d, i) => (
+                        <tr key={i} style={{ borderTop: '1px solid var(--rule)' }}>
                           <td style={{ padding: '4px 8px 4px 0', color: 'var(--ink-soft)' }}>
-                            {sourceDisplay(d.source, d.source_label)}
+                            {sourceDisplay(d.source as SourceValue, d.source_label)}
                           </td>
                           <td style={{ padding: '4px 8px', color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
                             {[d.grade_company, d.grade_value].filter(Boolean).join(' ') || d.grade_condition || '—'}
