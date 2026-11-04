@@ -24,6 +24,8 @@ export type ImportedSale = {
   price: number | null;
   variant: string | null;   // "Gray Back", "variant unstated", …
   qualifier: string | null; // "MC", "OC", …
+  format: string | null;    // "Auction", "Buy It Now", … — from the Sale Format(s)
+                            // column, else from the entry's own text
   url: string | null;
   used: boolean;            // named in Value Basis as part of the value
 };
@@ -34,6 +36,7 @@ export type CsvValueRow = {
   player: string;
   gradingCompany: string;
   grade: string;
+  rawGrade: string;
   value: number | null;
   basis: string;
   sales: ImportedSale[];
@@ -57,8 +60,25 @@ const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
-// "Sep 26: $1,100.00 (Gray Back) [MC]" → parts. `year` comes from the column
-// header ("Aug-Oct 2026 Sale(s)") since the entries themselves omit it.
+// Words that name how a sale was made rather than what was sold.
+const FORMAT_RE = /^(auction|buy it now|buy-it-now|bin|best offer( accepted)?|fixed price)$/i;
+
+// Text inside the first top-level (...) — "(VG-VGEX (crease), Auction)" gives
+// "VG-VGEX (crease), Auction", where a plain regex would stop at "(crease".
+function firstParenGroup(s: string): string | null {
+  const start = s.indexOf('(');
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')' && --depth === 0) return s.slice(start + 1, i);
+  }
+  return s.slice(start + 1);
+}
+
+// "Sep 26: $1,100.00 (Gray Back) [MC]", "Oct 20: $1,250.00 [MK] (Buy It Now)",
+// "Oct 16: $22.50 (VG-VGEX (crease), Auction)" → parts. `year` comes from the
+// column header ("Aug-Oct 2026 Sale(s)") since the entries themselves omit it.
 export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url' | 'used'> | null {
   const text = entry.trim();
   if (!text) return null;
@@ -71,10 +91,42 @@ export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url'
     ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     : null;
   const rest = text.slice(m[0].length);
-  const variant = rest.match(/\(([^)]*)\)/)?.[1]?.trim() || null;
   const qualifier = rest.match(/\[([^\]]*)\]/)?.[1]?.trim() || null;
+  // The parenthesis holds a variant/condition and/or the sale format, comma
+  // separated: "Gray Back", "Buy It Now", "VG-VGEX (crease), Auction".
+  const parts = (firstParenGroup(rest) ?? '').split(/,(?![^(]*\))/).map(p => p.trim()).filter(Boolean);
+  const format = parts.find(p => FORMAT_RE.test(p)) ?? null;
+  const variant = parts.filter(p => !FORMAT_RE.test(p)).join(', ') || null;
   const label = `${m[1]} ${m[2]}: $${m[3]}`;
-  return { sale_date, label, price, variant, qualifier };
+  return { sale_date, label, price, variant, qualifier, format };
+}
+
+// Whether `text` names this sale ("Sep 5: $1,249.00"), and not merely a longer
+// price that starts the same way ("Sep 5: $1,249.001").
+function mentions(text: string, label: string): boolean {
+  let i = text.indexOf(label);
+  while (i >= 0) {
+    if (!/[\d.]/.test(text[i + label.length] ?? '')) return true;
+    i = text.indexOf(label, i + 1);
+  }
+  return false;
+}
+
+// Which sales the value was averaged from, read off Value Basis.
+//   "average of 2 White Back sale(s) (Sep 5: …, Aug 28: …)" → the named ones;
+//   "average of 3 unqualified sale(s) (… excluded: Oct 20: …)" → all but the
+//     excluded ones;
+//   "average of 3 GMCards range sale(s)" → all of them.
+function markUsed(sales: ImportedSale[], basis: string) {
+  const exAt = basis.search(/exclud/i);
+  const included = exAt >= 0 ? basis.slice(0, exAt) : basis;
+  const excluded = exAt >= 0 ? basis.slice(exAt) : '';
+  const named = sales.filter(s => mentions(included, s.label));
+  if (named.length) {
+    for (const s of sales) s.used = named.includes(s);
+    return;
+  }
+  for (const s of sales) s.used = !mentions(excluded, s.label);
 }
 
 // Locate a column by exact header (case-insensitive) or by a pattern.
@@ -99,8 +151,10 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
   const iPlayer = findCol(headers, 'Description', 'Player');
   const iCompany = findCol(headers, 'Grading Company');
   const iGrade = findCol(headers, 'Grade');
+  const iRawGrade = findCol(headers, 'Raw Grade');
   const iSales = findCol(headers, /sale\(s\)\s*$/i, /^sales?$/i);
   const iLinks = findCol(headers, /link\(s\)\s*$/i, /^sale links?$/i);
+  const iFormats = findCol(headers, /format\(s\)\s*$/i, /^sale formats?$/i, /^formats?$/i);
   const iBasis = findCol(headers, 'Value Basis', 'Basis', 'Value Notes');
 
   const yearInHeader = iSales >= 0 ? headers[iSales].match(/\b(19|20)\d{2}\b/)?.[0] : undefined;
@@ -113,21 +167,24 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
     if (!cardNumber) return;
     const basis = cell(iBasis);
     const links = cell(iLinks).split('|').map(s => s.trim());
+    const formats = cell(iFormats).split('|').map(s => s.trim());
     const sales: ImportedSale[] = [];
     cell(iSales).split('|').forEach((entry, k) => {
       const s = parseSale(entry, saleYear);
       if (!s) return;
       const url = /^https?:\/\//i.test(links[k] ?? '') ? links[k] : null;
-      // A sale counts toward the value when Value Basis names it.
-      const used = !!basis && basis.includes(s.label);
-      sales.push({ ...s, url, used });
+      // The Sale Format(s) column, position for position, beats the entry text.
+      const format = formats[k] || s.format;
+      sales.push({ ...s, format, url, used: true });
     });
+    markUsed(sales, basis);
     rows.push({
       line: idx + 2,
       cardNumber,
       player: cell(iPlayer),
       gradingCompany: cell(iCompany),
       grade: cell(iGrade),
+      rawGrade: cell(iRawGrade),
       value: parseMoney(cell(iValue)),
       basis,
       sales,
@@ -165,10 +222,17 @@ export function buildImportPlan(
     let candidates = setRows
       .map((r, i) => ({ r, i }))
       .filter(({ r, i }) => !claimed.has(i) && sameNumber(r['Card #'], csv.cardNumber));
-    if (candidates.length > 1 && (csv.gradingCompany || csv.grade)) {
-      const g = candidates.filter(({ r }) =>
-        (!csv.gradingCompany || norm(r['Grading Company']) === norm(csv.gradingCompany)) &&
-        (!csv.grade || norm(r['Grade']) === norm(csv.grade)));
+    if (candidates.length > 1) {
+      // A graded copy and a raw copy of the same card are told apart by the
+      // Grading Company: a file row without one is the raw copy.
+      const g = candidates.filter(({ r }) => csv.gradingCompany
+        ? norm(r['Grading Company']) === norm(csv.gradingCompany) &&
+          (!csv.grade || norm(r['Grade']) === norm(csv.grade))
+        : !norm(r['Grading Company']));
+      if (g.length) candidates = g;
+    }
+    if (candidates.length > 1 && csv.rawGrade) {
+      const g = candidates.filter(({ r }) => norm(r['Raw Grade']) === norm(csv.rawGrade));
       if (g.length) candidates = g;
     }
     if (candidates.length > 1 && csv.player) {
@@ -199,13 +263,12 @@ export function buildImportPlan(
 
 export type EbaySaleSource = 'ebay_sold_auction' | 'ebay_sold_bin';
 
-// A sale's own text wins over the import-wide default when it says which kind
-// of sale it was ("(Auction)", "[BIN]", "Best Offer", …).
-export function saleSource(s: ImportedSale, fallback: EbaySaleSource): EbaySaleSource {
-  const text = `${s.variant ?? ''} ${s.qualifier ?? ''}`.toLowerCase();
+// The research table's eBay source for a sale's format. A sale with no stated
+// format is recorded as Buy-It-Now.
+export function saleSource(s: Pick<ImportedSale, 'format' | 'variant' | 'qualifier'>): EbaySaleSource {
+  const text = `${s.format ?? ''} ${s.variant ?? ''} ${s.qualifier ?? ''}`.toLowerCase();
   if (/auction/.test(text)) return 'ebay_sold_auction';
-  if (/\bbin\b|buy[- ]?it[- ]?now|best offer|fixed/.test(text)) return 'ebay_sold_bin';
-  return fallback;
+  return 'ebay_sold_bin';
 }
 
 // Split 100% evenly across `count` rows in hundredths, so the total is exactly
@@ -225,12 +288,17 @@ export function evenSplit(count: number): number[] {
 // Basis names none of them, every sale shares the weight.
 export function salesToAnalysisRows(
   sales: ImportedSale[],
-  card: { grading_company: string | null; grade: string | null },
-  defaultSource: EbaySaleSource = 'ebay_sold_bin',
+  card: { grading_company: string | null; grade: string | null; raw_grade?: string | null },
 ): AnalysisRow[] {
   const priced = sales.filter(s => s.price !== null);
   const anyUsed = priced.some(s => s.used);
   const counts = (s: ImportedSale) => s.price !== null && (!anyUsed || s.used);
+  // Comps carry the card's own grade, the way the research table pre-fills
+  // them; a raw card is "Raw" + its raw grade. What the sale itself was listed
+  // as (a range like "VG-VGEX (crease)") goes in the row note.
+  const graded = !!(card.grading_company && card.grade);
+  const company = graded ? card.grading_company : card.raw_grade ? 'Raw' : null;
+  const grade = graded ? card.grade : card.raw_grade ?? null;
   const weights = evenSplit(sales.filter(counts).length);
   let k = 0;
   return sales.map((s, i) => {
@@ -238,10 +306,10 @@ export function salesToAnalysisRows(
       .filter(Boolean).join(' · ') || null;
     return {
       position: i,
-      source: saleSource(s, defaultSource),
+      source: saleSource(s),
       source_label: null,
-      grade_company: card.grading_company,
-      grade_value: card.grade,
+      grade_company: company,
+      grade_value: grade,
       sale_date: s.sale_date,
       price: s.price,
       weight_pct: counts(s) ? weights[k++] : 0,
