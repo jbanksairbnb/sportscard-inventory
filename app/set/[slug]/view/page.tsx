@@ -696,6 +696,10 @@ export default function InventoryViewPage() {
           // Research commits its own (research-kind) mark; just persist the Value.
           persistRowValue(researchTarget.rowIdx, value, false);
         }}
+        onLatestValueChange={(value) => {
+          if (!researchTarget) return;
+          persistRowValue(researchTarget.rowIdx, value, false);
+        }}
       />
 
       <footer style={{

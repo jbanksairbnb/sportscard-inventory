@@ -197,27 +197,54 @@ export function buildImportPlan(
 
 // ── The comps a mark carries ────────────────────────────────────────────────
 
+export type EbaySaleSource = 'ebay_sold_auction' | 'ebay_sold_bin';
+
+// A sale's own text wins over the import-wide default when it says which kind
+// of sale it was ("(Auction)", "[BIN]", "Best Offer", …).
+export function saleSource(s: ImportedSale, fallback: EbaySaleSource): EbaySaleSource {
+  const text = `${s.variant ?? ''} ${s.qualifier ?? ''}`.toLowerCase();
+  if (/auction/.test(text)) return 'ebay_sold_auction';
+  if (/\bbin\b|buy[- ]?it[- ]?now|best offer|fixed/.test(text)) return 'ebay_sold_bin';
+  return fallback;
+}
+
+// Split 100% evenly across `count` rows in hundredths, so the total is exactly
+// 100 — the research table won't save at 99.99%. Leftover hundredths go one
+// apiece to the first rows (3 → 33.34 / 33.33 / 33.33; 6 → 16.67 ×4, 16.66 ×2),
+// which keeps the weighted value within a few cents of the plain average.
+export function evenSplit(count: number): number[] {
+  if (count <= 0) return [];
+  const base = Math.floor(10000 / count);
+  const extra = 10000 - base * count;
+  return Array.from({ length: count }, (_, i) => (base + (i < extra ? 1 : 0)) / 100);
+}
+
 // Sales become the analysis rows of the mark. The ones the value was averaged
-// from share the weight equally; the rest ride along at 0% so the history shows
-// what was looked at and set aside (unstated variant, miscut, …).
+// from share the weight evenly; the rest ride along at 0% so the history shows
+// what was looked at and set aside (unstated variant, miscut, …). When Value
+// Basis names none of them, every sale shares the weight.
 export function salesToAnalysisRows(
   sales: ImportedSale[],
   card: { grading_company: string | null; grade: string | null },
+  defaultSource: EbaySaleSource = 'ebay_sold_bin',
 ): AnalysisRow[] {
-  const used = sales.filter(s => s.used && s.price !== null);
-  const weightEach = used.length ? Math.round((100 / used.length) * 100) / 100 : null;
+  const priced = sales.filter(s => s.price !== null);
+  const anyUsed = priced.some(s => s.used);
+  const counts = (s: ImportedSale) => s.price !== null && (!anyUsed || s.used);
+  const weights = evenSplit(sales.filter(counts).length);
+  let k = 0;
   return sales.map((s, i) => {
-    const notes = [s.variant, s.qualifier ? `[${s.qualifier}]` : null, s.used ? null : used.length ? 'not used' : null]
+    const notes = [s.variant, s.qualifier ? `[${s.qualifier}]` : null, counts(s) ? null : 'not used']
       .filter(Boolean).join(' · ') || null;
     return {
       position: i,
-      source: 'other',
-      source_label: 'eBay sold',
+      source: saleSource(s, defaultSource),
+      source_label: null,
       grade_company: card.grading_company,
       grade_value: card.grade,
       sale_date: s.sale_date,
       price: s.price,
-      weight_pct: weightEach === null ? null : s.used ? weightEach : 0,
+      weight_pct: counts(s) ? weights[k++] : 0,
       url: s.url,
       notes,
     };

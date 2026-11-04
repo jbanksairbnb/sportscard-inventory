@@ -12,7 +12,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import type { CardDescriptor } from '@/components/MarketResearchModal';
 import {
   parseValueCsv, buildImportPlan, salesToAnalysisRows,
-  type ImportPlanItem, type PlanStatus,
+  type ImportPlanItem, type PlanStatus, type EbaySaleSource,
 } from '@/lib/valueImport';
 import { recordBulkValueMarks, type BulkMarkResult } from '@/lib/recordValueMark';
 
@@ -51,6 +51,7 @@ export default function ValueImportModal({
   const [showSkipped, setShowSkipped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [saleType, setSaleType] = useState<EbaySaleSource>('ebay_sold_bin');
   const [result, setResult] = useState<(BulkMarkResult & { updated: number }) | null>(null);
 
   function reset() {
@@ -116,7 +117,7 @@ export default function ValueImportModal({
         card,
         value: it.newValue as number,
         previousValue: it.currentValue,
-        comps: salesToAnalysisRows(it.csv.sales, { grading_company: card.grading_company, grade: card.grade }),
+        comps: salesToAnalysisRows(it.csv.sales, { grading_company: card.grading_company, grade: card.grade }, saleType),
         notes,
       };
     });
@@ -160,6 +161,15 @@ export default function ValueImportModal({
           </button>
           {fileName && <span className="mono" style={{ fontSize: 12, color: 'var(--plum)' }}>{fileName}</span>}
         </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--plum)', marginBottom: 14 }}>
+          Record sales as
+          <select value={saleType} disabled={busy} onChange={e => setSaleType(e.target.value as EbaySaleSource)}
+            style={{ fontSize: 12, padding: '3px 6px', border: '1.5px solid var(--plum)', borderRadius: 6, background: 'var(--cream)', color: 'var(--plum)' }}>
+            <option value="ebay_sold_bin">eBay Sold Buy-It-Now</option>
+            <option value="ebay_sold_auction">eBay Sold Auctions</option>
+          </select>
+          <span style={{ color: 'var(--ink-mute)' }}>(a sale whose text says &quot;Auction&quot; or &quot;BIN&quot; uses that)</span>
+        </label>
         {parseError && <div style={{ color: 'var(--rust)', fontSize: 13, marginBottom: 12 }}>{parseError}</div>}
 
         {plan && !result && (

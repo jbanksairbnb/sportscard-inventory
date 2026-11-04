@@ -2043,6 +2043,13 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           // A commit may have just added a history point — refresh trend badges.
           loadValueTrends();
         }}
+        onLatestValueChange={(value) => {
+          // A history entry was edited or deleted and the newest value moved —
+          // the card's Value follows it.
+          if (!researchTarget) return;
+          onChangeCell(researchTarget.rowIndex, 'Value', toCurrency(value.toFixed(2)));
+          loadValueTrends();
+        }}
       />
       {userId && slug && slug !== "new" && (
         <ValueImportModal
