@@ -268,3 +268,64 @@ export async function recordBulkValueMarks(
   }
   return result;
 }
+
+// ── Completing an earlier import ─────────────────────────────────────────────
+
+export type LatestMark = {
+  id: string;
+  market_value: number;
+  created_at: string;
+  notes: string | null;
+  compCount: number;
+};
+
+// The newest history entry per card in a set, keyed by cardValueKey.
+export async function loadLatestMarks(userId: string, setSlug: string): Promise<Map<string, LatestMark>> {
+  const supabase = createClient();
+  const { data } = await supabase
+    .from('card_value_history')
+    .select('id, card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at, snapshot')
+    .eq('user_id', userId)
+    .eq('set_slug', setSlug);
+  const out = new Map<string, LatestMark>();
+  for (const r of (data || []) as Array<Record<string, any>>) {
+    const k = cardValueKey({
+      year: r.card_year, brand: r.card_brand, card_number: r.card_number,
+      grade: r.card_grade, grading_company: r.card_grading_company, raw_grade: r.card_raw_grade,
+    });
+    const prev = out.get(k);
+    if (prev && String(r.created_at).localeCompare(prev.created_at) <= 0) continue;
+    const snap = (r.snapshot || {}) as Partial<AnalysisSnapshot>;
+    out.set(k, {
+      id: String(r.id),
+      market_value: Number(r.market_value),
+      created_at: String(r.created_at),
+      notes: snap.notes ?? null,
+      compCount: Array.isArray(snap.rows) ? snap.rows.length : 0,
+    });
+  }
+  return out;
+}
+
+// Put the sales into an existing entry, in place: same date, same value, same
+// note. Used when an import's sale lines were missed the first time round.
+export async function fillMarkComps(
+  userId: string,
+  markId: string,
+  value: number,
+  notes: string | null,
+  comps: AnalysisSnapshot['rows'],
+): Promise<string | null> {
+  const supabase = createClient();
+  const snapshot: AnalysisSnapshot = { notes, market_value: value, rows: comps };
+  const { error } = await supabase.from('card_value_history')
+    .update({
+      snapshot,
+      content_hash: contentHash(normalizeAnalysis(comps, notes, value)),
+      mark_kind: comps.length ? 'research' : 'manual',
+      dedupe_key: null,
+    })
+    .eq('id', markId)
+    .eq('user_id', userId);
+  return error ? error.message : null;
+}
