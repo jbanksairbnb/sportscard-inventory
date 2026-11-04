@@ -1,0 +1,277 @@
+'use client';
+
+// Import Values from a CSV for a whole set at once.
+//
+// Pick a file → review every card's current → new value → apply. Applying
+// updates each card's Value in the set AND appends a dated mark to its price
+// history, so a bulk re-price builds on the history rather than replacing it.
+// Parsing and matching live in lib/valueImport.ts; the history writes in
+// lib/recordValueMark.ts. The parent owns the set rows and their save.
+
+import React, { useMemo, useRef, useState } from 'react';
+import type { CardDescriptor } from '@/components/MarketResearchModal';
+import {
+  parseValueCsv, buildImportPlan, salesToAnalysisRows,
+  type ImportPlanItem, type PlanStatus,
+} from '@/lib/valueImport';
+import { recordBulkValueMarks, type BulkMarkResult } from '@/lib/recordValueMark';
+
+type Props = {
+  open: boolean;
+  onClose: () => void;
+  userId: string;
+  slug: string;
+  rows: Array<Record<string, any>>;
+  describe: (row: Record<string, any>) => CardDescriptor;
+  // Write the new values into the set (and save it).
+  onApplyValues: (updates: Array<{ rowIndex: number; value: number }>) => void;
+  // History changed — refresh trend badges.
+  onHistoryChanged: () => void;
+};
+
+const fmt = (n: number | null) =>
+  n === null ? '—' : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
+
+const STATUS_LABEL: Record<PlanStatus, string> = {
+  change: 'Update',
+  unchanged: 'Unchanged',
+  'no-value': 'No value in file',
+  'not-found': 'Card # not in set',
+  ambiguous: 'Matches several cards',
+};
+
+export default function ValueImportModal({
+  open, onClose, userId, slug, rows, describe, onApplyValues, onHistoryChanged,
+}: Props) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState('');
+  const [plan, setPlan] = useState<ImportPlanItem[] | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [showSkipped, setShowSkipped] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<(BulkMarkResult & { updated: number }) | null>(null);
+
+  function reset() {
+    setFileName(''); setPlan(null); setParseError(null); setSelected(new Set());
+    setShowSkipped(false); setBusy(false); setProgress(0); setResult(null);
+    if (fileRef.current) fileRef.current.value = '';
+  }
+  function close() { if (busy) return; reset(); onClose(); }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setResult(null);
+    const text = await file.text();
+    const parsed = parseValueCsv(text, new Date().getFullYear());
+    if (parsed.error) { setParseError(parsed.error); setPlan(null); return; }
+    setParseError(null);
+    const p = buildImportPlan(parsed.rows, rows);
+    setPlan(p);
+    setSelected(new Set(p.map((it, i) => (it.status === 'change' ? i : -1)).filter(i => i >= 0)));
+  }
+
+  const counts = useMemo(() => {
+    const c: Record<PlanStatus, number> = { change: 0, unchanged: 0, 'no-value': 0, 'not-found': 0, ambiguous: 0 };
+    for (const it of plan || []) c[it.status]++;
+    return c;
+  }, [plan]);
+
+  const visible = useMemo(
+    () => (plan || []).map((it, i) => ({ it, i }))
+      .filter(({ it }) => showSkipped ? it.status !== 'no-value' : it.status === 'change'),
+    [plan, showSkipped],
+  );
+
+  const selectedTotal = useMemo(() => {
+    let before = 0, after = 0;
+    for (const i of selected) {
+      const it = plan?.[i];
+      if (!it) continue;
+      before += it.currentValue ?? 0;
+      after += it.newValue ?? 0;
+    }
+    return { before, after };
+  }, [plan, selected]);
+
+  async function apply() {
+    if (!plan || selected.size === 0) return;
+    setBusy(true);
+    setProgress(0);
+    const chosen = Array.from(selected).sort((a, b) => a - b).map(i => plan[i])
+      .filter(it => it.status === 'change' && it.rowIndex !== null && it.newValue !== null);
+
+    // 1. The set itself.
+    onApplyValues(chosen.map(it => ({ rowIndex: it.rowIndex as number, value: it.newValue as number })));
+
+    // 2. One history mark per card.
+    const marks = chosen.map(it => {
+      const card = describe(rows[it.rowIndex as number]);
+      const notes = ['CSV import', fileName ? `(${fileName})` : '', it.csv.basis ? `— ${it.csv.basis}` : '']
+        .filter(Boolean).join(' ');
+      return {
+        card,
+        value: it.newValue as number,
+        previousValue: it.currentValue,
+        comps: salesToAnalysisRows(it.csv.sales, { grading_company: card.grading_company, grade: card.grade }),
+        notes,
+      };
+    });
+    const res = await recordBulkValueMarks(userId, slug, marks, setProgress);
+    setResult({ ...res, updated: chosen.length });
+    setBusy(false);
+    onHistoryChanged();
+  }
+
+  if (!open) return null;
+
+  const toggle = (i: number) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    return next;
+  });
+  const allChangeIdx = (plan || []).map((it, i) => (it.status === 'change' ? i : -1)).filter(i => i >= 0);
+  const allSelected = allChangeIdx.length > 0 && allChangeIdx.every(i => selected.has(i));
+
+  return (
+    <div onClick={close} style={{
+      position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(42,20,52,0.82)',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 16px', overflowY: 'auto',
+    }}>
+      <div onClick={e => e.stopPropagation()} className="panel-bordered"
+        style={{ width: '100%', maxWidth: 920, padding: 24, background: 'var(--cream)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+          <div className="display" style={{ fontSize: 20, color: 'var(--plum)', flex: 1 }}>Import Values from CSV</div>
+          <button type="button" onClick={close} disabled={busy} className="btn btn-outline btn-sm">✕ Close</button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginBottom: 16, lineHeight: 1.5 }}>
+          Updates each card&apos;s Value and adds a dated entry to its price history — earlier values are kept.
+          The file needs <b>Card #</b> and <b>Value</b> columns (an Export CSV of this set works). Optional
+          <b> … Sale(s)</b>, <b>… Sale Link(s)</b> and <b>Value Basis</b> columns are saved with the history entry.
+        </div>
+
+        <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} style={{ display: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => fileRef.current?.click()}>
+            {plan ? 'Choose another file' : 'Choose CSV file'}
+          </button>
+          {fileName && <span className="mono" style={{ fontSize: 12, color: 'var(--plum)' }}>{fileName}</span>}
+        </div>
+        {parseError && <div style={{ color: 'var(--rust)', fontSize: 13, marginBottom: 12 }}>{parseError}</div>}
+
+        {plan && !result && (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: 'var(--plum)', marginBottom: 10 }}>
+              <span><b>{counts.change}</b> to update</span>
+              <span><b>{counts.unchanged}</b> unchanged</span>
+              {counts['no-value'] > 0 && <span><b>{counts['no-value']}</b> without a value (skipped)</span>}
+              {counts['not-found'] > 0 && <span style={{ color: 'var(--rust)' }}><b>{counts['not-found']}</b> not found</span>}
+              {counts.ambiguous > 0 && <span style={{ color: 'var(--rust)' }}><b>{counts.ambiguous}</b> ambiguous</span>}
+              <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={showSkipped} onChange={e => setShowSkipped(e.target.checked)} />
+                Show skipped rows
+              </label>
+            </div>
+
+            <div style={{ maxHeight: 440, overflow: 'auto', border: '1.5px solid var(--rule)', borderRadius: 8 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead style={{ position: 'sticky', top: 0, background: 'var(--paper)' }}>
+                  <tr style={{ textAlign: 'left', color: 'var(--plum)' }}>
+                    <th style={{ padding: 6, width: 28 }}>
+                      <input type="checkbox" checked={allSelected} disabled={!allChangeIdx.length}
+                        onChange={() => setSelected(allSelected ? new Set() : new Set(allChangeIdx))} />
+                    </th>
+                    <th style={{ padding: 6 }}>#</th>
+                    <th style={{ padding: 6 }}>Player</th>
+                    <th style={{ padding: 6 }}>Grade</th>
+                    <th style={{ padding: 6, textAlign: 'right' }}>Current</th>
+                    <th style={{ padding: 6, textAlign: 'right' }}>New</th>
+                    <th style={{ padding: 6, textAlign: 'right' }}>Change</th>
+                    <th style={{ padding: 6 }}>Sales</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.length === 0 && (
+                    <tr><td colSpan={8} style={{ padding: 14, textAlign: 'center', color: 'var(--ink-mute)' }}>
+                      No values to update in this file.
+                    </td></tr>
+                  )}
+                  {visible.map(({ it, i }) => {
+                    const row = it.rowIndex !== null ? rows[it.rowIndex] : null;
+                    const delta = it.currentValue !== null && it.newValue !== null ? it.newValue - it.currentValue : null;
+                    const pct = delta !== null && it.currentValue ? (delta / it.currentValue) * 100 : null;
+                    const used = it.csv.sales.filter(s => s.used).length;
+                    const grade = row ? [row['Grading Company'], row['Grade']].filter(Boolean).join(' ') || row['Raw Grade'] || '' : '';
+                    return (
+                      <tr key={i} style={{ borderTop: '1px solid var(--rule)', opacity: it.status === 'change' ? 1 : 0.6 }}
+                        title={it.csv.basis || undefined}>
+                        <td style={{ padding: 6 }}>
+                          {it.status === 'change'
+                            ? <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)} />
+                            : null}
+                        </td>
+                        <td className="mono" style={{ padding: 6 }}>{it.csv.cardNumber}</td>
+                        <td style={{ padding: 6 }}>
+                          {row?.['Player'] || it.csv.player}
+                          {it.status !== 'change' && (
+                            <div style={{ fontSize: 10.5, color: it.status === 'unchanged' ? 'var(--ink-mute)' : 'var(--rust)' }}>
+                              {STATUS_LABEL[it.status]}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: 6 }}>{grade}</td>
+                        <td className="mono" style={{ padding: 6, textAlign: 'right' }}>{fmt(it.currentValue)}</td>
+                        <td className="mono" style={{ padding: 6, textAlign: 'right', fontWeight: 700 }}>{fmt(it.newValue)}</td>
+                        <td className="mono" style={{
+                          padding: 6, textAlign: 'right',
+                          color: delta === null || Math.abs(delta) < 0.005 ? 'var(--ink-mute)' : delta > 0 ? 'var(--teal)' : 'var(--rust)',
+                        }}>
+                          {delta === null || Math.abs(delta) < 0.005 ? '—'
+                            : `${delta > 0 ? '▲' : '▼'} ${fmt(Math.abs(delta))}${pct !== null ? ` (${pct.toFixed(1)}%)` : ''}`}
+                        </td>
+                        <td style={{ padding: 6, color: 'var(--ink-mute)' }}>
+                          {it.csv.sales.length ? `${used || it.csv.sales.length} of ${it.csv.sales.length}` : ''}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: 'var(--plum)' }}>
+                {selected.size} selected · {fmt(selectedTotal.before)} → <b>{fmt(selectedTotal.after)}</b>
+              </span>
+              <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }}
+                disabled={busy || selected.size === 0} onClick={apply}>
+                {busy ? `Saving… ${progress}/${selected.size}` : `Update ${selected.size} value${selected.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </>
+        )}
+
+        {result && (
+          <div style={{ fontSize: 13, color: 'var(--plum)', lineHeight: 1.6 }}>
+            <div><b>{result.updated}</b> value{result.updated === 1 ? '' : 's'} updated in the set.</div>
+            <div><b>{result.written}</b> price-history entr{result.written === 1 ? 'y' : 'ies'} added
+              {result.skipped ? `, ${result.skipped} already recorded` : ''}.</div>
+            {result.errors.length > 0 && (
+              <div style={{ color: 'var(--rust)', marginTop: 8 }}>
+                History could not be saved for {result.errors.length} card(s):
+                <ul style={{ margin: '4px 0 0 18px' }}>{result.errors.slice(0, 10).map((e, k) => <li key={k}>{e}</li>)}</ul>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button type="button" className="btn btn-sm btn-outline" onClick={reset}>Import another file</button>
+              <button type="button" className="btn btn-sm btn-primary" onClick={close}>Done</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

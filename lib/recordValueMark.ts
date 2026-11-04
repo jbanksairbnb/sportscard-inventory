@@ -151,3 +151,120 @@ export async function recordManualValueMark(
   const { error } = await insertValueHistoryRow(payload);
   return !error;
 }
+
+// ── Bulk marks from a CSV import ─────────────────────────────────────────────
+
+export type BulkValueMark = {
+  card: ValueMarkCard;
+  value: number;
+  // The value the card carried before this import. Written as a baseline mark
+  // first when the card has no history at all, so the import never becomes the
+  // card's only data point and the old number isn't lost.
+  previousValue: number | null;
+  comps: AnalysisSnapshot['rows'];
+  notes: string | null;
+};
+
+export type BulkMarkResult = { written: number; skipped: number; errors: string[] };
+
+// Append one mark per card. Reads the set's history once (rather than once per
+// card) to find each card's latest mark, so an unchanged value is a no-op and
+// every new mark chains onto the right predecessor for dedupe — re-importing
+// the same file twice writes nothing the second time.
+export async function recordBulkValueMarks(
+  userId: string,
+  setSlug: string,
+  marks: BulkValueMark[],
+  onProgress?: (done: number) => void,
+): Promise<BulkMarkResult> {
+  const supabase = createClient();
+  const { data: existing } = await supabase
+    .from('card_value_history')
+    .select('id, card_year, card_brand, card_number, card_grade, card_grading_company, card_raw_grade, market_value, created_at')
+    .eq('user_id', userId)
+    .eq('set_slug', setSlug);
+
+  const latestByKey = new Map<string, { id: string; market_value: number; created_at: string }>();
+  for (const r of (existing || []) as Array<Record<string, any>>) {
+    const k = cardValueKey({
+      year: r.card_year, brand: r.card_brand, card_number: r.card_number,
+      grade: r.card_grade, grading_company: r.card_grading_company, raw_grade: r.card_raw_grade,
+    });
+    const prev = latestByKey.get(k);
+    if (!prev || String(r.created_at).localeCompare(prev.created_at) > 0) {
+      latestByKey.set(k, { id: String(r.id), market_value: Number(r.market_value), created_at: String(r.created_at) });
+    }
+  }
+
+  const result: BulkMarkResult = { written: 0, skipped: 0, errors: [] };
+  let done = 0;
+  for (const m of marks) {
+    const { card } = m;
+    const parts = {
+      year: card.year, brand: card.brand, card_number: card.card_number,
+      grade: card.grade, grading_company: card.grading_company, raw_grade: card.raw_grade,
+    };
+    const key = cardValueKey(parts);
+    const identity = {
+      user_id: userId,
+      card_year: card.year,
+      card_brand: card.brand,
+      card_number: card.card_number,
+      card_player: card.player,
+      card_grade: card.grade,
+      card_grading_company: card.grading_company,
+      card_raw_grade: card.raw_grade,
+      listing_id: card.listing_id ?? null,
+      set_slug: card.set_slug ?? setSlug,
+      set_card_number: card.set_card_number ?? null,
+      source_session_id: null,
+      derived_from_id: null,
+    };
+    let latest = latestByKey.get(key) ?? null;
+
+    // Baseline: the card was valued before history existed for it.
+    if (!latest && m.previousValue !== null && m.previousValue > 0
+        && Math.abs(m.previousValue - m.value) >= 0.005) {
+      const normalized = normalizeAnalysis([], null, m.previousValue);
+      const hash = contentHash(normalized);
+      const { row, error } = await insertValueHistoryRow({
+        ...identity,
+        market_value: m.previousValue,
+        content_hash: hash,
+        snapshot: { notes: 'Value before CSV import', market_value: m.previousValue, rows: [] },
+        mark_kind: 'manual',
+        dedupe_key: markDedupeKey(parts, hash, null),
+        // A hair before the import mark so the two sort in the right order.
+        created_at: new Date(Date.now() - 1000).toISOString(),
+      });
+      if (error) { result.errors.push(`#${card.card_number}: ${error}`); done++; onProgress?.(done); continue; }
+      if (row) latest = { id: row.id, market_value: row.market_value, created_at: row.created_at };
+    }
+
+    if (latest && Math.abs(latest.market_value - m.value) < 0.005) {
+      result.skipped++; done++; onProgress?.(done); continue;
+    }
+
+    const normalized = normalizeAnalysis(m.comps, m.notes, m.value);
+    const hash = contentHash(normalized);
+    const { row, error, duplicate } = await insertValueHistoryRow({
+      ...identity,
+      market_value: m.value,
+      content_hash: hash,
+      snapshot: { notes: m.notes, market_value: m.value, rows: m.comps } satisfies AnalysisSnapshot,
+      // With comps it reads like a research analysis (the sales open in the
+      // history view); a bare number is a manual mark.
+      mark_kind: m.comps.length ? 'research' : 'manual',
+      dedupe_key: markDedupeKey(parts, hash, latest?.id ?? null),
+    });
+    if (error) result.errors.push(`#${card.card_number}: ${error}`);
+    else if (duplicate) result.skipped++;
+    else {
+      result.written++;
+      if (row) latestByKey.set(key, { id: row.id, market_value: row.market_value, created_at: row.created_at });
+    }
+    done++;
+    onProgress?.(done);
+  }
+  return result;
+}
