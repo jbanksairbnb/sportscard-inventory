@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import SCLogo from "@/components/SCLogo";
 import SetHeaderBanner from "@/components/SetHeaderBanner";
 import MarketResearchModal, { CardDescriptor } from "@/components/MarketResearchModal";
+import ValueImportModal from "@/components/ValueImportModal";
 import EbayHitsFeed from '@/components/EbayHitsFeed';
 import { descriptorForSetRow } from '@/lib/cardDescriptor';
 import { cardValueKey, trendFromRows, type Trend } from "@/lib/cardValueHistory";
@@ -678,6 +679,7 @@ export default function SetEditorPage() {
       brand: brand || null,
     });
   }
+  const [valueImportOpen, setValueImportOpen] = useState(false);
   const [researchTarget, setResearchTarget] = useState<{ rowIndex: number; descriptor: CardDescriptor } | null>(null);
   const [valueFocusPrompt, setValueFocusPrompt] = useState<number | null>(null);
   const [researchPromptDismissed, setResearchPromptDismissed] = useState(false);
@@ -1508,6 +1510,12 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
               className="btn btn-sm btn-outline">
               Export CSV
             </button>
+            <button type="button" onClick={() => setValueImportOpen(true)}
+              disabled={!rows.length || !userId || !slug || slug === "new"}
+              className="btn btn-sm btn-outline"
+              title="Update card values from a CSV — each change is added to the card's price history">
+              Import Values
+            </button>
             <button type="button" onClick={handleExportWantListPdf} disabled={!rows.length}
               className="btn btn-sm btn-outline"
               title="PDF want list with checkboxes — bring it to the card show">
@@ -2036,6 +2044,23 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           loadValueTrends();
         }}
       />
+      {userId && slug && slug !== "new" && (
+        <ValueImportModal
+          open={valueImportOpen}
+          onClose={() => setValueImportOpen(false)}
+          userId={userId}
+          slug={slug}
+          rows={rows}
+          describe={descriptorForRow}
+          onApplyValues={(updates) => {
+            const byIndex = new Map(updates.map(u => [u.rowIndex, u.value]));
+            const next = rowsRef.current.map((r, i) =>
+              byIndex.has(i) ? { ...r, Value: toCurrency((byIndex.get(i) as number).toFixed(2)) } : r);
+            commitRows(next);
+          }}
+          onHistoryChanged={loadValueTrends}
+        />
+      )}
       {autoNumOpen && (() => {
         const start = Number(autoNumStart.trim());
         const valid = autoNumStart.trim() && !Number.isNaN(start) && start >= 0;
