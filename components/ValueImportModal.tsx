@@ -12,7 +12,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import type { CardDescriptor } from '@/components/MarketResearchModal';
 import {
   parseValueCsv, buildImportPlan, salesToAnalysisRows,
-  type ImportPlanItem, type PlanStatus, type EbaySaleSource,
+  saleSource, type ImportPlanItem, type PlanStatus,
 } from '@/lib/valueImport';
 import { recordBulkValueMarks, type BulkMarkResult } from '@/lib/recordValueMark';
 
@@ -51,7 +51,6 @@ export default function ValueImportModal({
   const [showSkipped, setShowSkipped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [saleType, setSaleType] = useState<EbaySaleSource>('ebay_sold_bin');
   const [result, setResult] = useState<(BulkMarkResult & { updated: number }) | null>(null);
 
   function reset() {
@@ -117,7 +116,9 @@ export default function ValueImportModal({
         card,
         value: it.newValue as number,
         previousValue: it.currentValue,
-        comps: salesToAnalysisRows(it.csv.sales, { grading_company: card.grading_company, grade: card.grade }, saleType),
+        comps: salesToAnalysisRows(it.csv.sales, {
+          grading_company: card.grading_company, grade: card.grade, raw_grade: card.raw_grade,
+        }),
         notes,
       };
     });
@@ -151,7 +152,8 @@ export default function ValueImportModal({
         <div style={{ fontSize: 12, color: 'var(--ink-mute)', marginBottom: 16, lineHeight: 1.5 }}>
           Updates each card&apos;s Value and adds a dated entry to its price history — earlier values are kept.
           The file needs <b>Card #</b> and <b>Value</b> columns (an Export CSV of this set works). Optional
-          <b> … Sale(s)</b>, <b>… Sale Link(s)</b> and <b>Value Basis</b> columns are saved with the history entry.
+          <b> … Sale(s)</b>, <b>… Sale Link(s)</b>, <b>Sale Format(s)</b> and <b>Value Basis</b> columns are saved with
+          the history entry; each sale is recorded as eBay Sold Auctions or Buy-It-Now from its format.
         </div>
 
         <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} style={{ display: 'none' }} />
@@ -161,15 +163,6 @@ export default function ValueImportModal({
           </button>
           {fileName && <span className="mono" style={{ fontSize: 12, color: 'var(--plum)' }}>{fileName}</span>}
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--plum)', marginBottom: 14 }}>
-          Record sales as
-          <select value={saleType} disabled={busy} onChange={e => setSaleType(e.target.value as EbaySaleSource)}
-            style={{ fontSize: 12, padding: '3px 6px', border: '1.5px solid var(--plum)', borderRadius: 6, background: 'var(--cream)', color: 'var(--plum)' }}>
-            <option value="ebay_sold_bin">eBay Sold Buy-It-Now</option>
-            <option value="ebay_sold_auction">eBay Sold Auctions</option>
-          </select>
-          <span style={{ color: 'var(--ink-mute)' }}>(a sale whose text says &quot;Auction&quot; or &quot;BIN&quot; uses that)</span>
-        </label>
         {parseError && <div style={{ color: 'var(--rust)', fontSize: 13, marginBottom: 12 }}>{parseError}</div>}
 
         {plan && !result && (
@@ -244,6 +237,15 @@ export default function ValueImportModal({
                         </td>
                         <td style={{ padding: 6, color: 'var(--ink-mute)' }}>
                           {it.csv.sales.length ? `${used || it.csv.sales.length} of ${it.csv.sales.length}` : ''}
+                          {it.csv.sales.length > 0 && (() => {
+                            const auctions = it.csv.sales.filter(s => saleSource(s) === 'ebay_sold_auction').length;
+                            const bins = it.csv.sales.length - auctions;
+                            return (
+                              <div style={{ fontSize: 10.5 }}>
+                                {[auctions ? `${auctions} Auction` : '', bins ? `${bins} BIN` : ''].filter(Boolean).join(' · ')}
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
