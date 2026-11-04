@@ -82,7 +82,9 @@ function firstParenGroup(s: string): string | null {
 export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url' | 'used'> | null {
   const text = entry.trim();
   if (!text) return null;
-  const m = text.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})\s*:\s*\$?\s*([\d,]+(?:\.\d+)?)/);
+  // "Nov 3: $630.00" or "Nov 3 $630.00" — the colon is optional, the $ is not,
+  // so prose like "Oct 18, 2026." is never mistaken for a sale.
+  const m = text.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})\s*(?::\s*\$?|\$)\s*(\d[\d,]*(?:\.\d+)?)/);
   if (!m) return null;
   const month = MONTHS[m[1].toLowerCase()];
   const day = Number(m[2]);
@@ -101,32 +103,53 @@ export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url'
   return { sale_date, label, price, variant, qualifier, format };
 }
 
+// "Nov 3: $630.00" and "Nov 3 $630.00" are the same sale.
+const dropDateColon = (t: string) => t.replace(/\b([A-Za-z]{3}\.?\s+\d{1,2})\s*:\s*/g, '$1 ');
+
 // Whether `text` names this sale ("Sep 5: $1,249.00"), and not merely a longer
 // price that starts the same way ("Sep 5: $1,249.001").
 function mentions(text: string, label: string): boolean {
-  let i = text.indexOf(label);
+  const hay = dropDateColon(text);
+  const needle = dropDateColon(label);
+  let i = hay.indexOf(needle);
   while (i >= 0) {
-    if (!/[\d.]/.test(text[i + label.length] ?? '')) return true;
-    i = text.indexOf(label, i + 1);
+    if (!/[\d.]/.test(hay[i + needle.length] ?? '')) return true;
+    i = hay.indexOf(needle, i + 1);
   }
   return false;
 }
 
-// Which sales the value was averaged from, read off Value Basis.
-//   "average of 2 White Back sale(s) (Sep 5: …, Aug 28: …)" → the named ones;
-//   "average of 3 unqualified sale(s) (… excluded: Oct 20: …)" → all but the
-//     excluded ones;
-//   "average of 3 GMCards range sale(s)" → all of them.
-function markUsed(sales: ImportedSale[], basis: string) {
+const mean = (xs: ImportedSale[]) => {
+  const p = xs.filter(s => s.price !== null);
+  return p.length ? p.reduce((a, s) => a + (s.price as number), 0) / p.length : null;
+};
+
+// Which sales the value was averaged from.
+//
+// Value Basis is prose, and files word it differently: it may name the sales
+// it used ("average of 2 White Back sale(s) (Sep 5: …, Aug 28: …)"), the ones
+// it left out ("… excluded: Oct 20: …"), or a sale it kept despite looking
+// odd ("Average includes Aug 11 $280.00 sale, well below the other two").
+// So each reading is checked against the Value the file states, and the first
+// whose plain average equals it wins:
+//   1. the sales Value Basis names (outside an "excluded" clause);
+//   2. every sale except those named in an "excluded" clause;
+//   3. every listed sale.
+// When none adds up (a rounded or hand-set value), the wording decides as
+// before: named sales, else all but the excluded ones.
+function markUsed(sales: ImportedSale[], basis: string, value: number | null) {
   const exAt = basis.search(/exclud/i);
   const included = exAt >= 0 ? basis.slice(0, exAt) : basis;
   const excluded = exAt >= 0 ? basis.slice(exAt) : '';
   const named = sales.filter(s => mentions(included, s.label));
-  if (named.length) {
-    for (const s of sales) s.used = named.includes(s);
-    return;
-  }
-  for (const s of sales) s.used = !mentions(excluded, s.label);
+  const notExcluded = sales.filter(s => !mentions(excluded, s.label));
+  const readings = [named, notExcluded, sales].filter(r => r.length);
+  const fits = (r: ImportedSale[]) => {
+    const m = mean(r);
+    return value !== null && m !== null && Math.abs(m - value) <= 0.01;
+  };
+  const chosen = readings.find(fits) ?? (named.length ? named : notExcluded);
+  for (const s of sales) s.used = chosen.includes(s);
 }
 
 // Locate a column by exact header (case-insensitive) or by a pattern.
@@ -177,7 +200,7 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
       const format = formats[k] || s.format;
       sales.push({ ...s, format, url, used: true });
     });
-    markUsed(sales, basis);
+    markUsed(sales, basis, parseMoney(cell(iValue)));
     rows.push({
       line: idx + 2,
       cardNumber,
@@ -195,7 +218,11 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
 
 // ── Matching file rows to set rows ──────────────────────────────────────────
 
-export type PlanStatus = 'change' | 'unchanged' | 'no-value' | 'not-found' | 'ambiguous';
+// 'fill': the value is unchanged, but the card's latest history entry is an
+// earlier CSV import of that same value that came through without its sales
+// (a file whose sale lines the importer couldn't read at the time). Applying
+// adds the sales to that entry, keeping its date, instead of skipping the card.
+export type PlanStatus = 'change' | 'fill' | 'unchanged' | 'no-value' | 'not-found' | 'ambiguous';
 
 export type ImportPlanItem = {
   csv: CsvValueRow;
@@ -203,6 +230,8 @@ export type ImportPlanItem = {
   rowIndex: number | null;   // index into the set's rows
   currentValue: number | null;
   newValue: number | null;
+  fillMarkId?: string;       // status 'fill': the history entry to complete
+  fillNotes?: string | null; // …and its note, kept as it was
 };
 
 function sameNumber(a: unknown, b: unknown) {
