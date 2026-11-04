@@ -209,7 +209,10 @@ export default function SetValueStats({ stats, onSetBenchmark, benchmarkBusy }: 
         <span className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', fontWeight: 600 }}>
           across {agg.valuedCount} valued card{agg.valuedCount === 1 ? '' : 's'}
         </span>
-        {onSetBenchmark && (
+        {/* Only until the set has any price history. After that, every value
+            change already records its own entry, and a benchmark would just
+            add a manual entry on top of each card's history. */}
+        {onSetBenchmark && agg.benchmarked === 0 && (
           <button type="button" onClick={onSetBenchmark} disabled={benchmarkBusy}
             title="Snapshot every owned card's current value as the baseline that Change in Value is measured against"
             className="btn btn-outline btn-sm"
