@@ -24,8 +24,8 @@ type Props = {
   slug: string;
   rows: Array<Record<string, any>>;
   describe: (row: Record<string, any>) => CardDescriptor;
-  // Write the new values into the set (and save it).
-  onApplyValues: (updates: Array<{ rowIndex: number; value: number }>) => void;
+  // Write the new values and/or target prices into the set (and save it).
+  onApplyValues: (updates: Array<{ rowIndex: number; value?: number; targetPrice?: number }>) => void;
   // History changed — refresh trend badges.
   onHistoryChanged: () => void;
 };
@@ -33,9 +33,13 @@ type Props = {
 const fmt = (n: number | null) =>
   n === null ? '—' : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);
 
+// Rows the owner can tick and apply.
+const actionable = (st: PlanStatus) => st === 'change' || st === 'fill' || st === 'target';
+
 const STATUS_LABEL: Record<PlanStatus, string> = {
   change: 'Update',
   fill: 'Add sales to existing entry',
+  target: 'Target price only',
   unchanged: 'Unchanged',
   'no-value': 'No value in file',
   'not-found': 'Card # not in set',
@@ -53,7 +57,7 @@ export default function ValueImportModal({
   const [showSkipped, setShowSkipped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [result, setResult] = useState<(BulkMarkResult & { updated: number; filled: number }) | null>(null);
+  const [result, setResult] = useState<(BulkMarkResult & { updated: number; filled: number; targets: number }) | null>(null);
 
   function reset() {
     setFileName(''); setPlan(null); setParseError(null); setSelected(new Set());
@@ -76,7 +80,7 @@ export default function ValueImportModal({
     // same value, saved without its sales, gets those sales filled in.
     const latest = await loadLatestMarks(userId, slug);
     for (const it of p) {
-      if (it.status !== 'unchanged' || it.rowIndex === null || !it.csv.sales.length || it.newValue === null) continue;
+      if ((it.status !== 'unchanged' && it.status !== 'target') || it.rowIndex === null || !it.csv.sales.length || it.newValue === null) continue;
       const m = latest.get(cardValueKey(describe(rows[it.rowIndex])));
       if (m && m.compCount === 0 && (m.notes || '').startsWith('CSV import')
           && Math.abs(m.market_value - it.newValue) < 0.005) {
@@ -86,18 +90,18 @@ export default function ValueImportModal({
       }
     }
     setPlan(p);
-    setSelected(new Set(p.map((it, i) => (it.status === 'change' || it.status === 'fill' ? i : -1)).filter(i => i >= 0)));
+    setSelected(new Set(p.map((it, i) => (actionable(it.status) ? i : -1)).filter(i => i >= 0)));
   }
 
   const counts = useMemo(() => {
-    const c: Record<PlanStatus, number> = { change: 0, fill: 0, unchanged: 0, 'no-value': 0, 'not-found': 0, ambiguous: 0 };
+    const c: Record<PlanStatus, number> = { change: 0, fill: 0, target: 0, unchanged: 0, 'no-value': 0, 'not-found': 0, ambiguous: 0 };
     for (const it of plan || []) c[it.status]++;
     return c;
   }, [plan]);
 
   const visible = useMemo(
     () => (plan || []).map((it, i) => ({ it, i }))
-      .filter(({ it }) => showSkipped ? it.status !== 'no-value' : it.status === 'change' || it.status === 'fill'),
+      .filter(({ it }) => showSkipped ? it.status !== 'no-value' : actionable(it.status)),
     [plan, showSkipped],
   );
 
@@ -106,6 +110,7 @@ export default function ValueImportModal({
     for (const i of selected) {
       const it = plan?.[i];
       if (!it) continue;
+      if (it.status === 'target') continue; // value not touched
       before += it.currentValue ?? 0;
       after += it.newValue ?? 0;
     }
@@ -122,8 +127,18 @@ export default function ValueImportModal({
     const fills = picked
       .filter(it => it.status === 'fill' && it.rowIndex !== null && it.newValue !== null && it.fillMarkId);
 
-    // 1. The set itself.
-    onApplyValues(chosen.map(it => ({ rowIndex: it.rowIndex as number, value: it.newValue as number })));
+    // 1. The set itself: new values, and new target prices wherever the file has one.
+    const targetsOnly = picked.filter(it => it.status === 'target' && it.rowIndex !== null && it.newTarget !== null);
+    const setUpdates = [
+      ...chosen.map(it => ({
+        rowIndex: it.rowIndex as number, value: it.newValue as number,
+        ...(it.newTarget !== null ? { targetPrice: it.newTarget } : {}),
+      })),
+      ...[...fills, ...targetsOnly].filter(it => it.newTarget !== null)
+        .map(it => ({ rowIndex: it.rowIndex as number, targetPrice: it.newTarget as number })),
+    ];
+    const targetsUpdated = setUpdates.filter(u => u.targetPrice !== undefined).length;
+    onApplyValues(setUpdates);
 
     // 2. One history mark per card.
     const marks = chosen.map(it => {
@@ -154,7 +169,7 @@ export default function ValueImportModal({
       else filled++;
       setProgress(chosen.length + filled);
     }
-    setResult({ ...res, updated: chosen.length, filled });
+    setResult({ ...res, updated: chosen.length, filled, targets: targetsUpdated });
     setBusy(false);
     onHistoryChanged();
   }
@@ -166,7 +181,7 @@ export default function ValueImportModal({
     if (next.has(i)) next.delete(i); else next.add(i);
     return next;
   });
-  const allChangeIdx = (plan || []).map((it, i) => (it.status === 'change' || it.status === 'fill' ? i : -1)).filter(i => i >= 0);
+  const allChangeIdx = (plan || []).map((it, i) => (actionable(it.status) ? i : -1)).filter(i => i >= 0);
   const allSelected = allChangeIdx.length > 0 && allChangeIdx.every(i => selected.has(i));
 
   return (
@@ -185,6 +200,7 @@ export default function ValueImportModal({
           The file needs <b>Card #</b> and <b>Value</b> columns (an Export CSV of this set works). Optional
           <b> … Sale(s)</b>, <b>… Sale Link(s)</b>, <b>Sale Format(s)</b> and <b>Value Basis</b> columns are saved with
           the history entry; each sale is recorded as eBay Sold Auctions or Buy-It-Now from its format.
+          A <b>Target Price</b> column, if present, updates each card&apos;s Target Price as well (blank cells are left alone).
         </div>
 
         <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} style={{ display: 'none' }} />
@@ -200,6 +216,7 @@ export default function ValueImportModal({
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, color: 'var(--plum)', marginBottom: 10 }}>
               <span><b>{counts.change}</b> to update</span>
+              {counts.target > 0 && <span><b>{counts.target}</b> target price only</span>}
               {counts.fill > 0 && <span><b>{counts.fill}</b> earlier import{counts.fill === 1 ? '' : 's'} missing sales</span>}
               <span><b>{counts.unchanged}</b> unchanged</span>
               {counts['no-value'] > 0 && <span><b>{counts['no-value']}</b> without a value (skipped)</span>}
@@ -225,13 +242,14 @@ export default function ValueImportModal({
                     <th style={{ padding: 6, textAlign: 'right' }}>Current</th>
                     <th style={{ padding: 6, textAlign: 'right' }}>New</th>
                     <th style={{ padding: 6, textAlign: 'right' }}>Change</th>
+                    <th style={{ padding: 6, textAlign: 'right' }}>Target</th>
                     <th style={{ padding: 6 }}>Sales</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visible.length === 0 && (
-                    <tr><td colSpan={8} style={{ padding: 14, textAlign: 'center', color: 'var(--ink-mute)' }}>
-                      No values to update in this file.
+                    <tr><td colSpan={9} style={{ padding: 14, textAlign: 'center', color: 'var(--ink-mute)' }}>
+                      No values or target prices to update in this file.
                     </td></tr>
                   )}
                   {visible.map(({ it, i }) => {
@@ -241,10 +259,10 @@ export default function ValueImportModal({
                     const used = it.csv.sales.filter(s => s.used).length;
                     const grade = row ? [row['Grading Company'], row['Grade']].filter(Boolean).join(' ') || row['Raw Grade'] || '' : '';
                     return (
-                      <tr key={i} style={{ borderTop: '1px solid var(--rule)', opacity: it.status === 'change' || it.status === 'fill' ? 1 : 0.6 }}
+                      <tr key={i} style={{ borderTop: '1px solid var(--rule)', opacity: actionable(it.status) ? 1 : 0.6 }}
                         title={it.csv.basis || undefined}>
                         <td style={{ padding: 6 }}>
-                          {it.status === 'change' || it.status === 'fill'
+                          {actionable(it.status)
                             ? <input type="checkbox" checked={selected.has(i)} onChange={() => toggle(i)} />
                             : null}
                         </td>
@@ -252,7 +270,7 @@ export default function ValueImportModal({
                         <td style={{ padding: 6 }}>
                           {row?.['Player'] || it.csv.player}
                           {it.status !== 'change' && (
-                            <div style={{ fontSize: 10.5, color: it.status === 'fill' ? 'var(--teal)' : it.status === 'unchanged' ? 'var(--ink-mute)' : 'var(--rust)' }}>
+                            <div style={{ fontSize: 10.5, color: it.status === 'fill' || it.status === 'target' ? 'var(--teal)' : it.status === 'unchanged' ? 'var(--ink-mute)' : 'var(--rust)' }}>
                               {STATUS_LABEL[it.status]}
                             </div>
                           )}
@@ -266,6 +284,13 @@ export default function ValueImportModal({
                         }}>
                           {delta === null || Math.abs(delta) < 0.005 ? '—'
                             : `${delta > 0 ? '▲' : '▼'} ${fmt(Math.abs(delta))}${pct !== null ? ` (${pct.toFixed(1)}%)` : ''}`}
+                        </td>
+                        <td className="mono" style={{ padding: 6, textAlign: 'right' }}>
+                          {it.newTarget !== null
+                            ? <span title={`Current target: ${fmt(it.currentTarget)}`}>
+                                <span style={{ color: 'var(--ink-mute)' }}>{fmt(it.currentTarget)} → </span><b>{fmt(it.newTarget)}</b>
+                              </span>
+                            : <span style={{ color: 'var(--ink-mute)' }}>{it.currentTarget !== null ? fmt(it.currentTarget) : '—'}</span>}
                         </td>
                         <td style={{ padding: 6, color: 'var(--ink-mute)' }}>
                           {it.csv.sales.length ? `${used || it.csv.sales.length} of ${it.csv.sales.length}` : ''}
@@ -301,6 +326,9 @@ export default function ValueImportModal({
         {result && (
           <div style={{ fontSize: 13, color: 'var(--plum)', lineHeight: 1.6 }}>
             <div><b>{result.updated}</b> value{result.updated === 1 ? '' : 's'} updated in the set.</div>
+            {result.targets > 0 && (
+              <div><b>{result.targets}</b> target price{result.targets === 1 ? '' : 's'} updated.</div>
+            )}
             {result.filled > 0 && (
               <div><b>{result.filled}</b> earlier entr{result.filled === 1 ? 'y' : 'ies'} given {result.filled === 1 ? 'its' : 'their'} sales (date kept).</div>
             )}

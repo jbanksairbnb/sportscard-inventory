@@ -2060,9 +2060,16 @@ async function handleImageUpload(origIndex: number, slot: 1 | 2, file: File) {
           rows={rows}
           describe={descriptorForRow}
           onApplyValues={(updates) => {
-            const byIndex = new Map(updates.map(u => [u.rowIndex, u.value]));
-            const next = rowsRef.current.map((r, i) =>
-              byIndex.has(i) ? { ...r, Value: toCurrency((byIndex.get(i) as number).toFixed(2)) } : r);
+            const byIndex = new Map(updates.map(u => [u.rowIndex, u]));
+            const next = rowsRef.current.map((r, i) => {
+              const u = byIndex.get(i);
+              if (!u) return r;
+              return {
+                ...r,
+                ...(u.value !== undefined ? { Value: toCurrency(u.value.toFixed(2)) } : {}),
+                ...(u.targetPrice !== undefined ? { 'Target Price': toCurrency(u.targetPrice.toFixed(2)) } : {}),
+              };
+            });
             commitRows(next);
           }}
           onHistoryChanged={loadValueTrends}

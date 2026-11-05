@@ -12,6 +12,9 @@
 //   - "<period> Sale Link(s)" the matching URLs, same order, " | " separated
 //   - "Value Basis"           how the value was reached ("Replaced: …",
 //                             "Unchanged: …") — stored as the mark's note
+// A "Target Price" column, when present, updates each card's Target Price too
+// (no history entry — targets aren't tracked over time). A file may carry
+// Target Price without Value to update targets alone.
 // When sales are present the mark carries them as comps, so opening the card's
 // history shows exactly which sales a value came from.
 
@@ -38,6 +41,7 @@ export type CsvValueRow = {
   grade: string;
   rawGrade: string;
   value: number | null;
+  targetPrice: number | null; // null: column absent or cell blank — leave the target alone
   basis: string;
   sales: ImportedSale[];
 };
@@ -168,8 +172,9 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
 
   const iCard = findCol(headers, 'Card #', 'Card Number', 'Card No', '#');
   const iValue = findCol(headers, 'Value', 'New Value', 'Market Value');
-  if (iCard < 0 || iValue < 0) {
-    return { rows: [], error: 'The file needs a "Card #" column and a "Value" column.' };
+  const iTarget = findCol(headers, 'Target Price', 'Target', 'New Target Price', 'Target Value');
+  if (iCard < 0 || (iValue < 0 && iTarget < 0)) {
+    return { rows: [], error: 'The file needs a "Card #" column and a "Value" (or "Target Price") column.' };
   }
   const iPlayer = findCol(headers, 'Description', 'Player');
   const iCompany = findCol(headers, 'Grading Company');
@@ -209,6 +214,7 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
       grade: cell(iGrade),
       rawGrade: cell(iRawGrade),
       value: parseMoney(cell(iValue)),
+      targetPrice: parseMoney(cell(iTarget)),
       basis,
       sales,
     });
@@ -222,7 +228,9 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
 // earlier CSV import of that same value that came through without its sales
 // (a file whose sale lines the importer couldn't read at the time). Applying
 // adds the sales to that entry, keeping its date, instead of skipping the card.
-export type PlanStatus = 'change' | 'fill' | 'unchanged' | 'no-value' | 'not-found' | 'ambiguous';
+// 'target': the value is unchanged or absent, but the file's Target Price
+// differs from the card's — only the target is updated.
+export type PlanStatus = 'change' | 'fill' | 'target' | 'unchanged' | 'no-value' | 'not-found' | 'ambiguous';
 
 export type ImportPlanItem = {
   csv: CsvValueRow;
@@ -230,6 +238,8 @@ export type ImportPlanItem = {
   rowIndex: number | null;   // index into the set's rows
   currentValue: number | null;
   newValue: number | null;
+  currentTarget: number | null;
+  newTarget: number | null;  // set only when the file's target differs from the card's
   fillMarkId?: string;       // status 'fill': the history entry to complete
   fillNotes?: string | null; // …and its note, kept as it was
 };
@@ -274,17 +284,23 @@ export function buildImportPlan(
       if (owned.length) candidates = owned;
     }
 
-    const base = { csv, newValue: csv.value };
+    const base = { csv, newValue: csv.value, currentTarget: null, newTarget: null };
     if (candidates.length === 0) return { ...base, status: 'not-found', rowIndex: null, currentValue: null };
     if (candidates.length > 1) return { ...base, status: 'ambiguous', rowIndex: null, currentValue: null };
     const { r, i } = candidates[0];
     claimed.add(i);
     const currentValue = parseMoney(r['Value']);
+    const currentTarget = parseMoney(r['Target Price']);
+    const newTarget = csv.targetPrice !== null && csv.targetPrice > 0 &&
+      (currentTarget === null || Math.abs(currentTarget - csv.targetPrice) >= 0.005)
+      ? csv.targetPrice : null;
+    const withTarget = { ...base, rowIndex: i, currentValue, currentTarget, newTarget };
     if (csv.value === null || csv.value <= 0) {
-      return { ...base, status: 'no-value', rowIndex: i, currentValue };
+      return { ...withTarget, newValue: null, status: newTarget !== null ? 'target' : 'no-value' };
     }
     const unchanged = currentValue !== null && Math.abs(currentValue - csv.value) < 0.005;
-    return { ...base, status: unchanged ? 'unchanged' : 'change', rowIndex: i, currentValue };
+    if (unchanged) return { ...withTarget, status: newTarget !== null ? 'target' : 'unchanged' };
+    return { ...withTarget, status: 'change' };
   });
 }
 
