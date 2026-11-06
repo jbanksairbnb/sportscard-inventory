@@ -231,7 +231,7 @@ export async function recordBulkValueMarks(
         ...identity,
         market_value: m.previousValue,
         content_hash: hash,
-        snapshot: { notes: 'Value before CSV import', market_value: m.previousValue, rows: [] },
+        snapshot: { notes: IMPORT_BASELINE_NOTE, market_value: m.previousValue, rows: [] },
         mark_kind: 'manual',
         dedupe_key: markDedupeKey(parts, hash, null),
         // A hair before the import mark so the two sort in the right order.
@@ -267,6 +267,41 @@ export async function recordBulkValueMarks(
     onProgress?.(done);
   }
   return result;
+}
+
+// ── Import baselines ─────────────────────────────────────────────────────────
+
+// The note on the entry an import adds for a card's value from before it had
+// any history — the "prior" the import's change is measured against.
+export const IMPORT_BASELINE_NOTE = 'Value before CSV import';
+
+// Ids of a set's import baselines: entries with that note and no comps. An entry
+// whose note was edited, or that was given sales, is the owner's and is left out.
+export async function findImportBaselines(userId: string, setSlug: string): Promise<string[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('card_value_history')
+    .select('id, snapshot')
+    .eq('user_id', userId)
+    .eq('set_slug', setSlug);
+  if (error) return [];
+  return ((data || []) as Array<Record<string, any>>)
+    .filter(r => {
+      const snap = (r.snapshot || {}) as Partial<AnalysisSnapshot>;
+      return snap.notes === IMPORT_BASELINE_NOTE && !(Array.isArray(snap.rows) && snap.rows.length);
+    })
+    .map(r => String(r.id));
+}
+
+// Delete history entries by id, in batches so a large set stays under URL limits.
+export async function deleteValueMarks(userId: string, ids: string[]): Promise<string | null> {
+  const supabase = createClient();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from('card_value_history')
+      .delete().in('id', ids.slice(i, i + 200)).eq('user_id', userId);
+    if (error) return error.message;
+  }
+  return null;
 }
 
 // ── Completing an earlier import ─────────────────────────────────────────────
