@@ -8,13 +8,16 @@
 // Parsing and matching live in lib/valueImport.ts; the history writes in
 // lib/recordValueMark.ts. The parent owns the set rows and their save.
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CardDescriptor } from '@/components/MarketResearchModal';
 import {
   parseValueCsv, buildImportPlan, salesToAnalysisRows,
   saleSource, type ImportPlanItem, type PlanStatus,
 } from '@/lib/valueImport';
-import { recordBulkValueMarks, loadLatestMarks, fillMarkComps, type BulkMarkResult } from '@/lib/recordValueMark';
+import {
+  recordBulkValueMarks, loadLatestMarks, fillMarkComps, findImportBaselines, deleteValueMarks,
+  IMPORT_BASELINE_NOTE, type BulkMarkResult,
+} from '@/lib/recordValueMark';
 import { cardValueKey } from '@/lib/cardValueHistory';
 
 type Props = {
@@ -58,6 +61,32 @@ export default function ValueImportModal({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<(BulkMarkResult & { updated: number; filled: number; targets: number }) | null>(null);
+
+  // "Value before CSV import" entries already in this set's history, which the
+  // owner can clear in one go.
+  const [baselineIds, setBaselineIds] = useState<string[]>([]);
+  const [baselineMsg, setBaselineMsg] = useState<string | null>(null);
+  const [baselineBusy, setBaselineBusy] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setBaselineMsg(null);
+    findImportBaselines(userId, slug).then(ids => { if (live) setBaselineIds(ids); });
+    return () => { live = false; };
+  }, [open, userId, slug, result]);
+
+  async function removeBaselines() {
+    const n = baselineIds.length;
+    if (!n) return;
+    if (!window.confirm(`Delete ${n} "${IMPORT_BASELINE_NOTE}" entr${n === 1 ? 'y' : 'ies'} from this set's price history? Card values and the import entries are not touched. This can't be undone.`)) return;
+    setBaselineBusy(true);
+    const err = await deleteValueMarks(userId, baselineIds);
+    setBaselineBusy(false);
+    if (err) { setBaselineMsg(`Could not delete: ${err}`); return; }
+    setBaselineIds([]);
+    setBaselineMsg(`Deleted ${n} entr${n === 1 ? 'y' : 'ies'}.`);
+    onHistoryChanged();
+  }
 
   function reset() {
     setFileName(''); setPlan(null); setParseError(null); setSelected(new Set());
@@ -149,7 +178,6 @@ export default function ValueImportModal({
       return {
         card,
         value: it.newValue as number,
-        previousValue: it.currentValue,
         comps: salesToAnalysisRows(it.csv.sales, {
           grading_company: card.grading_company, grade: card.grade, raw_grade: card.raw_grade,
         }),
@@ -212,6 +240,24 @@ export default function ValueImportModal({
           {fileName && <span className="mono" style={{ fontSize: 12, color: 'var(--plum)' }}>{fileName}</span>}
         </div>
         {parseError && <div style={{ color: 'var(--rust)', fontSize: 13, marginBottom: 12 }}>{parseError}</div>}
+
+        {(baselineIds.length > 0 || baselineMsg) && !busy && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12, color: 'var(--plum)',
+            border: '1.5px solid var(--rule)', borderRadius: 8, padding: '8px 12px', marginBottom: 14 }}>
+            {baselineIds.length > 0 ? (
+              <>
+                <span style={{ flex: 1, minWidth: 200 }}>
+                  <b>{baselineIds.length}</b> card{baselineIds.length === 1 ? ' has a' : 's have a'} &ldquo;{IMPORT_BASELINE_NOTE}&rdquo;
+                  entry in its price history (the value it had before its first import, which imports no longer add).
+                </span>
+                <button type="button" className="btn btn-sm btn-outline" disabled={baselineBusy} onClick={removeBaselines}>
+                  {baselineBusy ? 'Deleting…' : 'Delete these entries'}
+                </button>
+              </>
+            ) : null}
+            {baselineMsg && <span style={{ color: baselineMsg.startsWith('Could') ? 'var(--rust)' : 'var(--teal)' }}>{baselineMsg}</span>}
+          </div>
+        )}
 
         {plan && !result && (
           <>

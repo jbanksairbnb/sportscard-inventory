@@ -157,10 +157,6 @@ export async function recordManualValueMark(
 export type BulkValueMark = {
   card: ValueMarkCard;
   value: number;
-  // The value the card carried before this import. Written as a baseline mark
-  // first when the card has no history at all, so the import never becomes the
-  // card's only data point and the old number isn't lost.
-  previousValue: number | null;
   comps: AnalysisSnapshot['rows'];
   notes: string | null;
 };
@@ -220,26 +216,9 @@ export async function recordBulkValueMarks(
       source_session_id: null,
       derived_from_id: null,
     };
-    let latest = latestByKey.get(key) ?? null;
-
-    // Baseline: the card was valued before history existed for it.
-    if (!latest && m.previousValue !== null && m.previousValue > 0
-        && Math.abs(m.previousValue - m.value) >= 0.005) {
-      const normalized = normalizeAnalysis([], null, m.previousValue);
-      const hash = contentHash(normalized);
-      const { row, error } = await insertValueHistoryRow({
-        ...identity,
-        market_value: m.previousValue,
-        content_hash: hash,
-        snapshot: { notes: 'Value before CSV import', market_value: m.previousValue, rows: [] },
-        mark_kind: 'manual',
-        dedupe_key: markDedupeKey(parts, hash, null),
-        // A hair before the import mark so the two sort in the right order.
-        created_at: new Date(Date.now() - 1000).toISOString(),
-      });
-      if (error) { result.errors.push(`#${card.card_number}: ${error}`); done++; onProgress?.(done); continue; }
-      if (row) latest = { id: row.id, market_value: row.market_value, created_at: row.created_at };
-    }
+    // No baseline entry is written for the value a card had before its first
+    // import: the import is its first history entry.
+    const latest = latestByKey.get(key) ?? null;
 
     if (latest && Math.abs(latest.market_value - m.value) < 0.005) {
       result.skipped++; done++; onProgress?.(done); continue;
@@ -267,6 +246,41 @@ export async function recordBulkValueMarks(
     onProgress?.(done);
   }
   return result;
+}
+
+// ── Import baselines ─────────────────────────────────────────────────────────
+
+// The note on the entry earlier imports added for a card's value from before it
+// had any history. Imports no longer write these; the owner can clear old ones.
+export const IMPORT_BASELINE_NOTE = 'Value before CSV import';
+
+// Ids of a set's import baselines: entries with that note and no comps. An entry
+// whose note was edited, or that was given sales, is the owner's and is left out.
+export async function findImportBaselines(userId: string, setSlug: string): Promise<string[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('card_value_history')
+    .select('id, snapshot')
+    .eq('user_id', userId)
+    .eq('set_slug', setSlug);
+  if (error) return [];
+  return ((data || []) as Array<Record<string, any>>)
+    .filter(r => {
+      const snap = (r.snapshot || {}) as Partial<AnalysisSnapshot>;
+      return snap.notes === IMPORT_BASELINE_NOTE && !(Array.isArray(snap.rows) && snap.rows.length);
+    })
+    .map(r => String(r.id));
+}
+
+// Delete history entries by id, in batches so a large set stays under URL limits.
+export async function deleteValueMarks(userId: string, ids: string[]): Promise<string | null> {
+  const supabase = createClient();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from('card_value_history')
+      .delete().in('id', ids.slice(i, i + 200)).eq('user_id', userId);
+    if (error) return error.message;
+  }
+  return null;
 }
 
 // ── Completing an earlier import ─────────────────────────────────────────────
