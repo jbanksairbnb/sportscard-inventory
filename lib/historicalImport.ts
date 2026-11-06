@@ -270,3 +270,167 @@ export const historicalDate = (year: number) => `${year}-07-01T12:00:00.000Z`;
 // One entry per card, set and year: re-importing the same year's sheet is refused
 // by the database rather than doubling the history.
 export const historicalDedupeKey = (year: number, slug: string, key: string) => `hist:${year}:${slug}:${key}`;
+
+// ── Quarterly history for one set ────────────────────────────────────────────
+//
+// A second layout: one set per file, one row per graded card, and a pair of
+// columns per quarter:
+//
+//   Card # | Description | Grading Company | Grade | Current Value | 2023 Q4 Avg | 2023 Q4 Sales | … | Notes
+//
+// Each quarter with an average becomes a history entry for that card, dated
+// the last day of the quarter's last month (Q1 → Mar 31, Q2 → Jun 30, …) since
+// a history entry carries a date, not a quarter. The set isn't named in the
+// rows, so the owner picks it (the file name suggests one).
+
+export type QuarterPoint = {
+  year: number;
+  quarter: number;          // 1–4
+  label: string;            // "2024 Q1"
+  value: number;
+  sales: number | null;     // how many sales the average is from, when given
+};
+
+export type QuarterlyRow = {
+  line: number;             // 1-based line in the file
+  cardNumber: string;
+  description: string;
+  company: string;
+  grade: string;
+  points: QuarterPoint[];
+};
+
+export type ParsedQuarterly = { rows: QuarterlyRow[]; quarters: string[]; error: string | null };
+
+// "2024 Q1 Avg", "2024 Q1", "Q1 2024 Average", "2024-Q1 Value".
+function quarterOf(header: string): { year: number; quarter: number } | null {
+  const h = header.trim();
+  const m = h.match(/^((?:19|20)\d{2})\s*[-\s]?\s*Q([1-4])\b/i) ?? h.match(/^Q([1-4])\s*[-\s]?\s*((?:19|20)\d{2})\b/i);
+  if (!m) return null;
+  const [year, quarter] = /^Q/i.test(h) ? [Number(m[2]), Number(m[1])] : [Number(m[1]), Number(m[2])];
+  return { year, quarter };
+}
+const isSalesHeader = (h: string) => /\bsales?\b|\bcount\b|#\s*sold/i.test(h);
+
+// Whether a sheet is laid out as quarterly history rather than a yearly workbook.
+export function isQuarterlySheet(grid: string[][]): boolean {
+  const headers = (grid[0] || []).map(h => String(h ?? '').trim());
+  return headers.some(h => quarterOf(h) && !isSalesHeader(h)) && headers.some(h => /^card\s*(#|no|number)/i.test(h));
+}
+
+export function parseQuarterlySheet(grid: string[][]): ParsedQuarterly {
+  const rowsIn = grid.filter(r => r.some(c => String(c ?? '').trim() !== ''));
+  if (rowsIn.length < 2) return { rows: [], quarters: [], error: 'The file has no data rows.' };
+  const headers = rowsIn[0].map(h => String(h ?? '').trim());
+  const col = (...names: string[]) => headers.findIndex(h => names.some(n => norm(h) === norm(n)));
+  const iCard = col('Card #', 'Card Number', 'Card No', '#');
+  const iDesc = col('Description', 'Player');
+  const iCompany = col('Grading Company', 'Company');
+  const iGrade = col('Grade');
+  if (iCard < 0) return { rows: [], quarters: [], error: 'The file needs a "Card #" column.' };
+
+  // Each quarter's average column, and the sales-count column beside it.
+  const qcols: Array<{ year: number; quarter: number; label: string; avg: number; sales: number }> = [];
+  headers.forEach((h, i) => {
+    const q = quarterOf(h);
+    if (!q || isSalesHeader(h)) return;
+    const sales = headers.findIndex((g, j) => j !== i && isSalesHeader(g) &&
+      quarterOf(g)?.year === q.year && quarterOf(g)?.quarter === q.quarter);
+    qcols.push({ ...q, label: `${q.year} Q${q.quarter}`, avg: i, sales });
+  });
+  if (!qcols.length) return { rows: [], quarters: [], error: 'No quarter columns found (headings like "2024 Q1 Avg").' };
+
+  const rows: QuarterlyRow[] = [];
+  rowsIn.slice(1).forEach((cells, idx) => {
+    const cell = (i: number) => (i >= 0 ? String(cells[i] ?? '').trim() : '');
+    const cardNumber = cell(iCard);
+    if (!cardNumber) return;
+    const points: QuarterPoint[] = [];
+    for (const q of qcols) {
+      const value = parseMoney(cell(q.avg));
+      if (value === null || value <= 0) continue;
+      const n = q.sales >= 0 ? Number(cell(q.sales).replace(/,/g, '')) : NaN;
+      points.push({ year: q.year, quarter: q.quarter, label: q.label, value, sales: Number.isFinite(n) && cell(q.sales) ? n : null });
+    }
+    rows.push({
+      line: idx + 2, cardNumber, description: cell(iDesc), company: cell(iCompany), grade: cell(iGrade), points,
+    });
+  });
+  return { rows, quarters: qcols.map(q => q.label), error: null };
+}
+
+// The last day of the quarter's last month, at noon UTC so it reads as that
+// day in every US time zone: 2024 Q1 → 2024-03-31.
+export function quarterDate(year: number, quarter: number): string {
+  const month = quarter * 3; // 3, 6, 9, 12
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T12:00:00.000Z`;
+}
+
+// One entry per card, set and quarter, so re-importing the file adds nothing twice.
+export const quarterlyDedupeKey = (year: number, quarter: number, slug: string, key: string) =>
+  `histq:${year}Q${quarter}:${slug}:${key}`;
+
+export type QuarterlyPlanItem = {
+  row: QuarterlyRow;
+  status: 'match' | 'skip';
+  reason: string | null;
+  card: MatchedCard | null;
+};
+
+// The set a file name points at: "1970_Topps_Graded_Quarterly_History_2023-2026.csv"
+// → the owner's 1970 Topps set. The first year in the name is the set's year.
+export function guessSetFromFileName(fileName: string, sets: UserSet[]): string | null {
+  const words = norm(fileName.replace(/\.[^.]+$/, '')).replace(/[_\-]+/g, ' ');
+  const year = Number(words.match(/\b(18|19|20)\d{2}\b/)?.[0]) || null;
+  if (!year) return null;
+  const sameYear = sets.filter(s => s.year === year);
+  const byBrand = sameYear.filter(s => {
+    const b = norm(s.brand || String(s.title || '').replace(/\b(18|19|20)\d{2}\b/, ''));
+    return b && words.includes(b);
+  });
+  const pick = byBrand.length ? byBrand : sameYear;
+  return pick.length === 1 ? pick[0].slug : byBrand[0]?.slug ?? null;
+}
+
+// Pair each file row with a card in the chosen set: same card #, grading
+// company and grade. When the set holds more than one such copy, the player
+// name (the description up to " - ") narrows it down.
+export function buildQuarterlyPlan(rows: QuarterlyRow[], set: UserSet): QuarterlyPlanItem[] {
+  const claimed = new Set<number>();
+  return rows.map(row => {
+    const skip = (reason: string): QuarterlyPlanItem => ({ row, status: 'skip', reason, card: null });
+    if (!row.points.length) return skip('No quarterly averages');
+    if (!set.year) return skip(`The set "${set.title}" has no year`);
+    if (!row.company || !row.grade) return skip('No grading company and grade');
+    const byNumber = (set.rows || []).map((r, i) => ({ r, i }))
+      .filter(({ r, i }) => !claimed.has(i) && sameNumber(r['Card #'], row.cardNumber));
+    if (!byNumber.length) return skip(`No card #${row.cardNumber} in ${set.title}`);
+    let graded = byNumber.filter(({ r }) =>
+      norm(r['Grading Company']) === norm(row.company) && sameGrade(r['Grade'], row.grade));
+    if (!graded.length) {
+      const have = Array.from(new Set(byNumber.map(({ r }) => [r['Grading Company'], r['Grade']].filter(Boolean).join(' ') || 'ungraded')));
+      return skip(`#${row.cardNumber} is not ${row.company} ${row.grade} in your set (have: ${have.join(', ')})`);
+    }
+    if (graded.length > 1 && row.description) {
+      const name = row.description.split(' - ')[0];
+      const fit = graded.filter(({ r }) => nameFits(name, String(r['Player'] ?? r['Description'] ?? '')));
+      if (fit.length) graded = fit;
+    }
+    if (graded.length > 1) return skip(`More than one #${row.cardNumber} ${row.company} ${row.grade} in your set`);
+    const { r, i } = graded[0];
+    claimed.add(i);
+    const parts = {
+      year: set.year, brand: set.brand || null, card_number: String(r['Card #']).trim(),
+      grading_company: String(r['Grading Company']).trim(), grade: String(r['Grade']).trim(), raw_grade: null,
+    };
+    return {
+      row, status: 'match', reason: null,
+      card: {
+        slug: set.slug, setTitle: set.title, year: set.year, brand: set.brand || null,
+        cardNumber: parts.card_number, player: String(r['Player'] ?? '').trim(),
+        gradingCompany: parts.grading_company, grade: parts.grade, key: cardValueKey(parts),
+      },
+    };
+  });
+}

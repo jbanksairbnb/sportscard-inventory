@@ -8,6 +8,9 @@
 // history entry dated July 1 of the chosen year. Current Values are not
 // touched; only the history (and so the collection-value chart) gains the
 // older data points.
+//
+// A file laid out as one set's quarterly averages (Card # … "2024 Q1 Avg",
+// "2024 Q1 Sales" …) is recognised and handed to QuarterlyHistoryImport.
 
 import React, { useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -15,8 +18,9 @@ import { fetchAll } from '@/lib/supabase/fetchAll';
 import { parseCsv } from '@/lib/csv';
 import { cardValueKey, contentHash, normalizeAnalysis, type AnalysisSnapshot } from '@/lib/cardValueHistory';
 import { insertValueHistoryRow } from '@/lib/recordValueMark';
+import QuarterlyHistoryImport from '@/components/QuarterlyHistoryImport';
 import {
-  parseHistoricalSheet, buildHistoricalPlan, historicalDate, historicalDedupeKey,
+  isQuarterlySheet, parseHistoricalSheet, buildHistoricalPlan, historicalDate, historicalDedupeKey,
   type HistoricalPlanItem, type SheetBlock, type UserSet,
 } from '@/lib/historicalImport';
 
@@ -82,10 +86,11 @@ export default function HistoricalValueImportModal({ open, onClose, onImported }
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<{ written: number; duplicates: number; errors: string[] } | null>(null);
   const gridRef = useRef<string[][] | null>(null);
+  const [quarterly, setQuarterly] = useState<string[][] | null>(null);
 
   function reset() {
     setFileName(''); setRows(null); setBlocks([]); setError(null); setView('ready');
-    setBusy(false); setProgress(0); setResult(null); gridRef.current = null;
+    setBusy(false); setProgress(0); setResult(null); gridRef.current = null; setQuarterly(null);
     if (fileRef.current) fileRef.current.value = '';
   }
   function close() { if (busy) return; reset(); onClose(); }
@@ -137,6 +142,11 @@ export default function HistoricalValueImportModal({ open, onClose, onImported }
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setQuarterly(null); setRows(null); setError(null); setResult(null);
+    try {
+      const grid = await readGrid(file);
+      if (isQuarterlySheet(grid)) { gridRef.current = null; setQuarterly(grid); return; }
+    } catch { /* read again below, which reports the error */ }
     const y = Number(file.name.match(/\b(19|20)\d{2}\b/)?.[0]);
     const forYear = y && y < thisYear + 1 ? y : year;
     setYear(forYear);
@@ -240,26 +250,36 @@ export default function HistoricalValueImportModal({ open, onClose, onImported }
           company and grade match one of your cards exactly and its name fits the card&apos;s player (&ldquo;100 Bench PSA 8&rdquo;
           → #100 JOHNNY BENCH PSA 8). Each match is added to the card&apos;s price history dated <b>July 1</b> of the
           year. Current values are not changed.
+          <br />Also reads a single set&apos;s <b>quarterly history</b> (Card #, Grading Company, Grade, then
+          &ldquo;2024 Q1 Avg&rdquo; / &ldquo;2024 Q1 Sales&rdquo; columns): each quarter&apos;s average is added dated the
+          last day of the quarter (Q1 → Mar 31).
         </div>
 
         <input ref={fileRef} type="file" accept=".xlsx,.csv,text/csv" onChange={handleFile} style={{ display: 'none' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-sm btn-primary" disabled={busy || loading} onClick={() => fileRef.current?.click()}>
-            {rows ? 'Choose another file' : 'Choose file'}
+            {rows || quarterly ? 'Choose another file' : 'Choose file'}
           </button>
           {fileName && <span className="mono" style={{ fontSize: 12, color: 'var(--plum)' }}>{fileName}</span>}
-          <label style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--plum)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {!quarterly && <label style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--plum)', display: 'flex', alignItems: 'center', gap: 6 }}>
             Values are for
             <select value={year} disabled={busy || loading} onChange={e => changeYear(Number(e.target.value))}>
               {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
             <span style={{ color: 'var(--ink-mute)' }}>(dated 7/1/{year})</span>
-          </label>
+          </label>}
         </div>
         {loading && <div style={{ fontSize: 13, color: 'var(--plum)', marginBottom: 12 }}>Matching against your sets…</div>}
         {error && <div style={{ color: 'var(--rust)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
 
-        {rows && !result && !loading && (
+        {quarterly && (
+          <QuarterlyHistoryImport
+            grid={quarterly} fileName={fileName} busy={busy} setBusy={setBusy}
+            onImported={onImported} onReset={reset} onDone={close}
+          />
+        )}
+
+        {!quarterly && rows && !result && !loading && (
           <>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
               {tabBtn('ready', 'Ready to import', ready.length)}
@@ -321,7 +341,7 @@ export default function HistoricalValueImportModal({ open, onClose, onImported }
           </>
         )}
 
-        {result && (
+        {!quarterly && result && (
           <div style={{ fontSize: 13, color: 'var(--plum)', lineHeight: 1.6 }}>
             <div><b>{result.written}</b> history entr{result.written === 1 ? 'y' : 'ies'} added, dated 7/1/{year}.</div>
             {result.duplicates > 0 && <div><b>{result.duplicates}</b> already recorded for {year} (left as is).</div>}
