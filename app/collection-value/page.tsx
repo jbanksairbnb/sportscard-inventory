@@ -21,7 +21,8 @@ import {
 // when enough of today's cards have a mark by then.
 
 const MIN_RECONSTRUCT_COVERAGE = 0.6;
-const MAX_BACKFILL_MONTHS = 24;
+// Six years back, so yearly values imported for earlier years reach the chart.
+const MAX_BACKFILL_MONTHS = 72;
 
 const money = (n: number, compact = false) =>
   new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: compact && Math.abs(n) >= 10000 ? 0 : 2 }).format(n);
