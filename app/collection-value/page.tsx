@@ -7,6 +7,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { createClient } from '@/lib/supabase/client';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import SCLogo from '@/components/SCLogo';
+import HistoricalValueImportModal from '@/components/HistoricalValueImportModal';
 import { cardValueKey } from '@/lib/cardValueHistory';
 import type { CollectionItem } from '@/lib/collectionItems';
 import {
@@ -70,6 +71,9 @@ export default function CollectionValuePage() {
   const [selected, setSelected] = useState<string>('');
   const [tab, setTab] = useState<Tab>('movers');
   const [moverView, setMoverView] = useState<'gainers' | 'losers' | 'all'>('all');
+  const [histOpen, setHistOpen] = useState(false);
+  // An import adds past marks; the page rebuilds from history on load.
+  const histImported = React.useRef(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -243,9 +247,17 @@ export default function CollectionValuePage() {
             </div>
           </Link>
           <div className="eyebrow" style={{ fontSize: 11, color: 'var(--orange)' }}>★ 📈 Collection Value ★</div>
-          <div style={{ marginLeft: 'auto' }}><Link href="/home" className="btn btn-outline btn-sm">← Home</Link></div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setHistOpen(true)}>⬆ Import historical values</button>
+            <Link href="/home" className="btn btn-outline btn-sm">← Home</Link>
+          </div>
         </div>
       </header>
+      <HistoricalValueImportModal
+        open={histOpen}
+        onImported={() => { histImported.current = true; }}
+        onClose={() => { setHistOpen(false); if (histImported.current) window.location.reload(); }}
+      />
 
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: '32px 28px 80px' }}>
         {error && <p style={{ color: 'var(--rust)' }}>Couldn&apos;t load your collection: {error}</p>}
