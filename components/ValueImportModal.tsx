@@ -178,7 +178,6 @@ export default function ValueImportModal({
       return {
         card,
         value: it.newValue as number,
-        previousValue: it.currentValue,
         comps: salesToAnalysisRows(it.csv.sales, {
           grading_company: card.grading_company, grade: card.grade, raw_grade: card.raw_grade,
         }),
@@ -249,7 +248,7 @@ export default function ValueImportModal({
               <>
                 <span style={{ flex: 1, minWidth: 200 }}>
                   <b>{baselineIds.length}</b> card{baselineIds.length === 1 ? ' has a' : 's have a'} &ldquo;{IMPORT_BASELINE_NOTE}&rdquo;
-                  entry in its price history (the value it had before its first import).
+                  entry in its price history (the value it had before its first import, which imports no longer add).
                 </span>
                 <button type="button" className="btn btn-sm btn-outline" disabled={baselineBusy} onClick={removeBaselines}>
                   {baselineBusy ? 'Deleting…' : 'Delete these entries'}

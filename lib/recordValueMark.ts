@@ -157,10 +157,6 @@ export async function recordManualValueMark(
 export type BulkValueMark = {
   card: ValueMarkCard;
   value: number;
-  // The value the card carried before this import. Written as a baseline mark
-  // first when the card has no history at all, so the import never becomes the
-  // card's only data point and the old number isn't lost.
-  previousValue: number | null;
   comps: AnalysisSnapshot['rows'];
   notes: string | null;
 };
@@ -220,26 +216,9 @@ export async function recordBulkValueMarks(
       source_session_id: null,
       derived_from_id: null,
     };
-    let latest = latestByKey.get(key) ?? null;
-
-    // Baseline: the card was valued before history existed for it.
-    if (!latest && m.previousValue !== null && m.previousValue > 0
-        && Math.abs(m.previousValue - m.value) >= 0.005) {
-      const normalized = normalizeAnalysis([], null, m.previousValue);
-      const hash = contentHash(normalized);
-      const { row, error } = await insertValueHistoryRow({
-        ...identity,
-        market_value: m.previousValue,
-        content_hash: hash,
-        snapshot: { notes: IMPORT_BASELINE_NOTE, market_value: m.previousValue, rows: [] },
-        mark_kind: 'manual',
-        dedupe_key: markDedupeKey(parts, hash, null),
-        // A hair before the import mark so the two sort in the right order.
-        created_at: new Date(Date.now() - 1000).toISOString(),
-      });
-      if (error) { result.errors.push(`#${card.card_number}: ${error}`); done++; onProgress?.(done); continue; }
-      if (row) latest = { id: row.id, market_value: row.market_value, created_at: row.created_at };
-    }
+    // No baseline entry is written for the value a card had before its first
+    // import: the import is its first history entry.
+    const latest = latestByKey.get(key) ?? null;
 
     if (latest && Math.abs(latest.market_value - m.value) < 0.005) {
       result.skipped++; done++; onProgress?.(done); continue;
@@ -271,8 +250,8 @@ export async function recordBulkValueMarks(
 
 // ── Import baselines ─────────────────────────────────────────────────────────
 
-// The note on the entry an import adds for a card's value from before it had
-// any history — the "prior" the import's change is measured against.
+// The note on the entry earlier imports added for a card's value from before it
+// had any history. Imports no longer write these; the owner can clear old ones.
 export const IMPORT_BASELINE_NOTE = 'Value before CSV import';
 
 // Ids of a set's import baselines: entries with that note and no comps. An entry
