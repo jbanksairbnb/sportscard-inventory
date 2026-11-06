@@ -9,6 +9,7 @@
 // The file only has to carry `Card #` and `Value`. A set export works as-is.
 // Three optional columns make the mark richer:
 //   - "<period> Sale(s)"      e.g. "Sep 26: $1,100.00 (Gray Back) | Sep 5: …"
+//                             or "Nov 5, 2026 $99.99; Oct 30, 2026 $85.00"
 //   - "<period> Sale Link(s)" the matching URLs, same order, " | " separated
 //   - "Sale Format(s)" / "Sale Platform(s)" per-sale format and venue, same order
 //   - "Value Basis"           how the value was reached ("Replaced: …",
@@ -89,15 +90,17 @@ function firstParenGroup(s: string): string | null {
 export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url' | 'used' | 'platform'> | null {
   const text = entry.trim();
   if (!text) return null;
-  // "Nov 3: $630.00" or "Nov 3 $630.00" — the colon is optional, the $ is not,
-  // so prose like "Oct 18, 2026." is never mistaken for a sale.
-  const m = text.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})\s*(?::\s*\$?|\$)\s*(\d[\d,]*(?:\.\d+)?)/);
+  // "Nov 3: $630.00", "Nov 3 $630.00" or "Nov 5, 2026 $99.99" — the colon and
+  // the year are optional, the $ is not, so prose like "Oct 18, 2026." is never
+  // mistaken for a sale. A year in the entry beats the one from the header.
+  const m = text.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:\s*,?\s*((?:19|20)\d{2}))?\s*(?::\s*\$?|\$)\s*(\d[\d,]*(?:\.\d+)?)/);
   if (!m) return null;
   const month = MONTHS[m[1].toLowerCase()];
   const day = Number(m[2]);
-  const price = parseMoney(m[3]);
+  const saleYear = m[3] ? Number(m[3]) : year;
+  const price = parseMoney(m[4]);
   const sale_date = month && day >= 1 && day <= 31
-    ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    ? `${saleYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     : null;
   const rest = text.slice(m[0].length);
   const qualifier = rest.match(/\[([^\]]*)\]/)?.[1]?.trim() || null;
@@ -106,12 +109,13 @@ export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url'
   const parts = (firstParenGroup(rest) ?? '').split(/,(?![^(]*\))/).map(p => p.trim()).filter(Boolean);
   const format = parts.find(p => FORMAT_RE.test(p)) ?? null;
   const variant = parts.filter(p => !FORMAT_RE.test(p)).join(', ') || null;
-  const label = `${m[1]} ${m[2]}: $${m[3]}`;
+  const label = `${m[1]} ${m[2]}: $${m[4]}`;
   return { sale_date, label, price, variant, qualifier, format };
 }
 
-// "Nov 3: $630.00" and "Nov 3 $630.00" are the same sale.
-const dropDateColon = (t: string) => t.replace(/\b([A-Za-z]{3}\.?\s+\d{1,2})\s*:\s*/g, '$1 ');
+// "Nov 3: $630.00", "Nov 3 $630.00" and "Nov 3, 2026 $630.00" are the same sale.
+const dropDateColon = (t: string) =>
+  t.replace(/\b([A-Za-z]{3}\.?\s+\d{1,2})(?:\s*,?\s*(?:19|20)\d{2}\b)?\s*(?::\s*|(?=\$))/g, '$1 ');
 
 // Whether `text` names this sale ("Sep 5: $1,249.00"), and not merely a longer
 // price that starts the same way ("Sep 5: $1,249.001").
