@@ -77,12 +77,13 @@ export default function ValueImportModal({
     setParseError(null);
     const p = buildImportPlan(parsed.rows, rows);
     // An unchanged card whose latest entry is an earlier CSV import of this
-    // same value, saved without its sales, gets those sales filled in.
+    // same value, saved without all its sales (none, or only the first when a
+    // ";"-separated list was misread as one sale), gets those sales filled in.
     const latest = await loadLatestMarks(userId, slug);
     for (const it of p) {
       if ((it.status !== 'unchanged' && it.status !== 'target') || it.rowIndex === null || !it.csv.sales.length || it.newValue === null) continue;
       const m = latest.get(cardValueKey(describe(rows[it.rowIndex])));
-      if (m && m.compCount === 0 && (m.notes || '').startsWith('CSV import')
+      if (m && m.compCount < it.csv.sales.length && (m.notes || '').startsWith('CSV import')
           && Math.abs(m.market_value - it.newValue) < 0.005) {
         it.status = 'fill';
         it.fillMarkId = m.id;

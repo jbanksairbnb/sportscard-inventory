@@ -10,8 +10,10 @@
 // Three optional columns make the mark richer:
 //   - "<period> Sale(s)"      e.g. "Sep 26: $1,100.00 (Gray Back) | Sep 5: …"
 //   - "<period> Sale Link(s)" the matching URLs, same order, " | " separated
+//   - "Sale Format(s)" / "Sale Platform(s)" per-sale format and venue, same order
 //   - "Value Basis"           how the value was reached ("Replaced: …",
 //                             "Unchanged: …") — stored as the mark's note
+// Lists are " | " separated; files that use "; " instead are read the same way.
 // A "Target Price" column, when present, updates each card's Target Price too
 // (no history entry — targets aren't tracked over time). A file may carry
 // Target Price without Value to update targets alone.
@@ -29,6 +31,7 @@ export type ImportedSale = {
   qualifier: string | null; // "MC", "OC", …
   format: string | null;    // "Auction", "Buy It Now", … — from the Sale Format(s)
                             // column, else from the entry's own text
+  platform: string | null;  // "eBay", "Fanatics", … — from the Sale Platform(s) column
   url: string | null;
   used: boolean;            // named in Value Basis as part of the value
 };
@@ -83,7 +86,7 @@ function firstParenGroup(s: string): string | null {
 // "Sep 26: $1,100.00 (Gray Back) [MC]", "Oct 20: $1,250.00 [MK] (Buy It Now)",
 // "Oct 16: $22.50 (VG-VGEX (crease), Auction)" → parts. `year` comes from the
 // column header ("Aug-Oct 2026 Sale(s)") since the entries themselves omit it.
-export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url' | 'used'> | null {
+export function parseSale(entry: string, year: number): Omit<ImportedSale, 'url' | 'used' | 'platform'> | null {
   const text = entry.trim();
   if (!text) return null;
   // "Nov 3: $630.00" or "Nov 3 $630.00" — the colon is optional, the $ is not,
@@ -136,6 +139,7 @@ const mean = (xs: ImportedSale[]) => {
 // odd ("Average includes Aug 11 $280.00 sale, well below the other two").
 // So each reading is checked against the Value the file states, and the first
 // whose plain average equals it wins:
+//   0. the N most recent sales, when Value Basis says "N most recent";
 //   1. the sales Value Basis names (outside an "excluded" clause);
 //   2. every sale except those named in an "excluded" clause;
 //   3. every listed sale.
@@ -147,12 +151,22 @@ function markUsed(sales: ImportedSale[], basis: string, value: number | null) {
   const excluded = exAt >= 0 ? basis.slice(exAt) : '';
   const named = sales.filter(s => mentions(included, s.label));
   const notExcluded = sales.filter(s => !mentions(excluded, s.label));
-  const readings = [named, notExcluded, sales].filter(r => r.length);
+  // "Average of 5 most recent of 30 qualifying sale(s)": the newest N of the
+  // sales not excluded (undated ones last, file order breaking ties).
+  const recentN = Number(basis.match(/\b(\d+)\s+most\s+recent\b/i)?.[1] ?? 0);
+  const recent = recentN > 0
+    ? notExcluded
+        .map((s, k) => ({ s, k }))
+        .sort((a, b) => (b.s.sale_date ?? '').localeCompare(a.s.sale_date ?? '') || a.k - b.k)
+        .slice(0, recentN)
+        .map(x => x.s)
+    : [];
+  const readings = [recent, named, notExcluded, sales].filter(r => r.length);
   const fits = (r: ImportedSale[]) => {
     const m = mean(r);
     return value !== null && m !== null && Math.abs(m - value) <= 0.01;
   };
-  const chosen = readings.find(fits) ?? (named.length ? named : notExcluded);
+  const chosen = readings.find(fits) ?? (recent.length ? recent : named.length ? named : notExcluded);
   for (const s of sales) s.used = chosen.includes(s);
 }
 
@@ -163,6 +177,13 @@ function findCol(headers: string[], ...tests: Array<string | RegExp>): number {
     if (i >= 0) return i;
   }
   return -1;
+}
+
+// Split a per-sale list cell. Files separate entries with "|" — or, in some
+// exports, ";" ("Oct 20 $181.50; Oct 11 $250.00"). A cell that has any "|"
+// is split on "|" only, so a ";" inside an older entry's text stays put.
+function splitList(cell: string): string[] {
+  return cell.split(cell.includes('|') ? '|' : ';').map(s => s.trim());
 }
 
 export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCsv {
@@ -183,6 +204,7 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
   const iSales = findCol(headers, /sale\(s\)\s*$/i, /^sales?$/i);
   const iLinks = findCol(headers, /link\(s\)\s*$/i, /^sale links?$/i);
   const iFormats = findCol(headers, /format\(s\)\s*$/i, /^sale formats?$/i, /^formats?$/i);
+  const iPlatforms = findCol(headers, /platform\(s\)\s*$/i, /^sale platforms?$/i, /^platforms?$/i);
   const iBasis = findCol(headers, 'Value Basis', 'Basis', 'Value Notes');
 
   const yearInHeader = iSales >= 0 ? headers[iSales].match(/\b(19|20)\d{2}\b/)?.[0] : undefined;
@@ -194,16 +216,17 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
     const cardNumber = cell(iCard);
     if (!cardNumber) return;
     const basis = cell(iBasis);
-    const links = cell(iLinks).split('|').map(s => s.trim());
-    const formats = cell(iFormats).split('|').map(s => s.trim());
+    const links = splitList(cell(iLinks));
+    const formats = splitList(cell(iFormats));
+    const platforms = splitList(cell(iPlatforms));
     const sales: ImportedSale[] = [];
-    cell(iSales).split('|').forEach((entry, k) => {
+    splitList(cell(iSales)).forEach((entry, k) => {
       const s = parseSale(entry, saleYear);
       if (!s) return;
       const url = /^https?:\/\//i.test(links[k] ?? '') ? links[k] : null;
       // The Sale Format(s) column, position for position, beats the entry text.
       const format = formats[k] || s.format;
-      sales.push({ ...s, format, url, used: true });
+      sales.push({ ...s, format, platform: platforms[k] || null, url, used: true });
     });
     markUsed(sales, basis, parseMoney(cell(iValue)));
     rows.push({
@@ -347,7 +370,9 @@ export function salesToAnalysisRows(
   const weights = evenSplit(sales.filter(counts).length);
   let k = 0;
   return sales.map((s, i) => {
-    const notes = [s.variant, s.qualifier ? `[${s.qualifier}]` : null, counts(s) ? null : 'not used']
+    // The comp's source is an eBay type; a sale made elsewhere says where.
+    const venue = s.platform && !/^ebay$/i.test(s.platform) ? s.platform : null;
+    const notes = [s.variant, s.qualifier ? `[${s.qualifier}]` : null, venue, counts(s) ? null : 'not used']
       .filter(Boolean).join(' · ') || null;
     return {
       position: i,
