@@ -189,6 +189,8 @@ export type MatchedCard = {
   gradingCompany: string;
   grade: string;
   key: string;              // cardValueKey
+  rawGrade?: string | null; // an ungraded card's raw grade (quarterly import of a want-list card)
+  targetGrade?: string | null; // "PSA 8" — the grade the averages are for, when the card itself isn't graded
 };
 
 export type HistoricalPlanItem = {
@@ -297,6 +299,7 @@ export type QuarterlyRow = {
   description: string;
   company: string;
   grade: string;
+  want: boolean;            // Type says "Want …": a card not owned, priced at a target grade
   points: QuarterPoint[];
 };
 
@@ -327,6 +330,7 @@ export function parseQuarterlySheet(grid: string[][]): ParsedQuarterly {
   const iDesc = col('Description', 'Player');
   const iCompany = col('Grading Company', 'Company');
   const iGrade = col('Grade');
+  const iType = col('Type', 'Status');
   if (iCard < 0) return { rows: [], quarters: [], error: 'The file needs a "Card #" column.' };
 
   // Each quarter's average column, and the sales-count column beside it.
@@ -353,7 +357,8 @@ export function parseQuarterlySheet(grid: string[][]): ParsedQuarterly {
       points.push({ year: q.year, quarter: q.quarter, label: q.label, value, sales: Number.isFinite(n) && cell(q.sales) ? n : null });
     }
     rows.push({
-      line: idx + 2, cardNumber, description: cell(iDesc), company: cell(iCompany), grade: cell(iGrade), points,
+      line: idx + 2, cardNumber, description: cell(iDesc), company: cell(iCompany), grade: cell(iGrade),
+      want: /\bwant/i.test(cell(iType)), points,
     });
   });
   return { rows, quarters: qcols.map(q => q.label), error: null };
@@ -380,14 +385,21 @@ export type QuarterlyPlanItem = {
 
 // The set a file name points at: "1970_Topps_Graded_Quarterly_History_2023-2026.csv"
 // → the owner's 1970 Topps set. The first year in the name is the set's year.
+// A set whose whole title is in the name wins, the longest title first, so
+// "1979_Topps_Hall_of_Fame_…" picks "1979 Topps Hall of Fame" over "1979 Topps".
 export function guessSetFromFileName(fileName: string, sets: UserSet[]): string | null {
-  const words = norm(fileName.replace(/\.[^.]+$/, '')).replace(/[_\-]+/g, ' ');
+  const flat = (t: string) => ` ${norm(t).replace(/[^a-z0-9]+/g, ' ').trim()} `;
+  const words = flat(fileName.replace(/\.[^.]+$/, ''));
   const year = Number(words.match(/\b(18|19|20)\d{2}\b/)?.[0]) || null;
   if (!year) return null;
   const sameYear = sets.filter(s => s.year === year);
+  const byTitle = sameYear
+    .filter(s => s.title && words.includes(flat(s.title)))
+    .sort((a, b) => b.title.length - a.title.length);
+  if (byTitle.length) return byTitle[0].slug;
   const byBrand = sameYear.filter(s => {
-    const b = norm(s.brand || String(s.title || '').replace(/\b(18|19|20)\d{2}\b/, ''));
-    return b && words.includes(b);
+    const b = flat(s.brand || String(s.title || '').replace(/\b(18|19|20)\d{2}\b/, ''));
+    return b.trim() && words.includes(b);
   });
   const pick = byBrand.length ? byBrand : sameYear;
   return pick.length === 1 ? pick[0].slug : byBrand[0]?.slug ?? null;
@@ -396,8 +408,15 @@ export function guessSetFromFileName(fileName: string, sets: UserSet[]): string 
 // Pair each file row with a card in the chosen set: same card #, grading
 // company and grade. When the set holds more than one such copy, the player
 // name (the description up to " - ") narrows it down.
+//
+// A "Want" row is a card the owner doesn't have yet, priced at the grade they
+// want ("Want (PSA 8 target)"). Its set row is ungraded, so it's matched to the
+// unowned copy of that card # instead, and the history goes on that card as it
+// sits in the set — the same series the research modal shows for it — with the
+// target grade noted on each entry.
 export function buildQuarterlyPlan(rows: QuarterlyRow[], set: UserSet): QuarterlyPlanItem[] {
   const claimed = new Set<number>();
+  const owned = (r: Record<string, any>) => norm(r['Owned']) === 'yes';
   return rows.map(row => {
     const skip = (reason: string): QuarterlyPlanItem => ({ row, status: 'skip', reason, card: null });
     if (!row.points.length) return skip('No quarterly averages');
@@ -406,30 +425,43 @@ export function buildQuarterlyPlan(rows: QuarterlyRow[], set: UserSet): Quarterl
     const byNumber = (set.rows || []).map((r, i) => ({ r, i }))
       .filter(({ r, i }) => !claimed.has(i) && sameNumber(r['Card #'], row.cardNumber));
     if (!byNumber.length) return skip(`No card #${row.cardNumber} in ${set.title}`);
-    let graded = byNumber.filter(({ r }) =>
-      norm(r['Grading Company']) === norm(row.company) && sameGrade(r['Grade'], row.grade));
-    if (!graded.length) {
+    const narrow = (list: typeof byNumber) => {
+      if (list.length > 1 && row.description) {
+        const name = row.description.split(' - ')[0];
+        const fit = list.filter(({ r }) => nameFits(name, String(r['Player'] ?? r['Description'] ?? '')));
+        if (fit.length) return fit;
+      }
+      return list;
+    };
+    let target = false;
+    let found = narrow(byNumber.filter(({ r }) =>
+      norm(r['Grading Company']) === norm(row.company) && sameGrade(r['Grade'], row.grade)));
+    if (!found.length && row.want) {
+      found = narrow(byNumber.filter(({ r }) => !owned(r) && !norm(r['Grading Company'])));
+      target = true;
+      if (!found.length) return skip(`Want card #${row.cardNumber}, but your set has no unowned, ungraded copy of it`);
+    }
+    if (!found.length) {
       const have = Array.from(new Set(byNumber.map(({ r }) => [r['Grading Company'], r['Grade']].filter(Boolean).join(' ') || 'ungraded')));
       return skip(`#${row.cardNumber} is not ${row.company} ${row.grade} in your set (have: ${have.join(', ')})`);
     }
-    if (graded.length > 1 && row.description) {
-      const name = row.description.split(' - ')[0];
-      const fit = graded.filter(({ r }) => nameFits(name, String(r['Player'] ?? r['Description'] ?? '')));
-      if (fit.length) graded = fit;
-    }
-    if (graded.length > 1) return skip(`More than one #${row.cardNumber} ${row.company} ${row.grade} in your set`);
-    const { r, i } = graded[0];
+    if (found.length > 1) return skip(`More than one #${row.cardNumber} ${target ? 'unowned copy' : `${row.company} ${row.grade}`} in your set`);
+    const { r, i } = found[0];
     claimed.add(i);
+    const company = target ? '' : String(r['Grading Company']).trim();
+    const grade = target ? '' : String(r['Grade']).trim();
+    const rawGrade = target ? String(r['Raw Grade'] ?? '').trim() || null : null;
     const parts = {
       year: set.year, brand: set.brand || null, card_number: String(r['Card #']).trim(),
-      grading_company: String(r['Grading Company']).trim(), grade: String(r['Grade']).trim(), raw_grade: null,
+      grading_company: company, grade, raw_grade: rawGrade,
     };
     return {
       row, status: 'match', reason: null,
       card: {
         slug: set.slug, setTitle: set.title, year: set.year, brand: set.brand || null,
         cardNumber: parts.card_number, player: String(r['Player'] ?? '').trim(),
-        gradingCompany: parts.grading_company, grade: parts.grade, key: cardValueKey(parts),
+        gradingCompany: company, grade, key: cardValueKey(parts),
+        rawGrade, targetGrade: target ? `${row.company} ${row.grade}` : null,
       },
     };
   });

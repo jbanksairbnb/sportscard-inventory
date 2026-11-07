@@ -44,6 +44,7 @@ export type CsvValueRow = {
   gradingCompany: string;
   grade: string;
   rawGrade: string;
+  cost: number | null;      // tells two otherwise identical copies apart
   value: number | null;
   targetPrice: number | null; // null: column absent or cell blank — leave the target alone
   basis: string;
@@ -205,6 +206,7 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
   const iCompany = findCol(headers, 'Grading Company');
   const iGrade = findCol(headers, 'Grade');
   const iRawGrade = findCol(headers, 'Raw Grade');
+  const iCost = findCol(headers, 'Cost');
   const iSales = findCol(headers, /sale\(s\)\s*$/i, /^sales?$/i);
   const iLinks = findCol(headers, /link\(s\)\s*$/i, /^sale links?$/i);
   const iFormats = findCol(headers, /format\(s\)\s*$/i, /^sale formats?$/i, /^formats?$/i);
@@ -240,6 +242,7 @@ export function parseValueCsv(text: string, fallbackYear: number): ParsedValueCs
       gradingCompany: cell(iCompany),
       grade: cell(iGrade),
       rawGrade: cell(iRawGrade),
+      cost: parseMoney(cell(iCost)),
       value: parseMoney(cell(iValue)),
       targetPrice: parseMoney(cell(iTarget)),
       basis,
@@ -309,6 +312,22 @@ export function buildImportPlan(
       // Several copies of the card: only the owned one(s) carry a value.
       const owned = candidates.filter(({ r }) => norm(r['Owned']) === 'yes');
       if (owned.length) candidates = owned;
+    }
+    if (candidates.length > 1 && csv.cost !== null) {
+      // Two copies of the same card at the same grade: what each one cost.
+      const c = candidates.filter(({ r }) => {
+        const cost = parseMoney(r['Cost']);
+        return cost !== null && Math.abs(cost - (csv.cost as number)) < 0.005;
+      });
+      if (c.length) candidates = c;
+    }
+    if (candidates.length > 1) {
+      // Still more than one, but every one is the same card at the same grade
+      // (same price-history series): any of them takes this value, so pair
+      // them in file order. The next file row for the card gets the next copy.
+      const sig = ({ r }: { r: Record<string, any> }) =>
+        [r['Grading Company'], r['Grade'], r['Raw Grade'], r['Player'] ?? r['Description']].map(norm).join('|');
+      if (new Set(candidates.map(sig)).size === 1) candidates = candidates.slice(0, 1);
     }
 
     const base = { csv, newValue: csv.value, currentTarget: null, newTarget: null };
