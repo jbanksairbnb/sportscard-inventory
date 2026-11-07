@@ -94,7 +94,8 @@ export default function QuarterlyHistoryImport({ grid, fileName, busy, setBusy, 
       for (const p of it.row.points) {
         if (!isNew(it, p)) continue;
         const sales = p.sales !== null ? ` (${p.sales} sale${p.sales === 1 ? '' : 's'})` : '';
-        const notes = `Quarterly average, ${p.label}${sales} — historical import (${fileName})`;
+        const target = c.targetGrade ? ` for ${c.targetGrade} (target grade)` : '';
+        const notes = `Quarterly average${target}, ${p.label}${sales} — historical import (${fileName})`;
         const snapshot: AnalysisSnapshot = { notes, market_value: p.value, rows: [] };
         const { error: err, duplicate } = await insertValueHistoryRow({
           user_id: userId,
@@ -102,9 +103,9 @@ export default function QuarterlyHistoryImport({ grid, fileName, busy, setBusy, 
           card_brand: c.brand,
           card_number: c.cardNumber,
           card_player: c.player || null,
-          card_grade: c.grade,
-          card_grading_company: c.gradingCompany,
-          card_raw_grade: null,
+          card_grade: c.grade || null,
+          card_grading_company: c.gradingCompany || null,
+          card_raw_grade: c.rawGrade ?? null,
           listing_id: null,
           set_slug: c.slug,
           set_card_number: c.cardNumber,
@@ -192,7 +193,10 @@ export default function QuarterlyHistoryImport({ grid, fileName, busy, setBusy, 
                 {list.map((it, k) => (
                   <tr key={k} style={{ borderTop: '1px solid var(--rule)', color: 'var(--plum)', verticalAlign: 'top' }}>
                     <td style={{ padding: 6 }}>#{it.row.cardNumber} {it.card?.player || it.row.description}</td>
-                    <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{it.row.company} {it.row.grade}</td>
+                    <td style={{ padding: 6, whiteSpace: 'nowrap' }}>
+                      {it.row.company} {it.row.grade}
+                      {it.card?.targetGrade && <div style={{ fontSize: 10.5, color: 'var(--teal)' }}>want · target grade</div>}
+                    </td>
                     <td style={{ padding: 6, color: view === 'skipped' ? 'var(--rust)' : 'var(--plum)' }}>
                       {view === 'skipped' ? it.reason : it.row.points.map((p, j) => (
                         <span key={j} style={{ marginRight: 10, whiteSpace: 'nowrap', fontWeight: isNew(it, p) ? 600 : 400, color: isNew(it, p) ? undefined : 'var(--ink-mute)' }}
