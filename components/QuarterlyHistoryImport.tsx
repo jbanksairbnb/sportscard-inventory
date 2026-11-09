@@ -203,7 +203,13 @@ export default function QuarterlyHistoryImport({ grid, fileName, busy, setBusy, 
                     </td>
                   </tr>
                 ))}
-                {!list.length && <tr><td colSpan={3} style={{ padding: 12, color: 'var(--ink-mute)' }}>Nothing here.</td></tr>}
+                {!list.length && (
+                  <tr><td colSpan={3} style={{ padding: 12, color: 'var(--ink-mute)' }}>
+                    {view === 'ready' && skipped.length
+                      ? <>None of the {skipped.length} card{skipped.length === 1 ? '' : 's'} in this file matched {set.title}. Check the Skipped tab for why, or choose a different set above.</>
+                      : 'Nothing here.'}
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
