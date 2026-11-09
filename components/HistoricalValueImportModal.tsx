@@ -20,7 +20,7 @@ import { cardValueKey, contentHash, normalizeAnalysis, type AnalysisSnapshot } f
 import { insertValueHistoryRow } from '@/lib/recordValueMark';
 import QuarterlyHistoryImport from '@/components/QuarterlyHistoryImport';
 import {
-  isQuarterlySheet, parseHistoricalSheet, buildHistoricalPlan, historicalDate, historicalDedupeKey,
+  isQuarterlySheet, isSetValueSheet, parseHistoricalSheet, buildHistoricalPlan, historicalDate, historicalDedupeKey,
   type HistoricalPlanItem, type SheetBlock, type UserSet,
 } from '@/lib/historicalImport';
 
@@ -146,8 +146,13 @@ export default function HistoricalValueImportModal({ open, onClose, onImported }
     try {
       const grid = await readGrid(file);
       if (isQuarterlySheet(grid)) { gridRef.current = null; setQuarterly(grid); return; }
+      if (isSetValueSheet(grid)) {
+        setError('This looks like one set\'s value file (Card # and Value columns). Open that set and use Import Values there. This import reads yearly valuation workbooks and quarterly history files.');
+        return;
+      }
     } catch { /* read again below, which reports the error */ }
-    const y = Number(file.name.match(/\b(19|20)\d{2}\b/)?.[0]);
+    // "1981_Topps_…": an underscore counts as a word character, so \b won't do.
+    const y = Number(file.name.match(/(?:^|[^0-9])((?:19|20)\d{2})(?![0-9])/)?.[1]);
     const forYear = y && y < thisYear + 1 ? y : year;
     setYear(forYear);
     try {

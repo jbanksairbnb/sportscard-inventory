@@ -323,6 +323,13 @@ export function isQuarterlySheet(grid: string[][]): boolean {
   return headers.some(h => quarterOf(h) && !isSalesHeader(h)) && headers.some(h => /^card\s*(#|no|number)/i.test(h));
 }
 
+// A set's own value file (an Export CSV of a set: Card # | Description | … |
+// Value). That belongs in the set's Import Values, not here.
+export function isSetValueSheet(grid: string[][]): boolean {
+  const headers = (grid[0] || []).map(h => norm(h));
+  return headers.some(h => /^card\s*(#|no|number)/.test(h)) && headers.includes('value') && !isQuarterlySheet(grid);
+}
+
 export function parseQuarterlySheet(grid: string[][]): ParsedQuarterly {
   const rowsIn = grid.filter(r => r.some(c => String(c ?? '').trim() !== ''));
   if (rowsIn.length < 2) return { rows: [], quarters: [], error: 'The file has no data rows.' };
@@ -384,28 +391,35 @@ export type QuarterlyPlanItem = {
 };
 
 // The set a file name points at: "1970_Topps_Graded_Quarterly_History_2023-2026.csv"
-// → the owner's 1970 Topps set. The first year in the name is the set's year.
-// When several sets share the year ("1982 Topps" and "1982 Topps Traded"), the
-// one whose title words the name covers most fully wins, so a Traded file
-// picks the Traded set rather than the base set.
+// → the owner's 1970 Topps set. The first year in the name is the set's year
+// (taken from the set's title when its year field is empty).
+//
+// Set titles look like "1981 Topps — Traded" (year, brand, description). When
+// several sets share the year, the one with the most title words in the file
+// name wins, then the one with the fewest title words missing from it, so a
+// "1981_Topps_Traded_…" file picks "1981 Topps — Traded" over "1981 Topps — Base".
+const GENERIC_TITLE_WORDS = new Set(['set', 'base', 'complete', 'master', 'cards', 'card', 'collection', 'graded', 'the', 'and', 'of']);
+const titleWordsOf = (s: string) => norm(s).split(/[^a-z0-9]+/).filter(w => w && !/^(18|19|20)\d{2}$/.test(w));
+const yearFromTitle = (s: string) => Number(String(s ?? '').match(/(?:^|[^0-9])((?:18|19|20)\d{2})(?![0-9])/)?.[1]) || null;
+export const setYear = (s: Pick<UserSet, 'year' | 'title'>) => s.year ?? yearFromTitle(s.title);
+
 export function guessSetFromFileName(fileName: string, sets: UserSet[]): string | null {
-  const words = norm(fileName.replace(/\.[^.]+$/, '')).replace(/[_\-]+/g, ' ');
-  const nameWords = new Set(words.split(' '));
-  const year = Number(words.match(/\b(18|19|20)\d{2}\b/)?.[0]) || null;
+  const nameWords = new Set(norm(fileName.replace(/\.[^.]+$/, '')).split(/[^a-z0-9]+/).filter(Boolean));
+  const year = Number(Array.from(nameWords).find(w => /^(18|19|20)\d{2}$/.test(w))) || null;
   if (!year) return null;
-  const sameYear = sets.filter(s => s.year === year);
-  const titleWords = (s: UserSet) => norm(`${s.title || ''} ${s.brand || ''}`).replace(/[_\-]+/g, ' ')
-    .split(' ').filter(w => w && !/^(18|19|20)\d{2}$/.test(w));
+  const sameYear = sets.filter(s => setYear(s) === year);
+  if (sameYear.length <= 1) return sameYear[0]?.slug ?? null;
   const scored = sameYear.map(s => {
-    const tw = Array.from(new Set(titleWords(s)));
-    const hits = tw.filter(w => nameWords.has(w)).length;
-    // Every title word in the file name, and as many of them as possible.
-    return { s, full: tw.length > 0 && hits === tw.length, hits };
-  });
-  const full = scored.filter(x => x.full).sort((a, b) => b.hits - a.hits);
-  if (full.length && (full.length === 1 || full[0].hits > full[1].hits)) return full[0].s.slug;
-  if (full.length) return null;
-  return sameYear.length === 1 ? sameYear[0].slug : null;
+    const brandWords = titleWordsOf(s.brand || '');
+    const words = Array.from(new Set([...titleWordsOf(s.title || ''), ...brandWords])).filter(w => !GENERIC_TITLE_WORDS.has(w));
+    const hits = words.filter(w => nameWords.has(w)).length;
+    return { s, brandOk: brandWords.every(w => nameWords.has(w)), hits, misses: words.length - hits };
+  }).filter(x => x.brandOk && x.hits > 0)
+    .sort((a, b) => b.hits - a.hits || a.misses - b.misses);
+  if (!scored.length) return null;
+  const [best, next] = scored;
+  if (next && next.hits === best.hits && next.misses === best.misses) return null; // a real tie: let the owner pick
+  return best.s.slug;
 }
 
 // Pair each file row with a card in the chosen set: same card #, grading
@@ -416,7 +430,8 @@ export function buildQuarterlyPlan(rows: QuarterlyRow[], set: UserSet): Quarterl
   return rows.map(row => {
     const skip = (reason: string): QuarterlyPlanItem => ({ row, status: 'skip', reason, card: null });
     if (!row.points.length) return skip('No quarterly averages');
-    if (!set.year) return skip(`The set "${set.title}" has no year`);
+    const year = setYear(set);
+    if (!year) return skip(`The set "${set.title}" has no year`);
     if (!row.company || !row.grade) return skip('No grading company and grade');
     const indexed = (set.rows || []).map((r, i) => ({ r, i })).filter(({ i }) => !claimed.has(i));
     let byNumber = indexed.filter(({ r }) => sameNumber(r['Card #'], row.cardNumber));
@@ -443,13 +458,13 @@ export function buildQuarterlyPlan(rows: QuarterlyRow[], set: UserSet): Quarterl
     const { r, i } = graded[0];
     claimed.add(i);
     const parts = {
-      year: set.year, brand: set.brand || null, card_number: String(r['Card #']).trim(),
+      year, brand: set.brand || null, card_number: String(r['Card #']).trim(),
       grading_company: String(r['Grading Company']).trim(), grade: String(r['Grade']).trim(), raw_grade: null,
     };
     return {
       row, status: 'match', reason: null,
       card: {
-        slug: set.slug, setTitle: set.title, year: set.year, brand: set.brand || null,
+        slug: set.slug, setTitle: set.title, year, brand: set.brand || null,
         cardNumber: parts.card_number, player: String(r['Player'] ?? '').trim(),
         gradingCompany: parts.grading_company, grade: parts.grade, key: cardValueKey(parts),
       },
