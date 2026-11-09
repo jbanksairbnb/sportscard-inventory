@@ -176,6 +176,11 @@ function sameGrade(a: unknown, b: unknown): boolean {
   return norm(a) !== '' && norm(a) === norm(b);
 }
 const sameNumber = (a: unknown, b: unknown) => norm(a).replace(/^#/, '') === norm(b).replace(/^#/, '');
+// "47T" ↔ "47", "#98t" ↔ "98" — the T/U suffix Traded and Update sets carry.
+const sameNumberIgnoringSuffix = (a: unknown, b: unknown) => {
+  const strip = (v: unknown) => norm(v).replace(/^#/, '').replace(/^(\d+)\s*[tu]$/, '$1');
+  return strip(a) !== '' && strip(a) === strip(b);
+};
 
 export type UserSet = { slug: string; title: string; year: number | null; brand: string | null; rows: Array<Record<string, any>> };
 
@@ -380,17 +385,27 @@ export type QuarterlyPlanItem = {
 
 // The set a file name points at: "1970_Topps_Graded_Quarterly_History_2023-2026.csv"
 // → the owner's 1970 Topps set. The first year in the name is the set's year.
+// When several sets share the year ("1982 Topps" and "1982 Topps Traded"), the
+// one whose title words the name covers most fully wins, so a Traded file
+// picks the Traded set rather than the base set.
 export function guessSetFromFileName(fileName: string, sets: UserSet[]): string | null {
   const words = norm(fileName.replace(/\.[^.]+$/, '')).replace(/[_\-]+/g, ' ');
+  const nameWords = new Set(words.split(' '));
   const year = Number(words.match(/\b(18|19|20)\d{2}\b/)?.[0]) || null;
   if (!year) return null;
   const sameYear = sets.filter(s => s.year === year);
-  const byBrand = sameYear.filter(s => {
-    const b = norm(s.brand || String(s.title || '').replace(/\b(18|19|20)\d{2}\b/, ''));
-    return b && words.includes(b);
+  const titleWords = (s: UserSet) => norm(`${s.title || ''} ${s.brand || ''}`).replace(/[_\-]+/g, ' ')
+    .split(' ').filter(w => w && !/^(18|19|20)\d{2}$/.test(w));
+  const scored = sameYear.map(s => {
+    const tw = Array.from(new Set(titleWords(s)));
+    const hits = tw.filter(w => nameWords.has(w)).length;
+    // Every title word in the file name, and as many of them as possible.
+    return { s, full: tw.length > 0 && hits === tw.length, hits };
   });
-  const pick = byBrand.length ? byBrand : sameYear;
-  return pick.length === 1 ? pick[0].slug : byBrand[0]?.slug ?? null;
+  const full = scored.filter(x => x.full).sort((a, b) => b.hits - a.hits);
+  if (full.length && (full.length === 1 || full[0].hits > full[1].hits)) return full[0].s.slug;
+  if (full.length) return null;
+  return sameYear.length === 1 ? sameYear[0].slug : null;
 }
 
 // Pair each file row with a card in the chosen set: same card #, grading
@@ -403,8 +418,15 @@ export function buildQuarterlyPlan(rows: QuarterlyRow[], set: UserSet): Quarterl
     if (!row.points.length) return skip('No quarterly averages');
     if (!set.year) return skip(`The set "${set.title}" has no year`);
     if (!row.company || !row.grade) return skip('No grading company and grade');
-    const byNumber = (set.rows || []).map((r, i) => ({ r, i }))
-      .filter(({ r, i }) => !claimed.has(i) && sameNumber(r['Card #'], row.cardNumber));
+    const indexed = (set.rows || []).map((r, i) => ({ r, i })).filter(({ i }) => !claimed.has(i));
+    let byNumber = indexed.filter(({ r }) => sameNumber(r['Card #'], row.cardNumber));
+    // Traded/Update sets are often numbered "47T" in one place and "47" in the
+    // other. Only accept that looser match when the player name agrees too.
+    if (!byNumber.length && row.description) {
+      const name = row.description.split(' - ')[0];
+      byNumber = indexed.filter(({ r }) => sameNumberIgnoringSuffix(r['Card #'], row.cardNumber) &&
+        nameFits(name, String(r['Player'] ?? r['Description'] ?? '')));
+    }
     if (!byNumber.length) return skip(`No card #${row.cardNumber} in ${set.title}`);
     let graded = byNumber.filter(({ r }) =>
       norm(r['Grading Company']) === norm(row.company) && sameGrade(r['Grade'], row.grade));
