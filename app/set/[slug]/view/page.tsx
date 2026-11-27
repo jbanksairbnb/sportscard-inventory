@@ -13,6 +13,13 @@ import SetValueStats, { type CardValueStat } from '@/components/SetValueStats';
 import Thumb from '@/components/Thumb';
 import { recordManualValueMark, type ValueMarkCard } from '@/lib/recordValueMark';
 import { cardValueKey, trendFromRows, type Trend, type ValueHistoryRow } from '@/lib/cardValueHistory';
+import SetPublicSettings from '@/components/SetPublicSettings';
+import SetOffersPanel from '@/components/SetOffersPanel';
+import { SetDescription, SetFacts, KeyCards, SetValueChart, TopCards } from '@/components/SetShowcase';
+import {
+  SHOWCASE_COLUMNS, normalizeSettings, buildShowcaseCards, topCardsByValue, completionOf, conditionSummaryOf,
+  valueTimeline, valuesProvenance, compareCardNumbers, type ShowcaseSettings,
+} from '@/lib/setShowcase';
 
 // Parse a stored Value string ("$1,234.50") into a number; 0 when empty/invalid.
 function parseValue(v: unknown): number {
@@ -295,18 +302,32 @@ export default function InventoryViewPage() {
   const [editRowIdx, setEditRowIdx] = useState<number | null>(null);
   const [researchTarget, setResearchTarget] = useState<{ rowIdx: number; descriptor: CardDescriptor } | null>(null);
   const [benchmarkBusy, setBenchmarkBusy] = useState(false);
+  // Public showcase settings for this set, and the owner's handle (needed for
+  // the public /seller/<handle>/set/<slug> link).
+  const [settings, setSettings] = useState<ShowcaseSettings>(() => normalizeSettings(null));
+  const [handle, setHandle] = useState<string | null>(null);
 
   // Re-fetch this set's value history and group it by card-identity key. Called
   // on first load and after any value edit so trends/movers refresh live.
   const loadHistory = React.useCallback(async (uid: string) => {
     const supabase = createClient();
-    const { data: hist } = await supabase
-      .from('card_value_history')
-      .select('*')
-      .eq('user_id', uid)
-      .eq('set_slug', slug);
+    // Paged: PostgREST returns at most 1000 rows per request, and a big set's
+    // history can run past that.
+    const hist: ValueHistoryRow[] = [];
+    for (let from = 0; from < 50_000; from += 1000) {
+      const { data: page, error } = await supabase
+        .from('card_value_history')
+        .select('*')
+        .eq('user_id', uid)
+        .eq('set_slug', slug)
+        .order('created_at', { ascending: true })
+        .range(from, from + 999);
+      if (error || !page) break;
+      hist.push(...(page as unknown as ValueHistoryRow[]));
+      if (page.length < 1000) break;
+    }
     const groups: Record<string, ValueHistoryRow[]> = {};
-    for (const h of (hist || []) as unknown as ValueHistoryRow[]) {
+    for (const h of hist) {
       const key = cardValueKey({
         year: h.card_year, brand: h.card_brand, card_number: h.card_number,
         grade: h.card_grade, grading_company: h.card_grading_company, raw_grade: h.card_raw_grade,
@@ -324,7 +345,7 @@ export default function InventoryViewPage() {
       setUserId(user.id);
       const { data, error } = await supabase
         .from('sets')
-        .select('title, year, brand, rows')
+        .select(`title, year, brand, rows, ${SHOWCASE_COLUMNS}`)
         .eq('user_id', user.id)
         .eq('slug', slug)
         .maybeSingle();
@@ -334,7 +355,14 @@ export default function InventoryViewPage() {
         return;
       }
       await loadHistory(user.id);
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('handle')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      setHandle(profile?.handle || null);
       if (data) {
+        setSettings(normalizeSettings(data as unknown as Record<string, unknown>));
         setTitle(data.title || '');
         setYear(data.year ? String(data.year) : '');
         setBrand(data.brand || '');
@@ -401,7 +429,10 @@ export default function InventoryViewPage() {
   const displayed = useMemo(() => {
     // __rowIdx = index into the unfiltered `rows` (stable identity for edits);
     // __cardIdx = index into this displayed slice (drives the image lightbox).
-    const withIdx = rows.map((r, i): Record<string, any> => ({ ...r, __rowIdx: i }));
+    // Card-number order (numeric: #2 before #10), so the full set reads like a checklist.
+    const withIdx = rows
+      .map((r, i): Record<string, any> => ({ ...r, __rowIdx: i }))
+      .sort((a, b) => compareCardNumbers(String(a['Card #'] || ''), String(b['Card #'] || '')) || a.__rowIdx - b.__rowIdx);
     const arr = showOwnedOnly
       ? withIdx.filter((r) => String(r['Owned'] || '') === 'Yes')
       : withIdx;
@@ -496,6 +527,29 @@ export default function InventoryViewPage() {
     }
     return out;
   }, [rows, historyByKey, year, brand]);
+
+  // Buyer-facing showcase sections (also on the public page): completion,
+  // condition mix, top 16 by value, key cards and value over time.
+  const showcase = useMemo(() => {
+    const cards = buildShowcaseCards(rows, year, brand, historyByKey);
+    const setValue = setStats.reduce((s, c) => s + (c.latest || 0), 0);
+    const cardOptions: Array<{ cardNumber: string; label: string }> = [];
+    const seenNum = new Set<string>();
+    for (const c of cards) {
+      if (!c.cardNumber || seenNum.has(c.cardNumber)) continue;
+      seenNum.add(c.cardNumber);
+      cardOptions.push({ cardNumber: c.cardNumber, label: `#${c.cardNumber} ${c.player}`.trim() });
+    }
+    return {
+      cards,
+      cardOptions,
+      top: topCardsByValue(cards, 16),
+      completion: completionOf(cards),
+      condition: conditionSummaryOf(cards),
+      timeline: valueTimeline(cards, historyByKey, setValue),
+      prov: valuesProvenance(historyByKey),
+    };
+  }, [rows, year, brand, historyByKey, setStats]);
 
   // The card whose value popup is open (identity label + its history rows).
   const modalCard = useMemo(() => {
@@ -605,10 +659,23 @@ export default function InventoryViewPage() {
       </header>
 
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '28px 28px 80px' }}>
+        {userId && (
+          <SetPublicSettings userId={userId} slug={slug} handle={handle} settings={settings}
+            cardOptions={showcase.cardOptions} onSaved={setSettings} />
+        )}
+        <SetOffersPanel slug={slug} />
         <div style={{ marginBottom: 20 }}>
           <SetHeaderBanner year={year} brand={brand} title={title} />
         </div>
+        <SetDescription description={settings.description} conditionNotes={settings.condition_notes} />
         <SetValueStats stats={setStats} onSetBenchmark={setBenchmark} benchmarkBusy={benchmarkBusy} />
+        <SetFacts completion={showcase.completion} condition={showcase.condition} asOf={showcase.prov.asOf} fromComps={showcase.prov.fromComps} />
+        <TopCards cards={showcase.top} onValueClick={(c) => setEditRowIdx(c.rowIdx)} />
+        <KeyCards notes={settings.key_cards} cards={showcase.cards} showValues />
+        <SetValueChart points={showcase.timeline} />
+        <div className="display" style={{ fontSize: 20, color: 'var(--plum)', margin: '4px 0 12px' }}>
+          The Full Set <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>in card-number order</span>
+        </div>
         {displayed.length === 0 ? (
           <div className="panel-bordered" style={{ padding: '48px 32px', textAlign: 'center' }}>
             <div className="display" style={{ fontSize: 22, color: 'var(--plum)', marginBottom: 8 }}>No cards to display</div>
