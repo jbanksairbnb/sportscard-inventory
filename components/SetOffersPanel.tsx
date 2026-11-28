@@ -11,11 +11,12 @@ type Offer = {
   buyer_name: string;
   buyer_contact: string;
   message: string | null;
-  status: 'new' | 'accepted' | 'declined';
+  status: 'new' | 'accepted' | 'declined' | 'auto_declined';
   created_at: string;
 };
 
-const STATUS_COLOR: Record<Offer['status'], string> = { new: 'var(--orange)', accepted: 'var(--teal)', declined: 'var(--ink-mute)' };
+const STATUS_COLOR: Record<Offer['status'], string> = { new: 'var(--orange)', accepted: 'var(--teal)', declined: 'var(--ink-mute)', auto_declined: 'var(--ink-mute)' };
+const STATUS_LABEL: Record<Offer['status'], string> = { new: 'new', accepted: 'accepted', declined: 'declined', auto_declined: 'auto-declined: under your minimum' };
 
 export default function SetOffersPanel({ slug }: { slug: string }) {
   const [offers, setOffers] = useState<Offer[]>([]);
@@ -51,9 +52,9 @@ export default function SetOffersPanel({ slug }: { slug: string }) {
               <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 3 }}>{fmtDate(o.created_at)}</div>
             </div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span className="eyebrow" style={{ fontSize: 10, color: STATUS_COLOR[o.status] }}>{o.status}</span>
+              <span className="eyebrow" style={{ fontSize: 10, color: STATUS_COLOR[o.status] }}>{STATUS_LABEL[o.status]}</span>
               {o.status !== 'accepted' && <button type="button" className="btn btn-outline btn-sm" onClick={() => setStatus(o.id, 'accepted')}>Accept</button>}
-              {o.status !== 'declined' && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setStatus(o.id, 'declined')}>Decline</button>}
+              {o.status !== 'declined' && o.status !== 'auto_declined' && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setStatus(o.id, 'declined')}>Decline</button>}
             </div>
           </div>
         ))}

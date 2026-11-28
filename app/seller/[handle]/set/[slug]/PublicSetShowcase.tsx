@@ -92,8 +92,15 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
       <main style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 16px 80px' }}>
         {/* Hero: what it is, what it's worth, what it costs */}
         <section className="panel-bordered" style={{ padding: '20px 22px', marginBottom: 20, background: 'var(--paper)', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* Left: what it is, with the seller's chosen image beside the title */}
+          {/* Left: the seller's chosen image, then what it is */}
           <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', gap: 16, alignItems: 'center' }}>
+            {settings.title_image && (
+              <button type="button" onClick={() => setTitleImageOpen(true)} title="View larger"
+                style={{ flexShrink: 0, padding: 0, border: 0, background: 'none', cursor: 'zoom-in' }}>
+                <Thumb url={settings.title_image} width={320} alt={set.title}
+                  style={{ display: 'block', width: 'clamp(64px, 12vw, 110px)', aspectRatio: '5 / 7', objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', boxShadow: '3px 3px 0 var(--plum)' }} />
+              </button>
+            )}
             <div style={{ minWidth: 0, flex: '0 1 auto' }}>
               <div className="eyebrow" style={{ fontSize: 10.5, color: 'var(--orange)' }}>{[set.year, set.brand].filter(Boolean).join(' · ')}{completion.missing.length === 0 ? ' · Complete set' : ''}</div>
               <h1 className="display" style={{ fontSize: 'clamp(24px, 4vw, 34px)', color: 'var(--plum)', margin: '6px 0 4px', lineHeight: 1.1 }}>{set.title}</h1>
@@ -113,13 +120,6 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
                 </div>
               )}
             </div>
-            {settings.title_image && (
-              <button type="button" onClick={() => setTitleImageOpen(true)} title="View larger"
-                style={{ flexShrink: 0, padding: 0, border: 0, background: 'none', cursor: 'zoom-in' }}>
-                <Thumb url={settings.title_image} width={320} alt={set.title}
-                  style={{ display: 'block', width: 'clamp(64px, 12vw, 110px)', aspectRatio: '5 / 7', objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', boxShadow: '3px 3px 0 var(--plum)' }} />
-              </button>
-            )}
           </div>
 
           {/* Right: price, with Make an offer underneath */}
@@ -133,9 +133,6 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
               )}
               {settings.accept_offers && (
                 <button type="button" className="btn btn-primary" onClick={() => setOfferOpen(true)} style={{ minWidth: 170 }}>Make an offer</button>
-              )}
-              {settings.accept_offers && settings.min_offer !== null && (
-                <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: -4 }}>Minimum offer {fmtMoney(settings.min_offer)}</div>
               )}
               {listing && (
                 <Link href={`/marketplace?focus=${listing.id}`} className="btn btn-outline btn-sm">Buy on marketplace →</Link>
@@ -169,14 +166,14 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
       )}
 
       {offerOpen && (
-        <OfferModal handle={seller.handle} slug={set.slug} setTitle={set.title} minOffer={settings.min_offer} askingPrice={askingPrice} onClose={() => setOfferOpen(false)} />
+        <OfferModal handle={seller.handle} slug={set.slug} setTitle={set.title} askingPrice={askingPrice} onClose={() => setOfferOpen(false)} />
       )}
     </div>
   );
 }
 
-function OfferModal({ handle, slug, setTitle, minOffer, askingPrice, onClose }: {
-  handle: string; slug: string; setTitle: string; minOffer: number | null; askingPrice: number | null; onClose: () => void;
+function OfferModal({ handle, slug, setTitle, askingPrice, onClose }: {
+  handle: string; slug: string; setTitle: string; askingPrice: number | null; onClose: () => void;
 }) {
   const [amount, setAmount] = useState('');
   const [name, setName] = useState('');
@@ -188,13 +185,11 @@ function OfferModal({ handle, slug, setTitle, minOffer, askingPrice, onClose }: 
   const [sent, setSent] = useState(false);
 
   const amt = Number(amount.replace(/[$,\s]/g, ''));
-  const belowMin = minOffer !== null && Number.isFinite(amt) && amount !== '' && amt < minOffer;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!Number.isFinite(amt) || amt <= 0) { setError('Please enter an offer amount.'); return; }
-    if (belowMin) { setError(`The minimum offer is ${fmtMoney(minOffer!)}.`); return; }
     setBusy(true);
     try {
       const res = await fetch('/api/set-offers', {
@@ -229,11 +224,9 @@ function OfferModal({ handle, slug, setTitle, minOffer, askingPrice, onClose }: 
             <div className="mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)', margin: '4px 0 14px' }}>
               {setTitle}
               {askingPrice !== null && <> · Price {fmtMoney(askingPrice)}</>}
-              {minOffer !== null && <> · Minimum offer {fmtMoney(minOffer)}</>}
             </div>
             <label className="input-label">Your offer (USD)</label>
-            <input className="input-sc" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder={minOffer !== null ? String(minOffer) : '0.00'} required />
-            {belowMin && <div className="mono" style={{ fontSize: 11, color: 'var(--rust)', marginTop: 4 }}>Offers must be at least {fmtMoney(minOffer!)}.</div>}
+            <input className="input-sc" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" required />
             <label className="input-label" style={{ marginTop: 10, display: 'block' }}>Your name</label>
             <input className="input-sc" value={name} onChange={e => setName(e.target.value)} maxLength={120} required />
             <label className="input-label" style={{ marginTop: 10, display: 'block' }}>How can the seller reach you?</label>
@@ -246,7 +239,7 @@ function OfferModal({ handle, slug, setTitle, minOffer, askingPrice, onClose }: 
             {error && <div style={{ marginTop: 10, fontSize: 13, color: 'var(--rust)', fontWeight: 600 }}>{error}</div>}
             <div style={{ display: 'flex', gap: 10, marginTop: 16, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={busy || belowMin}>{busy ? 'Sending…' : 'Send offer'}</button>
+              <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Send offer'}</button>
             </div>
           </form>
         )}
