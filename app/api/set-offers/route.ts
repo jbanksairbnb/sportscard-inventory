@@ -5,9 +5,11 @@ import { NextRequest, NextResponse } from 'next/server'
 
 // Offers on a public set showcase (/seller/<handle>/set/<slug>).
 //
-//   POST  — anyone (no sign-in): submit an offer. Checked server-side: the
-//           set must be public and accepting offers, and the amount must meet
-//           its minimum offer.
+//   POST  — anyone (no sign-in): submit an offer. The set must be public and
+//           accepting offers. The set's minimum offer is the seller's secret:
+//           an offer under it is saved as 'auto_declined' (so the seller can
+//           still see it) and the buyer is told it was declined, never what
+//           the minimum is.
 //   GET   — set owner: ?slug=<slug> lists the offers on that set.
 //   PATCH — set owner: { id, status } marks an offer accepted / declined / new.
 
@@ -70,13 +72,6 @@ export async function POST(req: NextRequest) {
     .maybeSingle()
   if (!set || !set.public_enabled) return NextResponse.json({ error: 'Set not found' }, { status: 404 })
   if (!set.accept_offers) return NextResponse.json({ error: 'This set is not taking offers right now.' }, { status: 400 })
-  const min = set.min_offer != null ? Number(set.min_offer) : null
-  if (min != null && amount < min) {
-    return NextResponse.json({
-      error: `The minimum offer for this set is ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(min)}.`,
-    }, { status: 400 })
-  }
-
   // Light flood protection per set.
   const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
   const { count } = await db
@@ -89,6 +84,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many offers on this set right now. Please try again later.' }, { status: 429 })
   }
 
+  const min = set.min_offer != null ? Number(set.min_offer) : null
+  const autoDeclined = min != null && amount < min
+
   const { error } = await db.from('set_offers').insert({
     owner_user_id: seller.user_id,
     set_slug: slug,
@@ -97,8 +95,16 @@ export async function POST(req: NextRequest) {
     buyer_name: name,
     buyer_contact: contact,
     message: message || null,
+    status: autoDeclined ? 'auto_declined' : 'new',
   })
   if (error) return NextResponse.json({ error: 'Could not send your offer. Please try again.' }, { status: 500 })
+
+  if (autoDeclined) {
+    return NextResponse.json({
+      declined: true,
+      error: "Sorry, the seller can't accept an offer at that amount. You're welcome to send a higher offer.",
+    }, { status: 422 })
+  }
 
   // Best effort: surface it in the owner's notifications too.
   await db.from('notifications').insert({

@@ -58,7 +58,9 @@ export const loadShowcase = cache(async (handle: string, slug: string): Promise<
     .eq('status', 'active')
     .maybeSingle();
 
-  const settings = normalizeSettings(set as unknown as Record<string, unknown>);
+  // The minimum offer is the seller's secret; /api/set-offers enforces it.
+  // Blank it here so it never reaches the page or its data.
+  const settings = { ...normalizeSettings(set as unknown as Record<string, unknown>), min_offer: null };
   // Visible when the owner switched the page on, or (as before) while the set
   // has an active complete-set marketplace listing.
   if (!settings.public_enabled && !listing) return null;

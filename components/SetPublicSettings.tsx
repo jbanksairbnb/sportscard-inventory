@@ -180,7 +180,10 @@ export default function SetPublicSettings({ userId, slug, handle, settings, card
                 Accept offers
               </label>
               <input className="input-sc" inputMode="decimal" value={minOffer} onChange={e => setMinOffer(e.target.value)} disabled={!draft.accept_offers}
-                placeholder="Minimum offer (optional)" />
+                placeholder="Secret minimum offer (optional)" />
+              <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 4 }}>
+                Private: buyers never see it. Offers below it are declined automatically.
+              </div>
             </div>
           </div>
 
