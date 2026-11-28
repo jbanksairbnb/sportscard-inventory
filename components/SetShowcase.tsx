@@ -43,7 +43,7 @@ export function TrendBadge({ trend, showDollars = false }: { trend: Trend | null
 
 // ── Lightbox ─────────────────────────────────────────────────────────────
 
-type LightboxItem = { url: string; label: string; side: 'Front' | 'Back' };
+type LightboxItem = { url: string; label: string; side?: 'Front' | 'Back' };
 
 function itemsFor(cards: ShowcaseCard[]): LightboxItem[] {
   const out: LightboxItem[] = [];
@@ -75,10 +75,10 @@ export function CardLightbox({ items, startIdx, onClose }: { items: LightboxItem
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(42,20,52,0.9)', padding: 12 }}>
       <div onClick={e => e.stopPropagation()} style={{ position: 'relative', maxWidth: '100%' }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={cur.url} alt={`${cur.label} ${cur.side}`} style={{ maxWidth: 'min(92vw, 900px)', maxHeight: '76vh', borderRadius: 10, display: 'block', margin: '0 auto' }} />
+        <img src={cur.url} alt={[cur.label, cur.side].filter(Boolean).join(' ')} style={{ maxWidth: 'min(92vw, 900px)', maxHeight: '76vh', borderRadius: 10, display: 'block', margin: '0 auto' }} />
         <div style={{ marginTop: 10, padding: '8px 14px', background: 'var(--paper)', border: '2px solid var(--plum)', borderRadius: 8, color: 'var(--plum)', display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="display" style={{ fontSize: 14 }}>{cur.label}</span>
-          <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>{cur.side}</span>
+          {cur.side && <span className="eyebrow" style={{ fontSize: 10, color: 'var(--orange)' }}>{cur.side}</span>}
           <span className="mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{idx + 1} / {items.length}</span>
         </div>
         {items.length > 1 && (

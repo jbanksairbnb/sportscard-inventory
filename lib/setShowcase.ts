@@ -23,10 +23,11 @@ export type ShowcaseSettings = {
   key_cards: KeyCardNote[];
   condition_notes: string | null;
   sale_terms: string | null;
+  title_image: string | null;   // small image beside the title on the public page
 };
 
 export const SHOWCASE_COLUMNS =
-  'public_enabled, description, asking_price, accept_offers, min_offer, show_card_values, key_cards, condition_notes, sale_terms';
+  'public_enabled, description, asking_price, accept_offers, min_offer, show_card_values, key_cards, condition_notes, sale_terms, title_image';
 
 export function normalizeSettings(raw: Record<string, unknown> | null | undefined): ShowcaseSettings {
   const r = raw || {};
@@ -49,6 +50,7 @@ export function normalizeSettings(raw: Record<string, unknown> | null | undefine
     key_cards: keyCards,
     condition_notes: (r.condition_notes as string) || null,
     sale_terms: (r.sale_terms as string) || null,
+    title_image: (r.title_image as string) || null,
   };
 }
 
