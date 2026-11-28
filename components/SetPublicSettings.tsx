@@ -6,6 +6,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { uploadCardImageWithThumb } from '@/lib/upload-card-image';
+import Thumb from '@/components/Thumb';
 import { fmtMoney, type KeyCardNote, type ShowcaseSettings } from '@/lib/setShowcase';
 
 function toNum(s: string): number | null {
@@ -20,7 +22,7 @@ export default function SetPublicSettings({ userId, slug, handle, settings, card
   slug: string;
   handle: string | null;
   settings: ShowcaseSettings;
-  cardOptions: Array<{ cardNumber: string; label: string }>;
+  cardOptions: Array<{ cardNumber: string; label: string; imageFront?: string | null }>;
   onSaved: (s: ShowcaseSettings) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -30,6 +32,22 @@ export default function SetPublicSettings({ userId, slug, handle, settings, card
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  // Upload a photo for the small title image. Stored next to the set's other
+  // images; only saved to the set when the owner hits Save.
+  async function uploadTitleImage(file: File) {
+    setUploading(true);
+    setMsg(null);
+    const supabase = createClient();
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const path = `${userId}/set-showcase/${slug}/title-${Date.now()}.${ext}`;
+    const { error } = await uploadCardImageWithThumb(supabase, path, file, { contentType: file.type || undefined });
+    setUploading(false);
+    if (error) { setMsg(`Upload failed: ${error.message}`); return; }
+    const { data } = supabase.storage.from('card-images').getPublicUrl(path);
+    setDraft(d => ({ ...d, title_image: data.publicUrl }));
+  }
 
   useEffect(() => {
     setDraft(settings);
@@ -54,6 +72,7 @@ export default function SetPublicSettings({ userId, slug, handle, settings, card
       key_cards: next.key_cards.filter(k => k.card.trim()),
       condition_notes: next.condition_notes?.trim() || null,
       sale_terms: next.sale_terms?.trim() || null,
+      title_image: next.title_image || null,
     }).eq('user_id', userId).eq('slug', slug);
     setSaving(false);
     if (error) {
@@ -123,6 +142,29 @@ export default function SetPublicSettings({ userId, slug, handle, settings, card
 
       {open && (
         <div style={{ marginTop: 10 }}>
+          <label className="input-label" style={label}>Title image (shown beside the set&apos;s name)</label>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+            {draft.title_image ? (
+              <Thumb url={draft.title_image} width={240} alt="Title image"
+                style={{ width: 64, height: 88, objectFit: 'cover', borderRadius: 6, border: '2px solid var(--plum)' }} />
+            ) : (
+              <div style={{ width: 64, height: 88, borderRadius: 6, border: '2px dashed var(--rule)', display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--ink-mute)' }}>None</div>
+            )}
+            <label className="btn btn-outline btn-sm" style={{ cursor: uploading ? 'wait' : 'pointer' }}>
+              {uploading ? 'Uploading…' : 'Upload image'}
+              <input type="file" accept="image/*" hidden disabled={uploading}
+                onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) uploadTitleImage(f); }} />
+            </label>
+            <select className="input-sc" value="" onChange={e => { const v = e.target.value; if (v) setDraft(d => ({ ...d, title_image: v })); }}
+              style={{ flex: '0 1 260px' }}>
+              <option value="">…or use a card&apos;s photo</option>
+              {cardOptions.filter(o => o.imageFront).map(o => <option key={o.cardNumber} value={o.imageFront!}>{o.label}</option>)}
+            </select>
+            {draft.title_image && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDraft(d => ({ ...d, title_image: null }))}>Remove</button>
+            )}
+          </div>
+
           <label className="input-label" style={label}>Set description</label>
           <textarea className="input-sc" rows={5} value={draft.description || ''} placeholder="Tell buyers about the set: its history, the key cards, how you put it together, centering, eye appeal…"
             onChange={e => setDraft(d => ({ ...d, description: e.target.value }))} />

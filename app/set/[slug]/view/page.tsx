@@ -533,12 +533,12 @@ export default function InventoryViewPage() {
   const showcase = useMemo(() => {
     const cards = buildShowcaseCards(rows, year, brand, historyByKey);
     const setValue = setStats.reduce((s, c) => s + (c.latest || 0), 0);
-    const cardOptions: Array<{ cardNumber: string; label: string }> = [];
+    const cardOptions: Array<{ cardNumber: string; label: string; imageFront: string | null }> = [];
     const seenNum = new Set<string>();
     for (const c of cards) {
       if (!c.cardNumber || seenNum.has(c.cardNumber)) continue;
       seenNum.add(c.cardNumber);
-      cardOptions.push({ cardNumber: c.cardNumber, label: `#${c.cardNumber} ${c.player}`.trim() });
+      cardOptions.push({ cardNumber: c.cardNumber, label: `#${c.cardNumber} ${c.player}`.trim(), imageFront: c.imageFront });
     }
     return {
       cards,

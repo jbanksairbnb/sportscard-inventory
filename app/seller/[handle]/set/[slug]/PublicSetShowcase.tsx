@@ -6,7 +6,8 @@ import SCLogo from '@/components/SCLogo';
 import CopyLinkButton from '@/components/CopyLinkButton';
 import SetHeaderBanner from '@/components/SetHeaderBanner';
 import SetValueStats, { type CardValueStat } from '@/components/SetValueStats';
-import { SetDescription, SetFacts, KeyCards, SetValueChart, TopCards, SetCardGrid } from '@/components/SetShowcase';
+import { SetDescription, SetFacts, KeyCards, SetValueChart, TopCards, SetCardGrid, CardLightbox } from '@/components/SetShowcase';
+import Thumb from '@/components/Thumb';
 import {
   buildShowcaseCards, topCardsByValue, completionOf, conditionSummaryOf, valueTimeline, valuesProvenance, fmtMoney,
   type ShowcaseCard,
@@ -43,6 +44,7 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
   const prov = useMemo(() => valuesProvenance(data.marksByKey), [data.marksByKey]);
   const [offerOpen, setOfferOpen] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [titleImageOpen, setTitleImageOpen] = useState(false);
 
   const askingPrice = settings.asking_price ?? listing?.askingPrice ?? null;
 
@@ -89,46 +91,57 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
 
       <main style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 16px 80px' }}>
         {/* Hero: what it is, what it's worth, what it costs */}
-        <section className="panel-bordered" style={{ padding: '20px 22px', marginBottom: 20, background: 'var(--paper)' }}>
-          <div className="eyebrow" style={{ fontSize: 10.5, color: 'var(--orange)' }}>{[set.year, set.brand].filter(Boolean).join(' · ')}{completion.missing.length === 0 ? ' · Complete set' : ''}</div>
-          <h1 className="display" style={{ fontSize: 'clamp(24px, 4vw, 34px)', color: 'var(--plum)', margin: '6px 0 4px', lineHeight: 1.1 }}>{set.title}</h1>
-          <div style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
-            Offered by <strong>{seller.displayName}</strong> · <strong>{completion.owned} of {completion.total}</strong> cards
-            {completion.missing.length === 0 ? ' (complete)' : ` (${completion.pct.toFixed(1)}% complete)`}
-          </div>
-          <div style={{ display: 'flex', gap: 24, alignItems: 'flex-end', flexWrap: 'wrap', marginTop: 16 }}>
-            {askingPrice !== null && (
-              <div>
-                <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Price</div>
-                <div className="display" style={{ fontSize: 34, color: 'var(--plum)', lineHeight: 1 }}>{fmtMoney(askingPrice)}</div>
+        <section className="panel-bordered" style={{ padding: '20px 22px', marginBottom: 20, background: 'var(--paper)', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Left: what it is, with the seller's chosen image beside the title */}
+          <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', gap: 16, alignItems: 'center' }}>
+            <div style={{ minWidth: 0, flex: '0 1 auto' }}>
+              <div className="eyebrow" style={{ fontSize: 10.5, color: 'var(--orange)' }}>{[set.year, set.brand].filter(Boolean).join(' · ')}{completion.missing.length === 0 ? ' · Complete set' : ''}</div>
+              <h1 className="display" style={{ fontSize: 'clamp(24px, 4vw, 34px)', color: 'var(--plum)', margin: '6px 0 4px', lineHeight: 1.1 }}>{set.title}</h1>
+              <div style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
+                Offered by <strong>{seller.displayName}</strong> · <strong>{completion.owned} of {completion.total}</strong> cards
+                {completion.missing.length === 0 ? ' (complete)' : ` (${completion.pct.toFixed(1)}% complete)`}
               </div>
-            )}
-            {setValue > 0 && (
-              <div>
-                <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Market value</div>
-                <div className="display" style={{ fontSize: askingPrice !== null ? 22 : 34, color: 'var(--orange)', lineHeight: 1 }}>{fmtMoney(setValue)}</div>
-              </div>
-            )}
-            {askingPrice !== null && setValue > 0 && askingPrice < setValue && (
-              <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--teal)', paddingBottom: 3 }}>
-                {Math.round((1 - askingPrice / setValue) * 100)}% below market value
-              </span>
-            )}
-            <div style={{ flex: 1 }} />
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-              {settings.accept_offers && (
-                <div style={{ textAlign: 'right' }}>
-                  <button type="button" className="btn btn-primary" onClick={() => setOfferOpen(true)}>Make an offer</button>
-                  {settings.min_offer !== null && (
-                    <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: 4 }}>Minimum offer {fmtMoney(settings.min_offer)}</div>
+              {setValue > 0 && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginTop: 10 }}>
+                  <span className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Market value</span>
+                  <span className="display" style={{ fontSize: 20, color: 'var(--orange)', lineHeight: 1 }}>{fmtMoney(setValue)}</span>
+                  {askingPrice !== null && askingPrice < setValue && (
+                    <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--teal)' }}>
+                      Priced {Math.round((1 - askingPrice / setValue) * 100)}% below market value
+                    </span>
                   )}
                 </div>
               )}
+            </div>
+            {settings.title_image && (
+              <button type="button" onClick={() => setTitleImageOpen(true)} title="View larger"
+                style={{ flexShrink: 0, padding: 0, border: 0, background: 'none', cursor: 'zoom-in' }}>
+                <Thumb url={settings.title_image} width={320} alt={set.title}
+                  style={{ display: 'block', width: 'clamp(64px, 12vw, 110px)', aspectRatio: '5 / 7', objectFit: 'cover', borderRadius: 8, border: '2px solid var(--plum)', boxShadow: '3px 3px 0 var(--plum)' }} />
+              </button>
+            )}
+          </div>
+
+          {/* Right: price, with Make an offer underneath */}
+          {(askingPrice !== null || settings.accept_offers || listing) && (
+            <div style={{ flex: '0 0 auto', marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, textAlign: 'right' }}>
+              {askingPrice !== null && (
+                <div>
+                  <div className="eyebrow" style={{ fontSize: 10, color: 'var(--ink-mute)' }}>Price</div>
+                  <div className="display" style={{ fontSize: 'clamp(28px, 4.5vw, 38px)', color: 'var(--plum)', lineHeight: 1 }}>{fmtMoney(askingPrice)}</div>
+                </div>
+              )}
+              {settings.accept_offers && (
+                <button type="button" className="btn btn-primary" onClick={() => setOfferOpen(true)} style={{ minWidth: 170 }}>Make an offer</button>
+              )}
+              {settings.accept_offers && settings.min_offer !== null && (
+                <div className="mono" style={{ fontSize: 10.5, color: 'var(--ink-mute)', marginTop: -4 }}>Minimum offer {fmtMoney(settings.min_offer)}</div>
+              )}
               {listing && (
-                <Link href={`/marketplace?focus=${listing.id}`} className="btn btn-outline">Buy on marketplace →</Link>
+                <Link href={`/marketplace?focus=${listing.id}`} className="btn btn-outline btn-sm">Buy on marketplace →</Link>
               )}
             </div>
-          </div>
+          )}
         </section>
 
         <div style={{ marginBottom: 20 }}>
@@ -150,6 +163,10 @@ export default function PublicSetShowcase({ data }: { data: PublicShowcaseData }
           </section>
         )}
       </main>
+
+      {titleImageOpen && settings.title_image && (
+        <CardLightbox items={[{ url: settings.title_image, label: set.title }]} startIdx={0} onClose={() => setTitleImageOpen(false)} />
+      )}
 
       {offerOpen && (
         <OfferModal handle={seller.handle} slug={set.slug} setTitle={set.title} minOffer={settings.min_offer} askingPrice={askingPrice} onClose={() => setOfferOpen(false)} />
